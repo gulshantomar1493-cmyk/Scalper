@@ -62,6 +62,8 @@ def test_refuses_unknown_feed_provider(tmp_path):
 # ------------------------------------------------------- full composition
 
 
+# Windows cannot emulate production's SIGTERM path: Popen.send_signal(SIGTERM)
+# hard-terminates the process there instead of exercising the asyncio handler.
 @pytest.mark.skipif(os.name != "posix", reason="signal-based graceful shutdown")
 async def test_full_composition_serves_and_shuts_down_cleanly(db_dsn, tmp_path):
     """The real service: composition root wires everything, the API answers,

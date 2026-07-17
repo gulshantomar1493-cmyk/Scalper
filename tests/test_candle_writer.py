@@ -180,6 +180,9 @@ async def test_mini_flow_trades_to_db_and_reference_to_reconciler(db_conn):
 
     bus.subscribe(Candle, to_built)
 
+    # prime: the first bucket per symbol is discarded at rollover (startup rule)
+    await bus.publish(Trade(symbol="BTCUSDT", price=1.0, qty=1.0,
+                            ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
     # one trade in minute M0, one in M0+1 -> closes the M0 truth candle
     await bus.publish(Trade(symbol="BTCUSDT", price=67200.0, qty=2.0,
                             ts=M0 + timedelta(seconds=5), is_buyer_maker=False))

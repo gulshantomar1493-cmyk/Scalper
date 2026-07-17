@@ -3,13 +3,13 @@
 **Deterministic Market Analysis & Decision-Support Terminal** — a production-grade personal platform for scalping decisions.
 
 - Markets (v1): **BTCUSDT + ETHUSDT** only · Timeframes: **1m** primary, **5m** context
-- Analysis feed: Binance WS (`aggTrade` + `kline_1m`) · Optional: Delta Exchange public market data
+- Analysis feed: Binance WS (`aggTrade` + `kline_1m` + `bookTicker`) · Optional: Delta Exchange public market data
 - Philosophy: no repaint, replay-first, no fake confidence %, validate before trust
 - **MarketScalper never places orders.** It generates trade recommendations; you execute manually on your exchange (Delta or any other) and log the outcome. No broker integration, no automated trade management, no position sync.
 
 ## Status
 
-**Under development — Phase P0 (Spine).** Roadmap task P0.1 complete.
+**Phase P0 (Spine) complete** — the P0.28 acceptance gate passed 2026-07-17 (tag `v1.0.0-foundation`): live 1m chart, 90-day replay, zero candle mismatch vs official klines, provider conformance + determinism green. See `docs/P0-CLOSURE.md` and `docs/decisions/P0.28-acceptance-gate.md`. Phase P1 (Structure + Trendlines) is next.
 A strategy is marked **TRUSTED** only after the P5 validation gate (200+ logged recommendations, positive expectancy after fees).
 
 ## How it works
@@ -50,7 +50,7 @@ Python 3.12 + asyncio · FastAPI (WebSocket + REST) · PostgreSQL 16 (partitione
 
 ## Running
 
-Requires Python ≥ 3.12 and (from P0.5 onward) PostgreSQL 16.
+Requires Python ≥ 3.12 and PostgreSQL 16.
 
 ```bash
 pip install -e .                                  # install package + dependencies
@@ -60,14 +60,14 @@ marketscalper                                     # or: python -m marketscalper.
 
 Configuration loads in a fixed order: `backend/config.example.yaml` (committed base) → `backend/config.yaml` (git-ignored local overrides) → environment variables (`MARKETSCALPER_LOG_LEVEL`, `MARKETSCALPER_DB_DSN`, `MARKETSCALPER_SYMBOLS`, …) override everything. **Secrets are never committed** — the DB DSN lives only in the local config or environment.
 
-As of P0.2 the entrypoint loads config, sets up logging (console + rotating file, UTC), and exits cleanly — runtime components arrive with the following tasks. Deployment (systemd service on a self-hosted Linux server) lands at P0.27.
+The entrypoint is the full composition root (P0.27): it refuses to start without `MARKETSCALPER_API_TOKEN` and a database DSN (exit code 2), then runs the live pipeline and serves the REST/WebSocket API (default `127.0.0.1:8000`). Open `frontend/index.html?api=HOST:PORT&token=TOKEN` — from disk or any static host — for the terminal. Deployment artifacts for the single Linux server live in `deployment/`.
 
 ## Testing
 
 ```bash
 pip install -e ".[dev]"   # installs pytest + pytest-asyncio
 pytest                    # run the suite
-bash scripts/ci.sh        # the CI gate: pytest now; import-boundary & determinism gates plug in later
+bash scripts/ci.sh        # the CI gate: full suite incl. provider-conformance, import-boundary and determinism gates
 ```
 
 Database tests run against the local development database addressed by `MARKETSCALPER_DB_DSN`, with migrations 001/002 already applied (see `database/README.md`). Without the variable they skip; with an unprepared database they fail with instructions — the suite never applies migrations itself. Every test rolls back its transaction, leaving no data behind.

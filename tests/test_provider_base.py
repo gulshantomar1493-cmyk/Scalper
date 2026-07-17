@@ -63,7 +63,7 @@ def test_candle_mirrors_schema_columns():
 
 def test_trade_carries_exactly_what_candle_builder_consumes():
     assert [f.name for f in dataclasses.fields(Trade)] == [
-        "symbol", "price", "qty", "ts", "is_buyer_maker",
+        "symbol", "price", "qty", "ts", "is_buyer_maker", "n_trades",
     ]
 
 

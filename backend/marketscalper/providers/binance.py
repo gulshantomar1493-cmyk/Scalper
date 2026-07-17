@@ -94,6 +94,9 @@ def parse_agg_trade(d: dict) -> Trade:
         symbol=d["s"],
         price=float(d["p"]),
         qty=float(d["q"]),
+        # f/l = first/last raw trade ID aggregated into this event; the raw
+        # count keeps candle n_trades matching the official kline "n" (D5).
+        n_trades=int(d["l"]) - int(d["f"]) + 1,
         ts=_utc(d["T"]),
         is_buyer_maker=bool(d["m"]),
     )

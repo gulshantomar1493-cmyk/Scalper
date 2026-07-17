@@ -157,6 +157,9 @@ async def test_pipeline_identity_live_builder_vs_replay(db_conn):
     # live path: two trades per minute for minutes 0..9, close m9 via m10
     live_bus, live_events = await _collecting_bus()
     CandleBuilder(live_bus)
+    # prime: the builder discards each symbol's first bucket (startup rule)
+    await live_bus.publish(Trade(symbol="BTCUSDT", price=1.0, qty=1.0,
+                                 ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
     for m in range(11):
         base = 100.0 + m
         await live_bus.publish(Trade(symbol="BTCUSDT", price=base, qty=0.5,

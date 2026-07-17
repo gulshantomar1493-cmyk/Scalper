@@ -52,6 +52,10 @@ class Trade:
     qty: float
     ts: datetime  # UTC
     is_buyer_maker: bool
+    # Raw trades this event aggregates (Binance aggTrade spans trade IDs
+    # f..l). Candle n_trades must match the official kline "n" semantics
+    # (raw count), so the builder sums this — never the event count.
+    n_trades: int = 1
 
 
 @dataclass(frozen=True)

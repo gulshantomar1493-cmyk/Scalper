@@ -19,8 +19,13 @@ def _trade(ts, price, qty, maker=False, symbol="BTCUSDT"):
     return Trade(symbol=symbol, price=price, qty=qty, ts=ts, is_buyer_maker=maker)
 
 
-async def _rig():
-    """Fresh bus + builder + collector of published Candles."""
+async def _rig(prime=("BTCUSDT",)):
+    """Fresh bus + builder + collector of published Candles.
+
+    The builder discards each symbol's first bucket (startup rule, P0.28
+    owner decision), so `prime` publishes one throwaway trade per symbol a
+    minute before M0 — steady-state tests then behave exactly as specified.
+    """
     bus = EventBus()
     closed: list[Candle] = []
 
@@ -29,13 +34,30 @@ async def _rig():
 
     builder = CandleBuilder(bus)
     bus.subscribe(Candle, collect)
+    for symbol in prime:
+        await bus.publish(_trade(M0 - timedelta(minutes=1), 1, 1, symbol=symbol))
     return bus, builder, closed
 
 
 async def test_first_trade_opens_without_publishing():
-    bus, _, closed = await _rig()
+    bus, _, closed = await _rig(prime=())
     await bus.publish(_trade(M0 + timedelta(seconds=5), 67000, 0.5))
     assert closed == []  # open candle is never emitted
+
+
+async def test_startup_partial_bucket_is_discarded_with_warning(caplog):
+    """P0.28 owner decision: the first bucket per symbol after process start
+    is never published — the first published candle is fully observed."""
+    bus, _, closed = await _rig(prime=())
+    await bus.publish(_trade(M0 + timedelta(seconds=39), 67000, 0.5))  # mid-minute start
+    with caplog.at_level("WARNING"):
+        await bus.publish(_trade(M0 + timedelta(seconds=61), 67010, 0.2))  # rollover
+    assert closed == []                                   # startup bucket discarded
+    assert any("startup" in r.message for r in caplog.records)
+    await bus.publish(_trade(M0 + timedelta(seconds=121), 67020, 0.1))  # next rollover
+    assert len(closed) == 1                               # first fully observed minute
+    assert closed[0].ts == M0 + timedelta(minutes=1)
+    assert (closed[0].o, closed[0].v) == (67010, 0.2)
 
 
 async def test_ohlc_volume_quote_volume_and_trade_count():
@@ -51,6 +73,19 @@ async def test_ohlc_volume_quote_volume_and_trade_count():
     assert c.v == pytest.approx(0.5 + 0.2 + 0.3 + 1.0)
     assert c.qv == pytest.approx(67000 * 0.5 + 67100 * 0.2 + 66900 * 0.3 + 67050 * 1.0)
     assert c.n_trades == 4
+
+
+async def test_n_trades_sums_raw_counts_not_events():
+    """Candle n_trades must follow kline "n" semantics: one aggTrade event
+    spanning many raw trades contributes its raw count, not 1."""
+    bus, _, closed = await _rig()
+    await bus.publish(dataclasses.replace(
+        _trade(M0 + timedelta(seconds=1), 67000, 0.5), n_trades=3))
+    await bus.publish(dataclasses.replace(
+        _trade(M0 + timedelta(seconds=30), 67010, 0.2), n_trades=4))
+    await bus.publish(_trade(M0 + timedelta(seconds=61), 67020, 0.1))  # rollover
+    assert len(closed) == 1
+    assert closed[0].n_trades == 7
 
 
 async def test_taker_buy_v_counts_only_taker_buys():
@@ -273,7 +308,7 @@ async def test_interleaved_multi_symbol_sequence_1m_5m_deterministic():
                              maker=(i % 2 == 1), symbol="ETHUSDT"))
 
     async def run():
-        bus, _, closed = await _rig()
+        bus, _, closed = await _rig(prime=("BTCUSDT", "ETHUSDT"))
         for t in trades:
             await bus.publish(t)
         return closed

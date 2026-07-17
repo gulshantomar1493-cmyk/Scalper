@@ -114,7 +114,11 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
     # signal after shutdown, killing the process before cleanup — exit -15).
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, server.handle_exit, sig, None)
+        try:
+            loop.add_signal_handler(sig, server.handle_exit, sig, None)
+        except NotImplementedError:  # Windows dev machine — no asyncio signal
+            break                    # handlers; uvicorn falls back to
+                                     # signal.signal() itself (Ctrl+C only)
     try:
         await server.serve()                               # until SIGTERM/SIGINT
     finally:

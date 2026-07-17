@@ -59,6 +59,7 @@ def test_parse_agg_trade_maps_exactly_to_trade():
     assert t == Trade(
         symbol="BTCUSDT", price=67215.10, qty=0.052,
         ts=datetime.fromtimestamp(1784055600.100, tz=UTC), is_buyer_maker=False,
+        n_trades=2,  # aggregates raw trade IDs f=1..l=2
     )
 
 

@@ -37,6 +37,7 @@ import logging
 from datetime import datetime
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db
 from marketscalper.core.bus import EventBus
@@ -80,6 +81,16 @@ def create_app(
     replay_provider([symbol], bus, pool, start, end, speed=speed).
     None -> the replay endpoints answer 503 (not configured)."""
     app = FastAPI(title="MarketScalper", docs_url=None, redoc_url=None)
+    # The standalone frontend (§9; deploy.sh: index.html opened from disk or
+    # any static host) is always a foreign origin to this API, and file://
+    # pages send the unpinnable literal origin "null" — so origins cannot be
+    # allowlisted. Credentials stay off; the D3 bearer token is the only gate.
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=["*"],
+        allow_methods=["GET", "POST"],
+        allow_headers=["Authorization"],
+    )
     clients: set[WebSocket] = set()
     # at most one replay at a time; lazy latch turns completion into idle
     replay = {"feed": None, "info": None, "seen_connected": False}

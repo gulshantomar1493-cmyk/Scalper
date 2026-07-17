@@ -18,6 +18,10 @@ Rules (frozen):
     a WARNING — they never mutate a closed candle.
   * Empty minutes during feed gaps produce no candles here; kline backfill
     (P0.15, Decision D5) fills those. No synthetic candles.
+  * The first bucket per symbol after process start is DISCARDED at rollover
+    (owner decision at P0.28): observation may have begun mid-minute, and a
+    partially observed candle is false data — correctness over completeness.
+    The first published candle is the first fully observed one.
 
 Per owner clarification at P0.12: the builder publishes the EXISTING Candle
 dataclass — no wrapper event types, no parallel event hierarchies. Telling
@@ -49,7 +53,7 @@ class _OpenCandle:
         self.o = self.h = self.l = self.c = t.price
         self.v = t.qty
         self.qv = t.qty * t.price
-        self.n_trades = 1
+        self.n_trades = t.n_trades
         # §4.1: taker bought when the buyer was NOT the maker
         self.taker_buy_v = t.qty if not t.is_buyer_maker else 0.0
 
@@ -59,7 +63,7 @@ class _OpenCandle:
         self.c = t.price
         self.v += t.qty
         self.qv += t.qty * t.price
-        self.n_trades += 1
+        self.n_trades += t.n_trades
         if not t.is_buyer_maker:
             self.taker_buy_v += t.qty
 
@@ -97,6 +101,11 @@ class CandleBuilder:
         self._bus = bus
         self._open: dict[str, _OpenCandle] = {}
         self._open_5m: dict[str, _Open5m] = {}
+        # Symbols whose currently-open bucket is their first since process
+        # start. Observation may have begun mid-minute, so that bucket is
+        # discarded at rollover — correctness over completeness: the first
+        # persisted candle is the first fully observed one (owner decision).
+        self._startup: set[str] = set()
         bus.subscribe(Trade, self.on_trade)
 
     async def on_trade(self, trade: Trade) -> None:
@@ -106,6 +115,7 @@ class CandleBuilder:
 
         if current is None:
             self._open[trade.symbol] = _OpenCandle(bucket, trade)
+            self._startup.add(trade.symbol)
             return
 
         if bucket < current.bucket:
@@ -117,6 +127,15 @@ class CandleBuilder:
             return
 
         if bucket > current.bucket:
+            if trade.symbol in self._startup:
+                self._startup.discard(trade.symbol)
+                log.warning(
+                    "candle_builder: discarding partial startup candle %s %s "
+                    "(observation began mid-minute)",
+                    trade.symbol, _bucket_start(current.bucket),
+                )
+                self._open[trade.symbol] = _OpenCandle(bucket, trade)
+                return
             closed_1m = _to_candle(trade.symbol, current)
             await self._bus.publish(closed_1m)                      # 1m first,
             await self._roll_5m(trade.symbol, current.bucket, closed_1m)  # then 5m (§4.1)

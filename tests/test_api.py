@@ -155,6 +155,9 @@ async def test_ws_rejects_bad_token():
 async def test_ws_pushes_candle_and_state_diff():
     bus, _, app = _pipeline()
     CandleBuilder(bus)                                          # trades -> closed candles
+    # prime: the builder discards each symbol's first bucket (startup rule)
+    await bus.publish(Trade(symbol="BTCUSDT", price=1.0, qty=1.0,
+                            ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
     server, task, addr = await _serve(app)
     try:
         async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
@@ -279,6 +282,9 @@ async def test_replay_speeds_endpoint(db_conn):
 async def test_ws_broadcasts_to_all_clients():
     bus, _, app = _pipeline()
     CandleBuilder(bus)
+    # prime: the builder discards each symbol's first bucket (startup rule)
+    await bus.publish(Trade(symbol="ETHUSDT", price=1.0, qty=1.0,
+                            ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
     server, task, addr = await _serve(app)
     try:
         async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws1, \

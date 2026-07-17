@@ -83,7 +83,7 @@ async def _local_ws():
     trade = json.dumps({
         "stream": "btcusdt@aggTrade",
         "data": {"e": "aggTrade", "s": "BTCUSDT", "p": "100.5", "q": "0.1",
-                 "T": int(M0.timestamp() * 1000), "m": False},
+                 "f": 1, "l": 1, "T": int(M0.timestamp() * 1000), "m": False},
     })
     book = json.dumps({
         "stream": "btcusdt@bookTicker",

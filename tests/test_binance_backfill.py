@@ -147,7 +147,8 @@ async def test_reconnect_fetches_gap_and_publishes_before_live():
         return json.dumps({
             "stream": "btcusdt@aggTrade",
             "data": {"e": "aggTrade", "s": "BTCUSDT", "p": str(price),
-                     "q": "0.1", "T": int(now.timestamp() * 1000), "m": False},
+                     "q": "0.1", "f": 1, "l": 1,
+                     "T": int(now.timestamp() * 1000), "m": False},
         })
 
     # gap the REST server can serve: the 4 minutes after m_last
@@ -232,7 +233,7 @@ def _trade_msg(symbol: str, ts: datetime) -> str:
     return json.dumps({
         "stream": f"{symbol.lower()}@aggTrade",
         "data": {"e": "aggTrade", "s": symbol, "p": "67000", "q": "0.1",
-                 "T": int(ts.timestamp() * 1000), "m": False},
+                 "f": 1, "l": 1, "T": int(ts.timestamp() * 1000), "m": False},
     })
 
 
