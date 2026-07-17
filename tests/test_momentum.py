@@ -16,18 +16,18 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from marketscalper.engines.momentum import IncrementalATR
+from marketscalper.engines.momentum import IncrementalATR, MomentumState
 from marketscalper.providers.base import Candle
 
 UTC = timezone.utc
 M0 = datetime(2026, 7, 14, 19, 0, tzinfo=UTC)
 
 
-def _candle(h, l, c, i=0, tf="1m"):
-    """Minimal valid Candle; ATR reads only h/l/c (o and volumes are inert)."""
+def _candle(h, l, c, i=0, tf="1m", o=None):
+    """Minimal valid Candle; volumes are inert for the momentum utilities."""
     return Candle(symbol="BTCUSDT", tf=tf, ts=M0 + timedelta(minutes=i),
-                  o=c, h=float(h), l=float(l), c=float(c),
-                  v=1.0, qv=float(c), n_trades=1, taker_buy_v=0.5)
+                  o=float(c if o is None else o), h=float(h), l=float(l),
+                  c=float(c), v=1.0, qv=float(c), n_trades=1, taker_buy_v=0.5)
 
 
 # ------------------------------------------------------------- warm-up
@@ -218,3 +218,149 @@ def test_incremental_matches_independent_naive_implementation():
     atr = IncrementalATR()
     incremental = [atr.update(c) for c in candles]
     assert incremental == _naive_atr(candles, period=14)   # exact equality
+
+
+# ====================================================== MomentumState (P1.2)
+# Update-order contract (pinned): the ATR is updated BEFORE MomentumState
+# for every candle; every helper below follows it.
+
+
+def _ms(period=1, ratio=0.1):
+    atr = IncrementalATR(period=period)
+    return atr, MomentumState(atr, shift_accel_atr_ratio=ratio)
+
+
+def _feed(atr, ms, candle):
+    atr.update(candle)                       # pinned order: ATR first
+    ms.update(candle)
+
+
+def _closes(atr, ms, closes, span=1.0, start=0):
+    """Feed candles with given closes; h/l = c +/- span (contains prev close
+    for small deltas, keeping ATR simple where tests want it simple)."""
+    for j, c in enumerate(closes):
+        _feed(atr, ms, _candle(c + span, c - span, c, start + j))
+
+
+def test_velocity_warmup_none_through_candle_5_then_sma_seed():
+    # closes 100,102,101,104,103,106 -> deltas +2,-1,+3,-1,+3; SMA = 6/5 = 1.2
+    atr, ms = _ms()
+    for j, c in enumerate([100, 102, 101, 104, 103]):
+        _feed(atr, ms, _candle(c + 1, c - 1, c, j))
+        assert ms.velocity is None
+    _feed(atr, ms, _candle(107, 105, 106, 5))
+    assert ms.velocity == pytest.approx(1.2, rel=1e-9)
+
+
+def test_velocity_ema_continuation_hand_computed():
+    # seed 1.2 (above); alpha = 1/3:
+    # c7 close 105, d=-1: v = -1/3 + (2/3)*1.2            = 0.4666666666666667
+    # c8 close 108, d=+3: v = 1 + (2/3)*0.4666666666666667 = 1.3111111111111111
+    # c9 close 107, d=-1: v = -1/3 + (2/3)*1.3111111111111111
+    #                                                      = 0.5407407407407408
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 102, 101, 104, 103, 106])
+    _feed(atr, ms, _candle(106, 104, 105, 6))
+    assert ms.velocity == pytest.approx(0.4666666666666667, rel=1e-9)
+    _feed(atr, ms, _candle(109, 107, 108, 7))
+    assert ms.velocity == pytest.approx(1.3111111111111111, rel=1e-9)
+    _feed(atr, ms, _candle(108, 106, 107, 8))
+    assert ms.velocity == pytest.approx(0.5407407407407408, rel=1e-9)
+
+
+def test_acceleration_none_until_candle_7_then_velocity_diff():
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 102, 101, 104, 103, 106])
+    assert ms.velocity is not None and ms.acceleration is None   # candle 6
+    _feed(atr, ms, _candle(106, 104, 105, 6))                    # candle 7
+    assert ms.acceleration == pytest.approx(0.4666666666666667 - 1.2, rel=1e-9)
+
+
+def test_shift_true_on_flip_bar_only():
+    # v = 1.0 after five +1 deltas; crash candle 7: d = -15
+    # v7 = -5 + 2/3 = -4.333...; accel = -5.333...; ATR(1) TR = 16 -> thr 1.6
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 101, 102, 103, 104, 105])
+    assert ms.velocity == pytest.approx(1.0)
+    _feed(atr, ms, _candle(91, 89, 90, 6))                       # flip bar
+    assert ms.momentum_shift is True
+    _feed(atr, ms, _candle(91, 89, 90, 7))                       # next bar
+    assert ms.momentum_shift is False                            # not sticky
+
+
+def test_shift_suppressed_below_threshold():
+    # gentle flip: d = -2.4 -> v = -0.13333 (flip), accel = -1.13333
+    # candle range widened so ATR(1) TR = 16 -> threshold 1.6 > |accel|
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 101, 102, 103, 104, 105])
+    _feed(atr, ms, _candle(106, 90, 102.6, 6))
+    assert ms.velocity < 0                                       # flipped
+    assert ms.momentum_shift is False                            # too weak
+
+
+def test_shift_suppressed_without_sign_flip():
+    # accelerating up: d = +15, accel large, no flip
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 101, 102, 103, 104, 105])
+    _feed(atr, ms, _candle(121, 119, 120, 6))
+    assert ms.acceleration is not None and abs(ms.acceleration) > 1
+    assert ms.momentum_shift is False
+
+
+def test_shift_suppressed_while_atr_unwarm():
+    # same crash as the true-positive test, but ATR(period=20) never warms
+    atr, ms = _ms(period=20)
+    _closes(atr, ms, [100, 101, 102, 103, 104, 105])
+    _feed(atr, ms, _candle(91, 89, 90, 6))
+    assert atr.value is None and ms.momentum_shift is False
+
+
+def test_zero_velocity_never_flips():
+    # deltas +1,+1,-1,-1,0 -> seed v = 0.0; then d = -3 -> v < 0, but the
+    # strict sign rule means 0 -> negative is NOT a flip
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 101, 102, 101, 100, 100])
+    assert ms.velocity == pytest.approx(0.0)
+    _feed(atr, ms, _candle(98, 96, 97, 6))
+    assert ms.velocity < 0
+    assert ms.momentum_shift is False
+
+
+def test_body_dominance_hand_computed_and_sliding():
+    # bodies/ranges: 0.4, 0.2, 1.0, 0.0 (zero-range), 0.6 -> mean 0.44
+    atr, ms = _ms()
+    specs = [(105, 95, 104, 100),    # body 4 / range 10 = 0.4
+             (105, 95, 101, 99),     # 2/10 = 0.2
+             (105, 95, 105, 95),     # 10/10 = 1.0
+             (100, 100, 100, 100),   # zero-range -> 0.0
+             (105, 95, 98, 104)]     # 6/10 = 0.6
+    for j, (h, l, c, o) in enumerate(specs):
+        assert ms.body_dominance is None
+        _feed(atr, ms, _candle(h, l, c, j, o=o))
+    assert ms.body_dominance == pytest.approx(0.44, rel=1e-9)
+    # candle 6 (0.4 body/range 0.8/2.0) slides out the first 0.4 value:
+    _feed(atr, ms, _candle(99, 97, 97.8, 5, o=98.6))
+    assert ms.body_dominance == pytest.approx((0.2 + 1.0 + 0.0 + 0.6 + 0.4) / 5,
+                                              rel=1e-9)
+
+
+def test_momentum_determinism_same_stream_twice():
+    candles = _varied_candles(60)
+    outs = []
+    for _ in range(2):
+        atr, ms = _ms(period=14)
+        run = []
+        for c in candles:
+            _feed(atr, ms, c)
+            run.append((ms.velocity, ms.acceleration,
+                        ms.momentum_shift, ms.body_dominance))
+        outs.append(run)
+    assert outs[0] == outs[1]                                   # exact
+
+
+def test_momentum_instances_are_independent():
+    atr, ms = _ms()
+    _closes(atr, ms, [100, 101, 102, 103, 104, 105])
+    atr2, ms2 = _ms()
+    assert ms2.velocity is None and ms2.acceleration is None
+    assert ms2.momentum_shift is False and ms2.body_dominance is None
