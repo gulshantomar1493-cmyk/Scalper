@@ -1,0 +1,169 @@
+/* MarketScalper frontend shell (P0.22) — TradeOS locked design tokens (§9). */
+
+:root {
+  --surface: #0A0F1E;             /* locked surface */
+  --surface-raised: #0E1526;
+  --hairline: rgba(255, 255, 255, 0.14);  /* locked hairline */
+  --accent: #22D3EE;              /* locked cyan accent */
+  --up: #22C55E;                  /* semantic green */
+  --down: #EF4444;                /* semantic red */
+  --text: #E5E7EB;
+  --text-dim: #8B93A7;
+  --radius: 12px;                 /* locked radius */
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--surface);
+  color: var(--text);
+  font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+.mono {
+  font-family: var(--mono);
+  font-variant-numeric: tabular-nums;   /* tabular mono for every number (§9) */
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-raised);
+}
+
+.brand { font-weight: 600; letter-spacing: 0.02em; }
+
+.brand-sub {
+  margin-left: 10px;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-dim);
+}
+
+.conn { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+
+.dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--text-dim);          /* CONNECTING */
+}
+
+.dot.live { background: var(--up); }
+.dot.down { background: var(--down); }
+
+#chart-wrap {
+  flex: 1;
+  min-height: 0;
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+#chart {
+  flex: 1;
+  min-height: 0;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+/* 5m context strip below the main chart (§9 layout) */
+#strip-wrap {
+  position: relative;
+  height: 140px;
+  flex: none;
+}
+
+#strip {
+  height: 100%;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.strip-label {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  z-index: 2;
+  font-size: 10px;
+  color: var(--text-dim);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* replay controls (P0.25 — start / stop / speed / date-range only) */
+.replay-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--hairline);
+  background: var(--surface-raised);
+  font-size: 12px;
+}
+
+.strip-label-inline {
+  color: var(--text-dim);
+  font-size: 10px;
+  letter-spacing: 0.08em;
+}
+
+.replay-bar input,
+.replay-bar select,
+.replay-bar button {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 12px;
+}
+
+.replay-bar button { cursor: pointer; color: var(--accent); border-color: var(--accent); }
+.replay-bar input { color-scheme: dark; }
+
+/* symbol switcher (frozen v1 pair) */
+.switcher {
+  display: flex;
+  gap: 6px;
+}
+
+.switcher button {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.switcher button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.statusbar {
+  display: flex;
+  justify-content: space-between;
+  padding: 6px 16px;
+  border-top: 1px solid var(--hairline);
+  background: var(--surface-raised);
+  color: var(--text-dim);
+  font-size: 12px;
+}

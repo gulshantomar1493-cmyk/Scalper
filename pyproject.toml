@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "marketscalper"
+version = "0.1.0"
+description = "MarketScalper — deterministic market analysis & decision-support terminal (1m/5m BTC+ETH). Generates trade recommendations; never executes trades."
+requires-python = ">=3.12"
+license = { text = "Proprietary" }
+authors = [{ name = "Gulshan" }]
+
+# Minimum compatible versions (upgrade-friendly) — no strict pins.
+# Only the frozen Architecture §2 stack; nothing extra.
+dependencies = [
+    "fastapi>=0.110",
+    "uvicorn>=0.29",
+    "websockets>=12.0",
+    "asyncpg>=0.29",
+    "PyYAML>=6.0",
+    "aiohttp>=3.9",
+]
+
+[project.optional-dependencies]
+# Test-only tooling (roadmap P0.3) — minimum compatible versions, no pins.
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+]
+
+[project.scripts]
+marketscalper = "marketscalper.main:main"
+
+[tool.setuptools.packages.find]
+where = ["backend"]
+include = ["marketscalper*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["backend"]
+asyncio_mode = "auto"

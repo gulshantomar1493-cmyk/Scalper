@@ -1,0 +1,22 @@
+# MarketScalper configuration — COMMITTED base layer (layer 1 of 3).
+#
+# Loading order (fixed): config.example.yaml -> config.yaml (git-ignored) -> env vars.
+# Copy this file to backend/config.yaml for local overrides.
+# NO SECRETS IN THIS FILE, EVER — dsn stays empty here; set it in
+# config.yaml (git-ignored) or via MARKETSCALPER_DB_DSN.
+
+app:
+  log_level: INFO        # env: MARKETSCALPER_LOG_LEVEL
+  log_dir: logs          # env: MARKETSCALPER_LOG_DIR
+
+# v1 scope (frozen): BTC + ETH only, 1m primary / 5m context.
+symbols:                 # env: MARKETSCALPER_SYMBOLS (comma-separated)
+  - BTCUSDT
+  - ETHUSDT
+
+timeframes:              # env: MARKETSCALPER_TIMEFRAMES (comma-separated)
+  - 1m
+  - 5m
+
+database:
+  dsn: ""                # SECRET — env: MARKETSCALPER_DB_DSN (PostgreSQL 16)

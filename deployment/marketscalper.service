@@ -1,0 +1,22 @@
+# MarketScalper systemd unit (roadmap P0.27; Decision D4).
+# Single Linux server, single process, provider-agnostic.
+# Install: copied to /etc/systemd/system/ by deployment/deploy.sh.
+
+[Unit]
+Description=MarketScalper — deterministic market analysis & decision-support terminal
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=marketscalper
+Group=marketscalper
+WorkingDirectory=/opt/marketscalper
+# Secrets (DB DSN, API token) live only here — never in git (D3/D4):
+EnvironmentFile=/etc/marketscalper/env
+ExecStart=/opt/marketscalper/venv/bin/marketscalper
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

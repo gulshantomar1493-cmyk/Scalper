@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<!-- MarketScalper — frontend shell (roadmap P0.22; Architecture §9).
+     Standalone static files: no build system, no framework, no bundler.
+     Open as: index.html?api=127.0.0.1:8000&token=YOUR_TOKEN
+     (?api defaults to the serving host; token can also be entered at load.) -->
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>MarketScalper</title>
+  <link rel="stylesheet" href="styles.css" />
+  <!-- TradingView Lightweight Charts v5 — pinned version (Apache-2.0, §2 locked) -->
+  <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      MarketScalper
+      <span class="brand-sub">deterministic analysis &middot; decision support &middot; no execution</span>
+    </div>
+    <div class="switcher mono">
+      <button id="sym-BTCUSDT" type="button">BTCUSDT</button>
+      <button id="sym-ETHUSDT" type="button">ETHUSDT</button>
+    </div>
+    <div class="conn">
+      <span id="conn-dot" class="dot"></span>
+      <span id="conn-text" class="mono">CONNECTING</span>
+    </div>
+  </header>
+
+  <div class="replay-bar mono">
+    <span class="strip-label-inline">REPLAY</span>
+    <input id="replay-from" type="datetime-local" />
+    <input id="replay-to" type="datetime-local" />
+    <select id="replay-speed">
+      <option value="1">×1</option>
+      <option value="10">×10</option>
+      <option value="60" selected>×60</option>
+      <option value="max">max</option>
+    </select>
+    <button id="replay-start" type="button">Start</button>
+    <button id="replay-stop" type="button">Stop</button>
+  </div>
+
+  <main id="chart-wrap">
+    <div id="chart"></div>
+    <div id="strip-wrap">
+      <span class="strip-label mono">5m context</span>
+      <div id="strip"></div>
+    </div>
+  </main>
+
+  <footer class="statusbar mono">
+    <span id="ws-target"></span>
+    <span id="last-event">last event: —</span>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>

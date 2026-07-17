@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.venv/
+venv/
+
+# Local configuration & secrets — NEVER commit (layer 2 of config order)
+backend/config.yaml
+.env
+
+# Runtime artifacts
+logs/
+*.log
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
