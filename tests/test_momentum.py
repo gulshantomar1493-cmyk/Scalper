@@ -16,7 +16,13 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from marketscalper.engines.momentum import IncrementalATR, MomentumState
+from marketscalper.engines.momentum import (
+    IncrementalATR,
+    MomentumState,
+    RegimeClassifier,
+    RegimeConfig,
+    classify_regime,
+)
 from marketscalper.providers.base import Candle
 
 UTC = timezone.utc
@@ -364,3 +370,140 @@ def test_momentum_instances_are_independent():
     atr2, ms2 = _ms()
     assert ms2.velocity is None and ms2.acceleration is None
     assert ms2.momentum_shift is False and ms2.body_dominance is None
+
+
+# ==================================================== RegimeClassifier (P1.4)
+# Cadence contract (pinned): the ATRs are updated BEFORE classifier.update()
+# for every closed 1m candle; the helpers below follow it.
+
+_CFG = RegimeConfig()
+
+
+def test_classify_regime_truth_table_and_precedence():
+    # expansion: atr_1m > 1.5*median · coil: atr_1m < 0.6*atr_5m
+    assert classify_regime(16.0, 10.0, 10.0, _CFG) == "expansion"   # 16 > 15
+    assert classify_regime(5.0, 10.0, 10.0, _CFG) == "coil"         # 5 < 6
+    assert classify_regime(10.0, 10.0, 10.0, _CFG) == "normal"
+    # both conditions true -> expansion wins (D9 precedence)
+    assert classify_regime(16.0, 100.0, 10.0, _CFG) == "expansion"  # also 16 < 60
+    # any unwarm input -> None
+    assert classify_regime(None, 10.0, 10.0, _CFG) is None
+    assert classify_regime(10.0, None, 10.0, _CFG) is None
+    assert classify_regime(10.0, 10.0, None, _CFG) is None
+    # strict inequalities: boundary equality is normal
+    assert classify_regime(15.0, 10.0, 10.0, _CFG) == "normal"      # == 1.5*median
+    assert classify_regime(15.0, 25.0, 15.0, _CFG) == "normal"      # == 0.6*atr_5m
+
+
+def _tr_candle(tr, i):
+    """Candle whose TR is exactly `tr` for a period=1 ATR (contained range)."""
+    return _candle(100 + tr / 2, 100 - tr / 2, 100, i)
+
+
+def _warm_atr5(value=10.0):
+    """period=1 ATR warmed to exactly `value`."""
+    atr = IncrementalATR(period=1)
+    atr.update(_candle(105, 95, 100, 0, tf="5m"))
+    atr.update(_candle(100 + value / 2, 100 - value / 2, 100, 5, tf="5m"))
+    assert atr.value == pytest.approx(value)
+    return atr
+
+
+def _drive(rc, atr_1m, trs, start=1):
+    """Feed 1m candles with the given TRs (ATR first), classify after each."""
+    out = []
+    for j, tr in enumerate(trs):
+        atr_1m.update(_tr_candle(tr, start + j))
+        out.append(rc.update())
+    return out
+
+
+def test_median_window_slide_and_classification_hand_computed():
+    # window=4, expansion_ratio=1.0 -> expansion iff atr_1m > median.
+    # atr_5m tiny (0.5): coil needs atr_1m < 0.3 — never true here.
+    cfg = RegimeConfig(expansion_ratio=1.0, median_window_bars=4)
+    atr1 = IncrementalATR(period=1)
+    rc = RegimeClassifier("BTCUSDT", atr1, _warm_atr5(0.5), cfg)
+    atr1.update(_tr_candle(10, 0))              # first candle: ATR unwarm
+    assert rc.update() is None                  # window empty -> unknown
+    # TRs 10,20,30,40: window fills at the 4th value; median (20+30)/2 = 25
+    out = _drive(rc, atr1, [10, 20, 30, 40])
+    assert out == [None, None, None, "expansion"]        # 40 > 25
+    # slide: TR=22 evicts 10 -> sorted [20,22,30,40], median 26 -> normal
+    assert _drive(rc, atr1, [22], start=5) == ["normal"]
+    assert rc.counts == {"coil": 0, "normal": 1, "expansion": 1, "unknown": 4}
+
+
+def test_unknown_until_all_three_inputs_warm():
+    # full median window but atr_5m never warm -> still None (D9)
+    cfg = RegimeConfig(median_window_bars=2)
+    atr1 = IncrementalATR(period=1)
+    atr5_unwarm = IncrementalATR(period=20)
+    rc = RegimeClassifier("BTCUSDT", atr1, atr5_unwarm, cfg)
+    atr1.update(_tr_candle(10, 0))
+    rc.update()
+    out = _drive(rc, atr1, [10, 10])
+    assert out == [None, None]
+    assert rc.counts["unknown"] == 3
+
+
+def test_precedence_with_real_atr_instances():
+    # window=2: TRs 10,10 -> median 10 -> coil (10 < 0.6*100 = 60);
+    # then TR=40 -> window [10,40], median 25 -> 40 > 37.5 (expansion)
+    # AND 40 < 60 (coil) -> expansion wins.
+    cfg = RegimeConfig(median_window_bars=2)
+    atr1 = IncrementalATR(period=1)
+    rc = RegimeClassifier("BTCUSDT", atr1, _warm_atr5(100.0), cfg)
+    atr1.update(_tr_candle(10, 0))
+    assert rc.update() is None
+    assert _drive(rc, atr1, [10, 10, 40]) == [None, "coil", "expansion"]
+
+
+def test_summary_line_contents_and_log_levels(caplog):
+    cfg = RegimeConfig(median_window_bars=2)
+    atr1 = IncrementalATR(period=1)
+    rc = RegimeClassifier("BTCUSDT", atr1, _warm_atr5(100.0), cfg)
+    atr1.update(_tr_candle(10, 0))
+    with caplog.at_level("DEBUG", logger="marketscalper.engines.momentum"):
+        rc.update()
+        _drive(rc, atr1, [10, 10])
+    debug_lines = [r for r in caplog.records if r.levelname == "DEBUG"]
+    assert len(debug_lines) == 3                      # one per bar, DEBUG only
+    caplog.clear()
+    with caplog.at_level("INFO", logger="marketscalper.engines.momentum"):
+        rc.log_summary("2026-04-18..2026-07-17")
+    assert len(caplog.records) == 1                   # exactly one INFO line
+    line = caplog.records[0].getMessage()
+    assert "BTCUSDT" in line and "2026-04-18..2026-07-17" in line
+    assert "unknown=2" in line and "coil=1" in line
+    assert "(33.3%)" in line and "(66.7%)" in line
+    assert "compression_ratio=0.6" in line
+    assert "expansion_ratio=1.5" in line and "median_window_bars=2" in line
+
+
+def test_regime_determinism_same_stream_twice():
+    candles = _varied_candles(60)
+    runs = []
+    for _ in range(2):
+        atr1, atr5 = IncrementalATR(period=3), IncrementalATR(period=3)
+        rc = RegimeClassifier("BTCUSDT", atr1, atr5,
+                              RegimeConfig(median_window_bars=10))
+        seq = []
+        for i, c in enumerate(candles):
+            atr1.update(c)
+            if i % 5 == 4:                            # every 5th bar as "5m"
+                atr5.update(c)
+            seq.append(rc.update())
+        runs.append((seq, rc.counts))
+    assert runs[0] == runs[1]
+
+
+def test_regime_classifiers_are_independent():
+    atr1 = IncrementalATR(period=1)
+    rc = RegimeClassifier("BTCUSDT", atr1, _warm_atr5(), RegimeConfig())
+    atr1.update(_tr_candle(10, 0))
+    rc.update()
+    rc2 = RegimeClassifier("ETHUSDT", IncrementalATR(), IncrementalATR(),
+                           RegimeConfig())
+    assert rc2.regime is None
+    assert rc2.counts == {"coil": 0, "normal": 0, "expansion": 0, "unknown": 0}

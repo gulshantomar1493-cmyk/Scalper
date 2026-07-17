@@ -2,8 +2,9 @@
 
 NOT an engine: plain incremental metrics that the Structure, Trendline,
 Volume and Qualification engines consume. ATR(14) landed at P1.1;
-velocity / acceleration / momentum-shift / body-dominance at P1.2
-(thresholds per Decision D9); the regime classifier follows at P1.4.
+velocity / acceleration / momentum-shift / body-dominance at P1.2;
+the regime classifier (coil/normal/expansion) at P1.4 — constants and
+precedence per Decision D9.
 
 No repaint: updates happen only on closed candles (the bus carries truth
 candles only). No wall clock, no randomness — a pure fold over the candle
@@ -12,9 +13,14 @@ stream, so replay and live produce identical sequences (§0 rule 2).
 
 from __future__ import annotations
 
+import logging
+from bisect import insort
 from collections import deque
+from dataclasses import dataclass
 
 from marketscalper.providers.base import Candle
+
+log = logging.getLogger(__name__)
 
 
 class IncrementalATR:
@@ -156,3 +162,108 @@ class MomentumState:
         flipped = ((prev_velocity > 0 and self._velocity < 0)
                    or (prev_velocity < 0 and self._velocity > 0))
         self._shift = flipped and abs(self._acceleration) > self._ratio * atr
+
+
+@dataclass(frozen=True)
+class RegimeConfig:
+    """Decision D9 regime constants (defaults = the frozen §4.2 literals)."""
+
+    compression_ratio: float = 0.6
+    expansion_ratio: float = 1.5
+    median_window_bars: int = 240
+
+
+def classify_regime(
+    atr_1m: float | None,
+    atr_5m: float | None,
+    median_atr: float | None,
+    cfg: RegimeConfig,
+) -> str | None:
+    """Pure §4.2 classification with D9 precedence (expansion > coil > normal).
+
+    None ("unknown") on any unwarm input. Strict inequalities — boundary
+    equality is neither expansion nor coil (the frozen formulas use >/<)."""
+    if atr_1m is None or atr_5m is None or median_atr is None:
+        return None
+    if atr_1m > cfg.expansion_ratio * median_atr:
+        return "expansion"
+    if atr_1m < cfg.compression_ratio * atr_5m:
+        return "coil"
+    return "normal"
+
+
+class RegimeClassifier:
+    """Per-symbol volatility regime, one classification per closed 1m candle
+    (roadmap P1.4; §4.2 formulas; constants, precedence, warm-up and logging
+    per Decision D9).
+
+    Cadence contract: call update() once per closed 1m candle, AFTER the two
+    ATRs were updated for that close (ATR-5m simply holds its latest value
+    between 5m closes). The median window admits warm ATR-1m values only and
+    yields a median only when FULL (D9); even window -> mean of the two
+    middle sorted values. Fixed-window simplest implementation on purpose:
+    a deque for arrival order + a bisect-sorted list — O(1) per update with
+    respect to stream length (work bounded by the constant window size).
+    """
+
+    __slots__ = ("_symbol", "_atr_1m", "_atr_5m", "_cfg", "_window",
+                 "_sorted", "_regime", "_counts")
+
+    def __init__(
+        self,
+        symbol: str,
+        atr_1m: IncrementalATR,
+        atr_5m: IncrementalATR,
+        cfg: RegimeConfig = RegimeConfig(),
+    ) -> None:
+        self._symbol = symbol
+        self._atr_1m = atr_1m
+        self._atr_5m = atr_5m
+        self._cfg = cfg
+        self._window: deque[float] = deque()   # arrival order; manual evict
+        self._sorted: list[float] = []         # same values, kept sorted
+        self._regime: str | None = None
+        self._counts = {"coil": 0, "normal": 0, "expansion": 0, "unknown": 0}
+
+    @property
+    def regime(self) -> str | None:
+        return self._regime
+
+    @property
+    def counts(self) -> dict[str, int]:
+        return dict(self._counts)
+
+    def update(self) -> str | None:
+        """Classify for the just-closed 1m candle; returns the regime."""
+        atr_1m = self._atr_1m.value
+        if atr_1m is not None:
+            if len(self._window) == self._cfg.median_window_bars:
+                self._sorted.remove(self._window.popleft())
+            self._window.append(atr_1m)
+            insort(self._sorted, atr_1m)
+        median = None
+        if len(self._window) == self._cfg.median_window_bars:
+            mid = len(self._sorted) // 2
+            if len(self._sorted) % 2:
+                median = self._sorted[mid]
+            else:
+                median = (self._sorted[mid - 1] + self._sorted[mid]) / 2.0
+        self._regime = classify_regime(atr_1m, self._atr_5m.value, median, self._cfg)
+        self._counts[self._regime or "unknown"] += 1
+        log.debug("regime: %s %s", self._symbol, self._regime or "unknown")
+        return self._regime
+
+    def log_summary(self, range_desc: str) -> None:
+        """The one D9 INFO line: counts, percentages, range, constants."""
+        total = sum(self._counts.values())
+        parts = ", ".join(
+            f"{name}={n} ({(100.0 * n / total) if total else 0.0:.1f}%)"
+            for name, n in self._counts.items()
+        )
+        log.info(
+            "regime distribution %s [%s]: %s | constants: "
+            "compression_ratio=%s expansion_ratio=%s median_window_bars=%s",
+            self._symbol, range_desc, parts,
+            self._cfg.compression_ratio, self._cfg.expansion_ratio,
+            self._cfg.median_window_bars,
+        )
