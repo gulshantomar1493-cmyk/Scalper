@@ -239,7 +239,7 @@ function connect() {
       // P2.21: pass the already-available close through — transport
       // only, no calculation; Overlays uses it for premium/discount.
       Overlays.setStructure(diff[activeSymbol].structure, candle.c);
-      Panel.setStructure(diff[activeSymbol].structure);   // P3.19
+      Panel.setStructure(diff[activeSymbol].structure, candle.ts);  // P3.19/P4.10
     }
   };
 

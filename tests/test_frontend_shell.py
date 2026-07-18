@@ -371,3 +371,46 @@ def test_panel_js_is_valid_javascript():
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------- P4.10
+
+
+def test_panel_js_renders_recommendation_status_and_eval():
+    js = _read("panel.js")
+    # status badge from the frozen lifecycle statuses (P4.2 payload)
+    assert "STATUS_CLASS" in js
+    for st in ("active", "evaluated", "invalidated", "expired"):
+        assert f'{st}:' in js or f'"{st}"' in js
+    assert "r.status" in js
+    # hypothetical outcome (P4.3 eval_*), display-only
+    assert "r.eval_outcome" in js and "r.eval_r" in js
+    # invalidation timer from two backend timestamps (no trade logic)
+    assert "function invalidationTimer" in js
+    assert "r.invalid_after_bars" in js and "r.created_ts" in js
+    assert "lastCandleTs" in js
+
+
+def test_panel_js_p410_still_pure_consumer():
+    js = _read("panel.js")
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert ".innerHTML" not in js
+    assert "localStorage" not in js and "sessionStorage" not in js
+
+
+def test_panel_js_setstructure_accepts_candle_ts():
+    js = _read("panel.js")
+    assert "function setStructure(structure, candleTs)" in js
+
+
+def test_app_js_passes_candle_ts_to_panel():
+    js = _read("app.js")
+    assert "Panel.setStructure(diff[activeSymbol].structure, candle.ts)" in js
+
+
+def test_css_carries_recommendation_status_tokens():
+    css = _read("styles.css")
+    assert ".plan-status" in css and ".plan-timer" in css and ".plan-eval" in css
+    assert ".st-active" in css and ".st-evaluated" in css

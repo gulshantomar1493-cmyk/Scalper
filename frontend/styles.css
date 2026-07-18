@@ -323,6 +323,34 @@ body {
 .plan-dir.long { color: var(--up); border: 1px solid var(--up); }
 .plan-dir.short { color: var(--down); border: 1px solid var(--down); }
 .plan-score { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+.plan-status {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 1px 6px;
+  border-radius: 999px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  border: 1px solid var(--hairline);
+}
+.plan-status.st-active { color: var(--accent); border-color: var(--accent); }
+.plan-status.st-evaluated { color: var(--up); border-color: var(--up); }
+.plan-status.st-invalidated { color: var(--down); border-color: var(--down); }
+.plan-status.st-expired { color: var(--text-dim); }
+.plan-timer { font-size: 11px; color: var(--warn); margin-bottom: 8px; }
+.plan-eval {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--hairline);
+  font-size: 12px;
+}
+.eval-label { color: var(--text-dim); font-size: 11px; }
+.eval-outcome { font-weight: 600; }
+.eval-outcome.tp { color: var(--up); }
+.eval-outcome.stop { color: var(--down); }
+.eval-r { margin-left: auto; }
 .rail-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
 .rail-label { color: var(--text-dim); }
 .rail-value { color: var(--text); }

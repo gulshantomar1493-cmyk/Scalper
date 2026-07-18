@@ -34,6 +34,13 @@ const Panel = (function () {
   let el = {};                 // resolved DOM slots
   let animHandle = null;       // count-up frame handle
   let shownScore = 0;          // last painted gauge value (for the count-up)
+  let lastCandleTs = null;     // latest closed-candle time (for the timer)
+
+  const STATUS_CLASS = {
+    active: "st-active", evaluated: "st-evaluated",
+    invalidated: "st-invalidated", expired: "st-expired",
+  };
+  const INVALID_AFTER_DEFAULT = 5;
 
   function init() {
     el = {
@@ -85,7 +92,8 @@ const Panel = (function () {
 
   /* ------------------------------------------------------------- rendering */
 
-  function setStructure(structure) {
+  function setStructure(structure, candleTs) {
+    if (candleTs) lastCandleTs = candleTs;         // transport only (§9)
     if (!structure || !structure.qualification) {
       if (el.panel) el.panel.classList.add("empty");
       return;
@@ -188,10 +196,17 @@ const Panel = (function () {
     head.appendChild(elem("span",
       "plan-dir " + (r.direction === "LONG" ? "long" : "short"),
       r.direction || ""));
+    const status = r.status || "active";
+    head.appendChild(elem("span", "plan-status " + (STATUS_CLASS[status] || ""),
+      status));
     if (typeof r.score === "number") {
       head.appendChild(elem("span", "plan-score mono", "score " + num(r.score, 0)));
     }
     el.plan.appendChild(head);
+
+    // invalidation timer — only while the entry window is open (active)
+    const timer = invalidationTimer(r, status);
+    if (timer) el.plan.appendChild(elem("div", "plan-timer", timer));
 
     const rail = elem("div", "plan-rail");
     railRow(rail, "Entry", num(r.entry, 2));
@@ -205,6 +220,18 @@ const Panel = (function () {
         ? " / " + num(r.net_rr_tp2, 2) : ""));
     el.plan.appendChild(rail);
 
+    // hypothetical outcome (once the lifecycle evaluated/expired it)
+    if (r.eval_outcome !== undefined && r.eval_outcome !== null) {
+      const ev = elem("div", "plan-eval");
+      ev.appendChild(elem("span", "eval-label", "Hypothetical"));
+      ev.appendChild(elem("span",
+        "eval-outcome " + (r.eval_r >= 0 ? "tp" : "stop"),
+        r.eval_outcome.toUpperCase()));
+      ev.appendChild(elem("span", "eval-r mono",
+        (r.eval_r >= 0 ? "+" : "") + num(r.eval_r, 2) + "R"));
+      el.plan.appendChild(ev);
+    }
+
     if (r.guidance && r.guidance.length) {
       const g = elem("div", "plan-guidance");
       g.appendChild(elem("div", "guidance-head", "Suggested management"));
@@ -213,6 +240,20 @@ const Panel = (function () {
     }
     el.plan.appendChild(elem("div", "plan-disclaimer",
       "Display only — you place any order manually on your exchange."));
+  }
+
+  // Display-only countdown: candles remaining in the entry window. The
+  // window length is the backend's own invalid_after_bars; "elapsed" is
+  // the whole minutes between the rec's created_ts and the latest closed
+  // candle — pure formatting of two backend timestamps, no trade logic.
+  function invalidationTimer(r, status) {
+    if (status !== "active" || !lastCandleTs || !r.created_ts) return null;
+    const window = r.invalid_after_bars || INVALID_AFTER_DEFAULT;
+    const elapsed = Math.floor(
+      (Date.parse(lastCandleTs) - Date.parse(r.created_ts)) / 60000);
+    const left = window - elapsed;
+    if (left <= 0) return "entry window elapsed";
+    return "entry window: " + left + " candle" + (left === 1 ? "" : "s") + " left";
   }
 
   function railRow(rail, label, value, cls) {
