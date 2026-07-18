@@ -134,16 +134,29 @@ async def test_5m_published_at_a2_boundary_with_correct_fold(db_conn):
 
 
 async def test_gap_across_window_discards_partial(db_conn, caplog):
+    """D7 fix: BOTH windows around a gap are incomplete — the cut window
+    0 (boundary never arrived) AND the mid-entered window 1 (seeded at
+    :07, not the head). Neither publishes; both warn."""
     seeded = [_candle("BTCUSDT", m, 100 + m) for m in (0, 1, 7, 8, 9)]
     await _seed(db_conn, seeded)
     with caplog.at_level("WARNING"):
         events, _ = await _replay_all(
             db_conn, ["BTCUSDT"], M0, M0 + timedelta(minutes=10))
-    five_m = [e for e in events if e.tf == "5m"]
-    assert len(five_m) == 1                          # window 0 never published
-    assert five_m[0].ts == M0 + timedelta(minutes=5)
-    assert five_m[0].n_trades == 9                   # minutes 7,8,9 only
+    assert [e for e in events if e.tf == "5m"] == []
     assert any("partial 5m" in r.message for r in caplog.records)
+    assert any("incomplete 5m" in r.message for r in caplog.records)
+
+
+async def test_hole_inside_window_discards_5m(db_conn, caplog):
+    """D7 fix regression (verified scenario): a missing minute INSIDE a
+    window silently corrupted the published 5m candle before the fix."""
+    seeded = [_candle("BTCUSDT", m, 100 + m) for m in (0, 2, 3, 4)]
+    await _seed(db_conn, seeded)
+    with caplog.at_level("WARNING"):
+        events, _ = await _replay_all(
+            db_conn, ["BTCUSDT"], M0, M0 + timedelta(minutes=5))
+    assert [e for e in events if e.tf == "5m"] == []
+    assert any("incomplete 5m" in r.message for r in caplog.records)
 
 
 # ------------------------------------------------------- pipeline identity

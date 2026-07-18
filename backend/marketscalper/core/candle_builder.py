@@ -18,6 +18,11 @@ Rules (frozen):
     a WARNING — they never mutate a closed candle.
   * Empty minutes during feed gaps produce no candles here; kline backfill
     (P0.15, Decision D5) fills those. No synthetic candles.
+  * A 5m candle publishes ONLY when its window is complete: seeded at the
+    window head and folded contiguously through all five minutes. Any
+    incomplete window — entered mid-way, holed by a gap, or cut by the
+    boundary — is discarded with a WARNING (D7: incomplete = false data;
+    verified-defect fix, 2026-07-18).
   * The first bucket per symbol after process start is DISCARDED at rollover
     (owner decision at P0.28): observation may have begun mid-minute, and a
     partially observed candle is false data — correctness over completeness.
@@ -69,12 +74,20 @@ class _OpenCandle:
 
 
 class _Open5m:
-    """Mutable per-symbol 5m aggregate of closed 1m candles. Internal only."""
+    """Mutable per-symbol 5m aggregate of closed 1m candles. Internal only.
 
-    __slots__ = ("window_start", "o", "h", "l", "c", "v", "qv", "n_trades", "taker_buy_v")
+    `complete` (D7 fix): True iff the aggregate was seeded at the window
+    head and every fold was the immediately next bucket — closed 1m
+    candles arrive in strictly increasing bucket order, so contiguity
+    from the head means all five minutes are present at the boundary."""
 
-    def __init__(self, window_start: int, c1: Candle) -> None:
+    __slots__ = ("window_start", "last_bucket", "complete",
+                 "o", "h", "l", "c", "v", "qv", "n_trades", "taker_buy_v")
+
+    def __init__(self, window_start: int, closed_bucket: int, c1: Candle) -> None:
         self.window_start = window_start
+        self.last_bucket = closed_bucket
+        self.complete = closed_bucket == window_start
         self.o = c1.o
         self.h = c1.h
         self.l = c1.l
@@ -84,7 +97,10 @@ class _Open5m:
         self.n_trades = c1.n_trades
         self.taker_buy_v = c1.taker_buy_v
 
-    def fold(self, c1: Candle) -> None:
+    def fold(self, closed_bucket: int, c1: Candle) -> None:
+        if closed_bucket != self.last_bucket + 1:
+            self.complete = False              # hole inside the window
+        self.last_bucket = closed_bucket
         self.h = max(self.h, c1.h)
         self.l = min(self.l, c1.l)
         self.c = c1.c
@@ -161,13 +177,23 @@ class CandleBuilder:
             agg = None
 
         if agg is None:
-            agg = _Open5m(window_start, closed_1m)
+            agg = _Open5m(window_start, closed_bucket, closed_1m)
             self._open_5m[symbol] = agg
         else:
-            agg.fold(closed_1m)
+            agg.fold(closed_bucket, closed_1m)
 
         if (closed_bucket + 1) % _WINDOW == 0:  # A2 boundary rule
-            await self._bus.publish(_to_5m_candle(symbol, agg))
+            if agg.complete:
+                await self._bus.publish(_to_5m_candle(symbol, agg))
+            else:
+                # D7 (verified-defect fix): a window entered mid-way or
+                # holed by a gap is false data — never published, never
+                # persisted.
+                log.warning(
+                    "candle_builder: discarding incomplete 5m candle %s "
+                    "window %s (missing minutes are false data, D7)",
+                    symbol, _bucket_start(agg.window_start),
+                )
             del self._open_5m[symbol]
 
 

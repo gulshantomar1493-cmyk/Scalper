@@ -117,8 +117,37 @@ for (const s of SYMBOLS) {
 document.getElementById(`sym-${activeSymbol}`).classList.add("active");
 
 /* --------------------------------------------------- replay controls (P0.25)
- * Start / stop / speed / date-range only. Replay candles arrive through the
- * SAME WebSocket payload as live candles — no frontend replay logic. */
+ * Start / stop / speed / date-range. Replay candles arrive through the SAME
+ * WebSocket payload as live candles. F2: while a replay runs the server
+ * suppresses the live push, so the chart is cleared at start and rendered
+ * from the replay stream; a status poll detects completion and re-bootstraps
+ * the live chart. Still a thin client — no replay data logic here. */
+
+let replayMode = false;
+let replayPoll = null;
+
+function enterReplayMode() {
+  replayMode = true;
+  mainSeries.setData([]);                    // replay owns the chart now
+  stripSeries.setData([]);
+  delete lastStructure[activeSymbol];
+  Overlays.setStructure(null);
+  if (replayPoll) clearInterval(replayPoll);
+  replayPoll = setInterval(async () => {
+    try {
+      const status = await replayCall("/replay/status", { method: "GET" });
+      if (!status.running) exitReplayMode("replay finished");
+    } catch (err) { /* transient poll failure: keep polling */ }
+  }, 2000);
+}
+
+function exitReplayMode(note) {
+  if (!replayMode) return;
+  replayMode = false;
+  if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
+  lastEvent.textContent = note;
+  loadHistory(activeSymbol);                 // re-bootstrap the live chart
+}
 
 async function replayCall(path, options) {
   const resp = await fetch(`http://${API_HOST}${path}`, {
@@ -143,6 +172,7 @@ document.getElementById("replay-start").addEventListener("click", async () => {
       speed,
     });
     const status = await replayCall("/replay/start", { method: "POST", body });
+    enterReplayMode();                       // F2: replay owns the chart
     lastEvent.textContent = `replay running: ${status.symbol} ×${status.speed}`;
   } catch (err) {
     lastEvent.textContent = `replay: ${err.message}`;
@@ -152,7 +182,7 @@ document.getElementById("replay-start").addEventListener("click", async () => {
 document.getElementById("replay-stop").addEventListener("click", async () => {
   try {
     await replayCall("/replay/stop", { method: "POST" });
-    lastEvent.textContent = "replay stopped";
+    exitReplayMode("replay stopped");        // F2: back to the live chart
   } catch (err) {
     lastEvent.textContent = `replay: ${err.message}`;
   }
@@ -194,8 +224,14 @@ function connect() {
     }
     const candle = msg.candle;
     if (candle.symbol !== activeSymbol) return;          // client-side filter only
-    if (candle.tf === "1m") mainSeries.update(toBar(candle));   // diff-only (§9)
-    else if (candle.tf === "5m") stripSeries.update(toBar(candle));
+    try {
+      if (candle.tf === "1m") mainSeries.update(toBar(candle)); // diff-only (§9)
+      else if (candle.tf === "5m") stripSeries.update(toBar(candle));
+    } catch (err) {
+      // F2: a stray in-flight live bar during the replay-mode transition
+      // would be older/newer than the freshly reset series — drop it.
+      console.warn("chart update skipped:", err.message);
+    }
     if (diff[activeSymbol] && diff[activeSymbol].structure) {
       Overlays.setStructure(diff[activeSymbol].structure);
     }

@@ -347,7 +347,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
-    app = create_app(bus, store, pool, token, replay_provider=ReplayFeed)
+    app = create_app(bus, store, pool, token, replay_provider=ReplayFeed,
+                     replay_wiring=_wire_structure_engines)   # F2: full chain
 
     await feed.start()
     await sampler.start()

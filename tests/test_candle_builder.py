@@ -232,30 +232,56 @@ async def test_1m_published_before_5m_at_the_boundary():
     assert [c.tf for c in closed][-2:] == ["1m", "5m"]    # §4.1 order: close 1m, then roll
 
 
-async def test_mid_window_start_closes_at_boundary_with_what_it_received():
+async def test_mid_window_start_discards_incomplete_5m(caplog):
+    """D7 fix (verified scenario): a window entered mid-way is false data
+    — before the fix it published 'with what it received'."""
     bus, _, closed = await _rig()
-    for i in (2, 3, 4, 5):                                # builder starts at :02
-        await bus.publish(_minute(i, price=100 + i, qty=1))
-    c5 = [c for c in closed if c.tf == "5m"]
-    assert len(c5) == 1
-    assert c5[0].ts == M0 and c5[0].n_trades == 3         # minutes :02,:03,:04 only
-    assert c5[0].o == 102                                  # first received minute's open
+    with caplog.at_level("WARNING"):
+        for i in (2, 3, 4, 5):                            # builder starts at :02
+            await bus.publish(_minute(i, price=100 + i, qty=1))
+    assert [c for c in closed if c.tf == "5m"] == []
+    assert any("incomplete 5m candle" in r.message for r in caplog.records)
 
 
-async def test_gap_across_window_boundary_discards_partial_with_warning(caplog):
+async def test_gap_across_window_boundary_discards_both_partials(caplog):
+    """D7 fix: the cut window w0 (existing discard) AND the mid-entered
+    resume window w1 (seeded at :07) are both incomplete — neither
+    publishes."""
     bus, _, closed = await _rig()
     await bus.publish(_minute(0, price=100, qty=1))
     await bus.publish(_minute(1, price=101, qty=1))       # closes :00 -> folds w0
     await bus.publish(_minute(7, price=107, qty=1))       # closes :01 -> folds w0
     with caplog.at_level("WARNING"):
         await bus.publish(_minute(8, price=108, qty=1))   # closes :07 -> w1 != w0: discard w0
+        await bus.publish(_minute(9, price=109, qty=1))   # closes :08 -> folds w1
+        await bus.publish(_minute(10, price=110, qty=1))  # closes :09 -> boundary
     assert any("partial 5m aggregate" in r.message for r in caplog.records)
-    await bus.publish(_minute(9, price=109, qty=1))       # closes :08 -> folds w1
-    await bus.publish(_minute(10, price=110, qty=1))      # closes :09 -> boundary -> publish w1
+    assert any("incomplete 5m candle" in r.message for r in caplog.records)
+    assert [c for c in closed if c.tf == "5m"] == []      # neither published
+
+
+async def test_hole_inside_window_discards_incomplete_5m(caplog):
+    """D7 fix (verified scenario): a minute missing INSIDE the window
+    silently corrupted the published aggregates before the fix."""
+    bus, _, closed = await _rig()
+    with caplog.at_level("WARNING"):
+        for i in (0, 2, 3, 4, 5):                         # :01 never trades
+            await bus.publish(_minute(i, price=100 + i, qty=1))
+    assert [c for c in closed if c.tf == "5m"] == []
+    assert any("incomplete 5m candle" in r.message for r in caplog.records)
+
+
+async def test_next_complete_window_publishes_after_a_discard(caplog):
+    """Recovery: an incomplete window never poisons the following one —
+    the first fully observed window publishes normally."""
+    bus, _, closed = await _rig()
+    with caplog.at_level("WARNING"):
+        for i in (2, 3, 4, 5, 6, 7, 8, 9, 10):            # :00-:01 missing
+            await bus.publish(_minute(i, price=100 + i, qty=1))
     five = [c for c in closed if c.tf == "5m"]
-    assert len(five) == 1                                  # w0 never published
+    assert len(five) == 1                                  # w1 only
     assert five[0].ts == M0 + timedelta(minutes=5)
-    assert five[0].n_trades == 3                           # minutes :07,:08,:09
+    assert five[0].n_trades == 5 and five[0].o == 105      # :05..:09 complete
 
 
 async def test_5m_symbols_are_independent():

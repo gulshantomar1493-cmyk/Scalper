@@ -48,11 +48,12 @@ async def _stop(server, task):
     await asyncio.wait_for(task, timeout=5)
 
 
-def _pipeline(pool=None, replay_provider=None):
+def _pipeline(pool=None, replay_provider=None, replay_wiring=None):
     """bus + store (subscribed FIRST, per the composition note) + app."""
     bus = EventBus()
     store = StateStore(bus)
-    app = create_app(bus, store, pool, TOKEN, replay_provider=replay_provider)
+    app = create_app(bus, store, pool, TOKEN, replay_provider=replay_provider,
+                     replay_wiring=replay_wiring)
     return bus, store, app
 
 
@@ -323,5 +324,111 @@ async def test_ws_broadcasts_to_all_clients():
             m2 = json.loads(await asyncio.wait_for(ws2.recv(), timeout=5))
         assert m1 == m2
         assert m1["candle"]["symbol"] == "ETHUSDT"
+    finally:
+        await _stop(server, task)
+
+
+# ------------------------------------- F2/F4 verified-defect regressions
+
+
+async def test_replay_drives_engine_chain_on_isolated_bus(db_conn, caplog):
+    """F2 fix: replay runs fresh pipelines on its own bus — the engine
+    chain produces structure for replayed candles even after live has
+    advanced, and the live bus sees no out-of-order drops."""
+    from marketscalper.main import _wire_structure_engines
+
+    await _seed_candles(db_conn)
+    bus, store, app = _pipeline(pool=TxPool(db_conn),
+                                replay_provider=ReplayFeed,
+                                replay_wiring=_wire_structure_engines)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])       # live pipelines
+    live_ts = M0 + timedelta(days=30)                      # live is far ahead
+    await bus.publish(Candle("BTCUSDT", "1m", live_ts, 100.0, 101.0, 99.0,
+                             100.0, 1.0, 100.0, 1, 0.5))
+    live_structure = store.snapshot("BTCUSDT").structure
+    server, task, addr = await _serve(app)
+    try:
+        with caplog.at_level("WARNING"):
+            async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
+                async with aiohttp.ClientSession() as s:
+                    async with s.post(f"http://{addr}/replay/start",
+                                      json=_replay_body(speed="max"),
+                                      headers=AUTH) as r:
+                        assert r.status == 200
+                import json as _json
+                msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        assert msg["candle"]["ts"] == M0.isoformat()       # historical candle
+        structure = msg["state_diff"]["BTCUSDT"]["structure"]
+        assert structure["qualification"]["verdict"] == "NO_SIGNAL"  # engines ran
+        assert not any("out-of-order" in r.message for r in caplog.records)
+        assert store.snapshot("BTCUSDT").structure == live_structure  # live untouched
+    finally:
+        await _stop(server, task)
+
+
+async def test_live_push_suppressed_while_replay_runs(db_conn):
+    """F2 fix: while a replay session is active it owns the WS stream;
+    the live push resumes after stop."""
+    import json as _json
+
+    await _seed_candles(db_conn)
+    bus, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
+    server, task, addr = await _serve(app)
+
+    def live(minute):
+        return Candle("BTCUSDT", "1m",
+                      M0 + timedelta(days=30, minutes=minute),
+                      100.0, 101.0, 99.0, 100.0, 1.0, 100.0, 1, 0.5)
+
+    try:
+        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
+            async with aiohttp.ClientSession() as s:
+                async with s.post(f"http://{addr}/replay/start",
+                                  json=_replay_body(speed=60),
+                                  headers=AUTH) as r:
+                    assert r.status == 200                 # slow: stays running
+                await bus.publish(live(0))                 # live during replay
+                msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                assert msg["candle"]["ts"].startswith("2026-07-14")  # replay only
+                async with s.post(f"http://{addr}/replay/stop",
+                                  headers=AUTH) as r:
+                    assert r.status == 200
+                await bus.publish(live(1))                 # live resumes
+                for _ in range(50):                        # drain queued replay
+                    msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                    if not msg["candle"]["ts"].startswith("2026-07-14"):
+                        break
+                expected = (M0 + timedelta(days=30, minutes=1)).isoformat()
+                assert msg["candle"]["ts"] == expected
+    finally:
+        await _stop(server, task)
+
+
+async def test_slow_ws_client_cannot_stall_the_pipeline():
+    """F4 fix: a client that never reads is dropped once its send queue
+    fills; bus publishing never blocks and fresh clients keep working."""
+    import json as _json
+
+    bus, _, app = _pipeline()
+    server, task, addr = await _serve(app)
+
+    def candle(i):
+        return Candle("BTCUSDT", "1m", M0 + timedelta(minutes=i),
+                      100.0, 101.0, 99.0, 100.0, 1.0, 100.0, 1, 0.5)
+
+    try:
+        slow = await websockets.connect(f"ws://{addr}/ws?token={TOKEN}")
+        loop = asyncio.get_event_loop()
+        start_t = loop.time()
+        for i in range(2000):                              # never read `slow`
+            await bus.publish(candle(i))
+        assert loop.time() - start_t < 10.0                # bus never stalled
+        with pytest.raises(Exception):                     # server dropped it
+            while True:
+                await asyncio.wait_for(slow.recv(), timeout=5)
+        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as fresh:
+            await bus.publish(candle(3000))
+            msg = _json.loads(await asyncio.wait_for(fresh.recv(), timeout=5))
+            assert msg["candle"]["ts"] == (M0 + timedelta(minutes=3000)).isoformat()
     finally:
         await _stop(server, task)

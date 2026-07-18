@@ -10,10 +10,12 @@ Fully self-contained by owner direction: the internal 5m fold below exists
 ONLY to satisfy P0.24's "identical CANDLE_CLOSE events" (the live bus
 carries both 1m and 5m closes) and must NOT become a shared component. It
 applies the same frozen rules as the live builder — epoch-aligned windows,
-the A2 boundary publish ((closed bucket + 1) % 5 == 0), discard of a
-partial window whose boundary minute never arrived — and its equivalence
-with the live path is enforced permanently by the pipeline-identity test
-in the suite.
+the A2 boundary publish ((closed bucket + 1) % 5 == 0), and the D7
+completeness rule (verified-defect fix, 2026-07-18): a 5m candle publishes
+only when its window was seeded at the head and folded contiguously
+through all five minutes; any incomplete window is discarded with a
+WARNING. Equivalence with the live path is enforced permanently by the
+pipeline-identity test in the suite.
 """
 
 from __future__ import annotations
@@ -161,12 +163,17 @@ class ReplayFeed(FeedProvider):
             agg = {
                 "window_start": window_start,
                 "ts": datetime.fromtimestamp(window_start * _BUCKET_S, tz=timezone.utc),
+                "last_bucket": bucket,
+                "complete": bucket == window_start,   # D7 fix: head-seeded
                 "o": c1.o, "h": c1.h, "l": c1.l, "c": c1.c,
                 "v": c1.v, "qv": c1.qv,
                 "n_trades": c1.n_trades, "taker_buy_v": c1.taker_buy_v,
             }
             self._agg[c1.symbol] = agg
         else:
+            if bucket != agg["last_bucket"] + 1:
+                agg["complete"] = False              # hole inside the window
+            agg["last_bucket"] = bucket
             agg["h"] = max(agg["h"], c1.h)
             agg["l"] = min(agg["l"], c1.l)
             agg["c"] = c1.c
@@ -176,10 +183,17 @@ class ReplayFeed(FeedProvider):
             agg["taker_buy_v"] += c1.taker_buy_v
 
         if (bucket + 1) % _WINDOW == 0:              # A2 boundary rule
-            await self._bus.publish(Candle(
-                symbol=c1.symbol, tf="5m", ts=agg["ts"],
-                o=agg["o"], h=agg["h"], l=agg["l"], c=agg["c"],
-                v=agg["v"], qv=agg["qv"],
-                n_trades=agg["n_trades"], taker_buy_v=agg["taker_buy_v"],
-            ))
+            if agg["complete"]:
+                await self._bus.publish(Candle(
+                    symbol=c1.symbol, tf="5m", ts=agg["ts"],
+                    o=agg["o"], h=agg["h"], l=agg["l"], c=agg["c"],
+                    v=agg["v"], qv=agg["qv"],
+                    n_trades=agg["n_trades"], taker_buy_v=agg["taker_buy_v"],
+                ))
+            else:
+                log.warning(
+                    "replay: discarding incomplete 5m candle %s window %s "
+                    "(missing minutes are false data, D7)",
+                    c1.symbol, agg["ts"],
+                )
             del self._agg[c1.symbol]

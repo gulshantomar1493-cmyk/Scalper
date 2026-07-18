@@ -14,11 +14,25 @@ Endpoints:
   GET  /replay/status       {running, symbol, start, end, speed}.
   GET  /replay/speeds       the four §10 speeds.
 
-Replay control (roadmap P0.25): the app owns at most ONE replay instance.
-The concrete provider class is handed in by composition as the
-`replay_provider` argument — this module never imports a concrete provider,
-keeping the P0.19 import boundary intact. Replay candles reach the browser
-through the exact same WebSocket payload as live candles; no new protocol.
+Replay control (roadmap P0.25; isolation per verified defect F2): the app
+owns at most ONE replay instance. Each replay session runs on its OWN
+EventBus with its OWN StateStore and (when composition passes
+`replay_wiring`) its OWN fresh engine pipelines — exactly the determinism
+harness's wiring. Replay candles therefore drive a complete engine chain
+without ever touching the live bus: no out-of-order drops, no duplicate
+persistence, no reconciler leakage, and live processing continues
+untouched underneath. While a replay is active the live WS push is
+suppressed (the chart shows the replay stream); it resumes automatically
+on completion or stop. The concrete provider class is handed in by
+composition as the `replay_provider` argument — this module never imports
+a concrete provider, keeping the P0.19 import boundary intact. Replay
+candles reach the browser through the exact same WebSocket payload as
+live candles; no new protocol.
+
+Backpressure (verified defect F4): the bus-side broadcast never awaits a
+network send. Each client gets a bounded queue drained by its own sender
+task; a slow or blocked client fills its queue and is disconnected — the
+feed, persistence, and engine chain can never stall on a browser socket.
 
 Auth (Decision D3): single static token. REST -> Authorization: Bearer
 <token>; WebSocket -> same token as ?token= query parameter at handshake.
@@ -49,6 +63,7 @@ log = logging.getLogger(__name__)
 _TFS = ("1m", "5m")
 _REPLAY_SYMBOLS = ("BTCUSDT", "ETHUSDT")   # frozen v1 pair
 _REPLAY_SPEEDS = (1, 10, 60, "max")        # §10
+_WS_QUEUE_MAX = 256    # F4: per-client send budget before disconnect
 
 
 def _candle_json(c: Candle) -> dict:
@@ -78,13 +93,18 @@ def create_app(
     pool,
     api_token: str,
     replay_provider=None,
+    replay_wiring=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
     replay_provider: the concrete FeedProvider class/factory used for replay
     (composition passes ReplayFeed), invoked as
-    replay_provider([symbol], bus, pool, start, end, speed=speed).
-    None -> the replay endpoints answer 503 (not configured)."""
+    replay_provider([symbol], session_bus, pool, start, end, speed=speed).
+    None -> the replay endpoints answer 503 (not configured).
+    replay_wiring (F2): callable(bus, store, symbols) wiring fresh engine
+    pipelines onto a replay session's private bus — composition passes
+    _wire_structure_engines so replay drives the full engine chain.
+    None -> replay streams candles without engine output (chart-only)."""
     app = FastAPI(title="MarketScalper", docs_url=None, redoc_url=None)
     # The standalone frontend (§9; deploy.sh: index.html opened from disk or
     # any static host) is always a foreign origin to this API, and file://
@@ -96,7 +116,43 @@ def create_app(
         allow_methods=["GET", "POST"],
         allow_headers=["Authorization"],
     )
-    clients: set[WebSocket] = set()
+    clients: dict[WebSocket, asyncio.Queue] = {}   # F4: per-client queues
+
+    async def _close_quietly(websocket: WebSocket) -> None:
+        try:
+            await websocket.close(code=1013)       # "try again later"
+        except Exception:
+            pass
+
+    async def _sender(websocket: WebSocket, queue: asyncio.Queue) -> None:
+        """Per-client drain task (F4): network sends happen here, never in
+        the bus subscriber — a blocked socket blocks only its own task."""
+        try:
+            while True:
+                await websocket.send_json(await queue.get())
+        except Exception:
+            clients.pop(websocket, None)           # dead client: drop, move on
+
+    def _push(candle: Candle, source_store: StateStore) -> None:
+        """Fan a {candle, state_diff} payload out to every client without
+        awaiting any network send (F4)."""
+        if not clients:
+            source_store.diff()                    # keep diffs consumed
+            return
+        payload = {
+            "candle": _candle_json(candle),
+            "state_diff": _diff_json(source_store.diff()),
+        }
+        for websocket, queue in list(clients.items()):
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                # F4: a client this far behind must never stall the
+                # pipeline — drop it; the thin client reconnects and
+                # re-bootstraps via REST (§9).
+                log.warning("ws: dropping slow client (send queue full)")
+                clients.pop(websocket, None)
+                asyncio.ensure_future(_close_quietly(websocket))
     # at most one replay at a time; lazy latch turns completion into idle
     replay = {"feed": None, "info": None, "seen_connected": False}
 
@@ -129,14 +185,18 @@ def create_app(
             await websocket.close(code=1008)          # policy violation: bad token
             return
         await websocket.accept()
-        clients.add(websocket)
+        queue: asyncio.Queue = asyncio.Queue(maxsize=_WS_QUEUE_MAX)
+        clients[websocket] = queue
+        sender = asyncio.create_task(_sender(websocket, queue))
         try:
             while True:                               # push-only socket; reads keep
                 await websocket.receive_text()        # the connection state honest
         except Exception:
             pass
         finally:
-            clients.discard(websocket)
+            clients.pop(websocket, None)
+            sender.cancel()
+            await asyncio.gather(sender, return_exceptions=True)
 
     # ---------------------------------------------- replay control (P0.25)
 
@@ -181,7 +241,22 @@ def create_app(
             raise HTTPException(status_code=400,
                                 detail="start/end must be timezone-aware and start < end")
 
-        feed = replay_provider([symbol], bus, pool, start, end, speed=speed)
+        # F2: every session runs on its own bus with its own store and
+        # (when composition provides the wiring) its own fresh engine
+        # pipelines — the determinism harness's exact shape. Replay never
+        # touches the live bus: no out-of-order drops, no duplicate
+        # persistence, no reconciler leakage.
+        session_bus = EventBus()
+        session_store = StateStore(session_bus)      # subscribes first
+        if replay_wiring is not None:
+            replay_wiring(session_bus, session_store, [symbol])
+
+        async def replay_broadcast(candle: Candle) -> None:
+            _push(candle, session_store)             # last: diff is complete
+
+        session_bus.subscribe(Candle, replay_broadcast)
+        feed = replay_provider([symbol], session_bus, pool, start, end,
+                               speed=speed)
         await feed.start()
         replay["feed"] = feed
         replay["info"] = {"symbol": symbol, "start": start.isoformat(),
@@ -227,19 +302,17 @@ def create_app(
         return {"speeds": list(_REPLAY_SPEEDS)}
 
     async def broadcast(candle: Candle) -> None:
-        """Push {candle, state_diff} for every closed candle (§9)."""
-        if not clients:
-            store.diff()                              # keep diffs consumed
+        """Push {candle, state_diff} for every closed candle (§9).
+
+        F2: while a replay session is active it owns the WS stream — the
+        live push is suppressed (diffs stay consumed) and resumes
+        automatically once the replay completes or is stopped. F4: no
+        network send happens here (see _push)."""
+        _refresh_replay()
+        if replay["feed"] is not None:
+            store.diff()
             return
-        payload = {
-            "candle": _candle_json(candle),
-            "state_diff": _diff_json(store.diff()),
-        }
-        for websocket in list(clients):
-            try:
-                await websocket.send_json(payload)
-            except Exception:
-                clients.discard(websocket)            # dead client: drop, move on
+        _push(candle, store)
 
     bus.subscribe(Candle, broadcast)
     return app

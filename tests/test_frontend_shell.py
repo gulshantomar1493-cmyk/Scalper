@@ -52,8 +52,8 @@ def test_index_has_exactly_the_four_replay_controls():
 
 def test_app_js_calls_replay_endpoints_only():
     js = _read("app.js")
-    assert "/replay/start" in js and "/replay/stop" in js  # the two calls
-    assert "/replay/status" not in js                      # no polling loops added
+    assert "/replay/start" in js and "/replay/stop" in js  # the two commands
+    assert "/replay/status" in js                          # F2: completion poll
     assert "pause" not in js and "seek" not in js          # no extra replay UI logic
 
 
@@ -83,7 +83,8 @@ def test_app_js_live_chart_contract():
     assert js.count("addSeries(") == 2                   # main chart + 5m strip only
     assert "#22C55E" in js and "#EF4444" in js           # semantic token colors
     assert ".update(toBar(candle))" in js                # diff-only live updates (§9)
-    assert js.count(".setData(") == 2                    # bootstrap-only, one per series
+    # bootstrap (one per series) + the F2 replay-mode chart clears
+    assert js.count(".setData(") == 4
     assert "/candles?" in js and "Authorization" in js   # existing REST + Bearer
     assert 'SYMBOLS = ["BTCUSDT", "ETHUSDT"]' in js      # frozen v1 pair
     assert "loadHistory(activeSymbol)" in js             # reconnect -> reload history
