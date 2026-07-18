@@ -17,15 +17,15 @@ pivot_to_row() feeds the existing db.insert_pivot helper (P0.7, untouched);
 nothing is wired in Phase 1 — engines join the composition without a pool,
 so the production pivots table receives zero rows before the forward-run era.
 
-Later structure tasks (labels P1.6, trend P1.8, BOS/CHOCH P1.9-P1.10) build
-on these pivots; label stays None here because pivots are append-only —
-labeling must happen before insertion, and arrives with P1.6.
+Labeling (P1.6) happens at detection time — pivots are append-only, so the
+label is part of the inserted row, never an update. Later structure tasks
+(trend P1.8, BOS/CHOCH P1.9-P1.10) consume the labeled pivots.
 """
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 
 from marketscalper.providers.base import Candle
@@ -92,3 +92,33 @@ class PivotDetector:
             out.append(Pivot(self._symbol, self._tf, center.ts,
                              confirmed_ts, "L", center.l))
         return out
+
+
+class PivotLabeler:
+    """§4.2 label state machine for one (symbol, tf) stream (roadmap P1.6).
+
+        kind H: label = HH if price > last_H.price else LH
+        kind L: label = HL if price > last_L.price else LL
+
+    Strict > verbatim — equality labels LH/LL. The first pivot of each kind
+    has no comparison base: its label stays None (pinned seed rule) and its
+    price still seeds the chain. H and L chains are independent. Labels are
+    computed only from already-confirmed history — assigned once, never
+    revised (no repaint).
+    """
+
+    __slots__ = ("_last_h", "_last_l")
+
+    def __init__(self) -> None:
+        self._last_h: float | None = None
+        self._last_l: float | None = None
+
+    def label(self, pivot: Pivot) -> Pivot:
+        """Return a labeled copy (input never mutated); advance the chain."""
+        if pivot.kind == "H":
+            last, self._last_h = self._last_h, pivot.price
+            name = None if last is None else ("HH" if pivot.price > last else "LH")
+        else:
+            last, self._last_l = self._last_l, pivot.price
+            name = None if last is None else ("HL" if pivot.price > last else "LL")
+        return replace(pivot, label=name)

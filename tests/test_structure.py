@@ -7,7 +7,13 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from marketscalper import db
-from marketscalper.engines.structure import K_BY_TF, Pivot, PivotDetector, pivot_to_row
+from marketscalper.engines.structure import (
+    K_BY_TF,
+    Pivot,
+    PivotDetector,
+    PivotLabeler,
+    pivot_to_row,
+)
 from marketscalper.providers.base import Candle
 
 UTC = timezone.utc
@@ -147,6 +153,104 @@ def test_determinism_same_stream_twice():
     r1 = _run(PivotDetector("BTCUSDT", "1m"), candles)
     r2 = _run(PivotDetector("BTCUSDT", "1m"), candles)
     assert r1 == r2
+
+
+# ------------------------------------------------------ PivotLabeler (P1.6)
+
+
+def _pivot(kind, price, i=0):
+    ts = M0 + timedelta(minutes=i)
+    return Pivot("BTCUSDT", "1m", ts, ts + timedelta(minutes=3), kind, float(price))
+
+
+def test_h_chain_seed_hh_lh_and_state_advances():
+    lab = PivotLabeler()
+    labels = [lab.label(_pivot("H", p, i)).label
+              for i, p in enumerate([10, 15, 12, 13])]
+    # 13 > 12 (the LAST H, not the max) proves the chain advanced on LH too
+    assert labels == [None, "HH", "LH", "HH"]
+
+
+def test_l_chain_seed_hl_ll_mirrored():
+    lab = PivotLabeler()
+    labels = [lab.label(_pivot("L", p, i)).label
+              for i, p in enumerate([10, 12, 9, 11])]
+    assert labels == [None, "HL", "LL", "HL"]
+
+
+def test_equality_labels_lh_ll_strict_rule():
+    lab = PivotLabeler()
+    assert lab.label(_pivot("H", 10, 0)).label is None
+    assert lab.label(_pivot("H", 10, 1)).label == "LH"
+    assert lab.label(_pivot("L", 5, 2)).label is None
+    assert lab.label(_pivot("L", 5, 3)).label == "LL"
+
+
+def test_h_and_l_chains_are_independent():
+    lab = PivotLabeler()
+    assert lab.label(_pivot("H", 10, 0)).label is None    # seeds H chain
+    assert lab.label(_pivot("L", 50, 1)).label is None    # seeds L chain
+    # 40 < last L (50) but > last H (10): kind isolation -> HH
+    assert lab.label(_pivot("H", 40, 2)).label == "HH"
+    # 20 > last H (40)? irrelevant — vs last L (50) it is lower -> LL
+    assert lab.label(_pivot("L", 20, 3)).label == "LL"
+
+
+def test_outside_bar_pair_labels_both_chains():
+    lab = PivotLabeler()
+    lab.label(_pivot("H", 20, 0))
+    lab.label(_pivot("L", 1, 1))
+    assert lab.label(_pivot("H", 25, 2)).label == "HH"    # same-bar pair,
+    assert lab.label(_pivot("L", 0.5, 2)).label == "LL"   # H first (P1.5)
+
+
+def test_labelers_are_independent():
+    a, b = PivotLabeler(), PivotLabeler()
+    a.label(_pivot("H", 10, 0))
+    assert a.label(_pivot("H", 15, 1)).label == "HH"
+    assert b.label(_pivot("H", 15, 1)).label is None      # b never seeded
+
+
+def test_input_pivot_is_never_mutated():
+    lab = PivotLabeler()
+    lab.label(_pivot("H", 10, 0))
+    original = _pivot("H", 15, 1)
+    labeled = lab.label(original)
+    assert original.label is None and labeled.label == "HH"
+    assert labeled is not original
+
+
+def test_detector_to_labeler_integration_end_to_end():
+    # highs 10,11,12,15,12,11,10,11,12,14,12,11,10 (lows = h-1), k=3:
+    #   H pivot 15 at idx3 (confirmed update 7)   -> seed, label None
+    #   L pivot  9 at idx6 (confirmed update 10)  -> seed, label None
+    #   H pivot 14 at idx9 (confirmed update 13)  -> 14 < 15 -> LH
+    d, lab = PivotDetector("BTCUSDT", "1m"), PivotLabeler()
+    highs = [10, 11, 12, 15, 12, 11, 10, 11, 12, 14, 12, 11, 10]
+    labeled = []
+    for i, h in enumerate(highs):
+        for p in d.update(_candle(h, h - 1, i)):
+            labeled.append(lab.label(p))
+    assert [(p.kind, p.price, p.label) for p in labeled] == [
+        ("H", 15.0, None), ("L", 9.0, None), ("H", 14.0, "LH")]
+
+
+def test_labeler_determinism_same_stream_twice():
+    pivots = [_pivot(k, p, i) for i, (k, p) in enumerate(
+        [("H", 10), ("L", 5), ("H", 12), ("L", 4), ("H", 11), ("L", 6)])]
+    lab1, lab2 = PivotLabeler(), PivotLabeler()
+    out1 = [lab1.label(p) for p in pivots]
+    out2 = [lab2.label(p) for p in pivots]
+    assert out1 == out2
+
+
+async def test_labeled_pivot_persistence_round_trip(db_conn):
+    lab = PivotLabeler()
+    lab.label(_pivot("H", 10, 0))
+    labeled = lab.label(_pivot("H", 15, 1))
+    await db.insert_pivot(db_conn, **pivot_to_row(labeled))
+    rows = await db.select_pivots(db_conn, "BTCUSDT", "1m")
+    assert [r["label"] for r in rows] == ["HH"]
 
 
 # -------------------------------------------------------------- persistence
