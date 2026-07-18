@@ -140,3 +140,38 @@ def test_overlays_js_is_valid_javascript():
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ---------------------------------------------------------------- P2.20
+
+
+def test_overlays_js_renders_ob_fvg_boxes():
+    js = _read("overlays.js")
+    assert "class BoxesPrimitive" in js
+    assert "fillRect" in js and "strokeRect" in js
+    assert "st.orderblocks" in js or "ob.blocks" in js
+    assert "ob.breakers" in js
+    assert "st.fvgs" in js
+    assert 'b.direction === "BULL"' in js
+
+
+def test_overlays_js_renders_pools_and_key_levels():
+    js = _read("overlays.js")
+    assert "liquidity.pools" in js
+    assert "liquidity.levels" in js
+    assert "full: true" in js                    # pane-wide horizontal lines
+
+
+def test_overlays_js_renders_sweep_markers():
+    js = _read("overlays.js")
+    assert "liquidity.sweeps" in js
+    assert "sw.side" in js and "sw.target" in js
+
+
+def test_overlays_js_is_still_a_pure_consumer():
+    """P2.20 must not weaken the P1.19 pure-consumer contract."""
+    js = _read("overlays.js")
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert "localStorage" not in js and "sessionStorage" not in js
