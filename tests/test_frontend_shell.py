@@ -107,8 +107,9 @@ def test_index_wires_overlays_and_audit_controls():
     html = _read("index.html")
     assert 'src="overlays.js"' in html
     assert html.index("overlays.js") < html.index('src="app.js"')  # load order
-    for control in ("audit-pick", "audit-accept", "audit-reject", "audit-tally"):
-        assert f'id="{control}"' in html                   # P1.20 tool
+    for control in ("audit-pick", "audit-accept", "audit-reject", "audit-tally",
+                    "audit-pick-sweep", "audit-pick-ob"):
+        assert f'id="{control}"' in html                   # P1.20 + P2.22 tool
     assert 'id="trend-state"' in html                      # engine trend readout
 
 
@@ -211,6 +212,62 @@ def test_app_js_passes_close_price_transport_only():
 
 def test_overlays_js_is_still_a_pure_consumer_p221():
     """P2.21 must not weaken the pure-consumer contract either."""
+    js = _read("overlays.js")
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert "localStorage" not in js and "sessionStorage" not in js
+
+
+# ---------------------------------------------------------------- P2.22
+
+
+def test_overlays_js_generalizes_audit_pick_to_three_kinds():
+    js = _read("overlays.js")
+    assert "function pickRandomLine" in js
+    assert "function pickRandomSweep" in js
+    assert "function pickRandomOB" in js
+    assert 'kind: "trendline"' in js
+    assert 'kind: "sweep"' in js
+    assert 'kind: "ob"' in js
+    # sweep pool + OB pool sourced from the existing payload fields only
+    assert "structure.liquidity.sweeps" in js
+    assert "ob.blocks" in js and "ob.breakers" in js
+
+
+def test_overlays_js_uses_one_centralized_jump_navigation_helper():
+    """Owner requirement: no scattered literal viewport values — a single
+    shared helper + a single centralized constant for point-event jumps."""
+    js = _read("overlays.js")
+    assert "function jumpToWindow(" in js
+    assert "const AUDIT_JUMP_WINDOW_S" in js
+    # every pick function routes its viewport change through the helper
+    assert js.count("jumpToWindow(") == 4        # 1 definition + 3 call sites
+    # the pre-existing trendline behavior is untouched (same 60s floor,
+    # just factored into a named constant instead of a bare literal)
+    assert "const TRENDLINE_MIN_PAD_S = 60" in js
+    # setVisibleRange is called from exactly one place (inside the shared
+    # helper) — no per-pick-function duplicate viewport-setting code
+    assert js.count("setVisibleRange(") == 1
+
+
+def test_overlays_js_tallies_each_kind_separately():
+    js = _read("overlays.js")
+    assert "trendline: { accept: 0, reject: 0 }" in js
+    assert "sweep: { accept: 0, reject: 0 }" in js
+    assert "ob: { accept: 0, reject: 0 }" in js
+    assert "tally[auditPick.kind][result]" in js
+
+
+def test_overlays_js_highlights_picked_sweep_and_ob():
+    js = _read("overlays.js")
+    assert 'auditPick.kind === "sweep"' in js
+    assert 'auditPick.kind === "ob"' in js
+    assert "lineWidth: picked ? 3 : 1" in js       # OB box highlight
+
+
+def test_overlays_js_is_still_a_pure_consumer_p222():
+    """P2.22 must not weaken the pure-consumer contract either."""
     js = _read("overlays.js")
     for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
                    "tolerance", "fetch(", "WebSocket"):

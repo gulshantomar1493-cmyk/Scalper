@@ -1,5 +1,5 @@
 /* MarketScalper overlays + replay-audit tool (roadmap P1.19 + P1.20 +
- * P2.20 + P2.21).
+ * P2.20 + P2.21 + P2.22).
  *
  * PURE CONSUMER of the backend structure payload (state_diff.structure):
  * every number drawn here — pivot prices, labels, trend state, BOS/CHOCH
@@ -23,10 +23,16 @@
  * using only priceToCoordinate — the same coordinate mapping already
  * used everywhere else in this module.
  *
- * Audit tool (P1.20): jump-to-random-trendline + accept/reject tally.
- * Session-local UI state only (the owner records the tally in the gate
- * record); Math.random here is UI selection for the human audit and is
- * outside the deterministic engine surface.
+ * Audit tool (P1.20 + P2.22): jump-to-random-trendline/sweep/order-block
+ * + accept/reject tally, tracked per kind. Session-local UI state only
+ * (the owner records the tallies in the gate record); Math.random here
+ * is UI selection for the human audit and is outside the deterministic
+ * engine surface. All three jump operations share ONE navigation helper
+ * (jumpToWindow) and point-event kinds (sweep/OB — a single timestamp,
+ * no natural span) share ONE centralized padding constant
+ * (AUDIT_JUMP_WINDOW_S); the trendline kind keeps its own pre-existing
+ * span-scaled floor unchanged, since it already has real behavior to
+ * preserve bit-for-bit.
  */
 
 "use strict";
@@ -140,7 +146,7 @@ const Overlays = (() => {
           ctx.fillStyle = b.fill;
           ctx.fillRect(x1, yTop, x2 - x1, yBot - yTop);
           ctx.strokeStyle = b.border;
-          ctx.lineWidth = 1;
+          ctx.lineWidth = b.lineWidth || 1;   // P2.22: audit-pick highlight
           ctx.setLineDash(b.dashPattern);
           ctx.strokeRect(x1, yTop, x2 - x1, yBot - yTop);
           ctx.setLineDash([]);
@@ -223,10 +229,28 @@ const Overlays = (() => {
   let trendEl = null;
   let structure = null;             // latest payload for the active symbol
   let lastClose = null;             // P2.21: latest close, passed by app.js
-  let auditPick = null;             // index into structure.trendlines
-  const tally = { accept: 0, reject: 0 };
+  let auditPick = null;             // P2.22: {kind: 'trendline'|'sweep'|'ob', index} | null
+  const tally = {                   // P2.22: one accept/reject counter per kind
+    trendline: { accept: 0, reject: 0 },
+    sweep: { accept: 0, reject: 0 },
+    ob: { accept: 0, reject: 0 },
+  };
 
   const toTime = (iso) => Math.floor(Date.parse(iso) / 1000);
+
+  // P2.22: centralized replay-jump navigation. UI convenience only, not
+  // trading logic. jumpToWindow is the single shared viewport-setting
+  // helper for every "random X" pick; AUDIT_JUMP_WINDOW_S is the single
+  // padding constant for point-event kinds (sweep/OB — one timestamp,
+  // no natural span) — change it once to retune every point-event jump.
+  // The trendline kind passes its own pre-existing 60s floor unchanged.
+  const AUDIT_JUMP_WINDOW_S = 30 * 60;
+  const TRENDLINE_MIN_PAD_S = 60;
+
+  function jumpToWindow(t1, t2, minPadS) {
+    const pad = Math.max(minPadS, Math.floor((t2 - t1) * 0.15));
+    chart.timeScale().setVisibleRange({ from: t1 - pad, to: t2 + pad });
+  }
 
   /* ------------------------------------------------------------ redraw */
 
@@ -236,7 +260,8 @@ const Overlays = (() => {
     const lines = [];
     if (st) {
       (st.trendlines || []).forEach((ln, i) => {
-        const picked = auditPick !== null && i === auditPick;
+        const picked = !!(auditPick && auditPick.kind === "trendline" &&
+                          auditPick.index === i);
         lines.push({
           t1: toTime(ln.x1), p1: ln.y1, t2: toTime(ln.x2), p2: ln.y2,
           color: picked ? COLORS.highlight : COLORS[ln.side],
@@ -299,20 +324,25 @@ const Overlays = (() => {
     const boxes = [];
     if (st) {
       const ob = st.orderblocks || {};
-      (ob.blocks || []).forEach((b) => {
+      const obBlocks = ob.blocks || [];
+      const obBreakers = ob.breakers || [];
+      // P2.22: blocks+breakers form ONE combined pool for the "Random OB"
+      // audit pick — same array, same order, used again below in
+      // pickRandomOB() so picked indices always match what's rendered.
+      const obZones = obBlocks.concat(obBreakers);
+      obZones.forEach((b, i) => {
         const bull = b.direction === "BULL";
+        const isBreaker = i >= obBlocks.length;
+        const picked = !!(auditPick && auditPick.kind === "ob" &&
+                          auditPick.index === i);
         boxes.push({
           t1: toTime(b.created_ts), lo: b.lo, hi: b.hi,
-          fill: bull ? COLORS.obBullFill : COLORS.obBearFill,
-          border: bull ? COLORS.obBull : COLORS.obBear, dashPattern: [],
-        });
-      });
-      (ob.breakers || []).forEach((b) => {
-        const bull = b.direction === "BULL";
-        boxes.push({
-          t1: toTime(b.created_ts), lo: b.lo, hi: b.hi,
-          fill: bull ? COLORS.breakerBullFill : COLORS.breakerBearFill,
-          border: bull ? COLORS.obBull : COLORS.obBear, dashPattern: [6, 3],
+          fill: bull
+            ? (isBreaker ? COLORS.breakerBullFill : COLORS.obBullFill)
+            : (isBreaker ? COLORS.breakerBearFill : COLORS.obBearFill),
+          border: picked ? COLORS.highlight : (bull ? COLORS.obBull : COLORS.obBear),
+          dashPattern: picked ? [] : (isBreaker ? [6, 3] : []),
+          lineWidth: picked ? 3 : 1,
         });
       });
       (st.fvgs || []).forEach((g) => {
@@ -353,17 +383,20 @@ const Overlays = (() => {
           text: "CHOCH",
         });
       }
-      // P2.20: sweep events
-      for (const sw of (st.liquidity && st.liquidity.sweeps) || []) {
+      // P2.20 + P2.22: sweep events, audit-pick highlighted
+      const sweeps = (st.liquidity && st.liquidity.sweeps) || [];
+      sweeps.forEach((sw, i) => {
+        const picked = !!(auditPick && auditPick.kind === "sweep" &&
+                          auditPick.index === i);
         marks.push({
           time: toTime(sw.ts),
           position: sw.side === "HIGH" ? "aboveBar" : "belowBar",
-          color: COLORS.sweep,
+          color: picked ? COLORS.highlight : COLORS.sweep,
           shape: sw.side === "HIGH" ? "arrowDown" : "arrowUp",
-          size: 0.6,
-          text: "SWEEP " + sw.target,
+          size: picked ? 1.0 : 0.6,
+          text: (picked ? "* " : "") + "SWEEP " + sw.target,
         });
-      }
+      });
     }
     marks.sort((a, b) => a.time - b.time);
     markers.setMarkers(marks);
@@ -374,8 +407,10 @@ const Overlays = (() => {
   /* --------------------------------------------------------- audit tool */
 
   function tallyText() {
-    return tally.accept + " / " + tally.reject +
-      " (" + (tally.accept + tally.reject) + ")";
+    const t = tally.trendline, s = tally.sweep, o = tally.ob;
+    return "TL " + t.accept + "/" + t.reject + " (" + (t.accept + t.reject) + ")" +
+      "  SWP " + s.accept + "/" + s.reject + " (" + (s.accept + s.reject) + ")" +
+      "  OB " + o.accept + "/" + o.reject + " (" + (o.accept + o.reject) + ")";
   }
 
   function setAuditButtons() {
@@ -388,22 +423,60 @@ const Overlays = (() => {
   function pickRandomLine() {
     const lines = (structure && structure.trendlines) || [];
     if (!lines.length) return;
-    auditPick = Math.floor(Math.random() * lines.length);
-    const ln = lines[auditPick];
-    const t1 = toTime(ln.x1);
-    const t2 = toTime(ln.x2);
-    const pad = Math.max(60, Math.floor((t2 - t1) * 0.15));
-    chart.timeScale().setVisibleRange({ from: t1 - pad, to: t2 + pad });
+    const index = Math.floor(Math.random() * lines.length);
+    auditPick = { kind: "trendline", index };
+    const ln = lines[index];
+    jumpToWindow(toTime(ln.x1), toTime(ln.x2), TRENDLINE_MIN_PAD_S);
     setAuditButtons();
     redraw();
   }
 
-  function vote(kind) {
+  function pickRandomSweep() {
+    const sweeps = (structure && structure.liquidity && structure.liquidity.sweeps) || [];
+    if (!sweeps.length) return;
+    const index = Math.floor(Math.random() * sweeps.length);
+    auditPick = { kind: "sweep", index };
+    const t = toTime(sweeps[index].ts);
+    jumpToWindow(t, t, AUDIT_JUMP_WINDOW_S);
+    setAuditButtons();
+    redraw();
+  }
+
+  function pickRandomOB() {
+    const ob = (structure && structure.orderblocks) || {};
+    const zones = (ob.blocks || []).concat(ob.breakers || []);
+    if (!zones.length) return;
+    const index = Math.floor(Math.random() * zones.length);
+    auditPick = { kind: "ob", index };
+    const t = toTime(zones[index].created_ts);
+    jumpToWindow(t, t, AUDIT_JUMP_WINDOW_S);
+    setAuditButtons();
+    redraw();
+  }
+
+  function vote(result) {
     if (auditPick === null) return;
-    tally[kind] += 1;
+    tally[auditPick.kind][result] += 1;
     auditPick = null;
     setAuditButtons();
     redraw();
+  }
+
+  // P2.22: is the current pick still present in a fresh payload?
+  function auditPickStillValid(st) {
+    if (!auditPick || !st) return false;
+    if (auditPick.kind === "trendline") {
+      return auditPick.index < (st.trendlines || []).length;
+    }
+    if (auditPick.kind === "sweep") {
+      return auditPick.index <
+        ((st.liquidity && st.liquidity.sweeps) || []).length;
+    }
+    if (auditPick.kind === "ob") {
+      const ob = st.orderblocks || {};
+      return auditPick.index < (ob.blocks || []).length + (ob.breakers || []).length;
+    }
+    return false;
   }
 
   /* -------------------------------------------------------------- API */
@@ -422,6 +495,10 @@ const Overlays = (() => {
       trendEl = document.getElementById("trend-state");
       document.getElementById("audit-pick")
         .addEventListener("click", pickRandomLine);
+      document.getElementById("audit-pick-sweep")
+        .addEventListener("click", pickRandomSweep);
+      document.getElementById("audit-pick-ob")
+        .addEventListener("click", pickRandomOB);
       document.getElementById("audit-accept")
         .addEventListener("click", () => vote("accept"));
       document.getElementById("audit-reject")
@@ -434,9 +511,8 @@ const Overlays = (() => {
       // split — a single current-value slot (mirrors `structure` itself),
       // never accumulated; omitted -> shading absent for this render.
       lastClose = (typeof closePrice === "number") ? closePrice : null;
-      if (auditPick !== null &&
-          (!structure || auditPick >= (structure.trendlines || []).length)) {
-        auditPick = null;       // the picked line no longer exists
+      if (auditPick !== null && !auditPickStillValid(structure)) {
+        auditPick = null;       // the picked object no longer exists
         setAuditButtons();
       }
       redraw();
