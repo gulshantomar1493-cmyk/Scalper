@@ -1,5 +1,12 @@
-"""Trendline Engine — candidate detection (roadmap P1.13; Architecture §4.3
-Steps 1–2 + the frozen score formula; every rule per Decision D11).
+"""Trendline Engine — COMPLETE and FROZEN (engine-wise freeze after the
+D11 conformance audit; roadmap P1.13–P1.17; Architecture §4.3; Decision
+D11). Modify only on a genuine defect. Known accepted textual deviations
+from D11, recorded at the freeze audit (behavior-identical, no action):
+the 0.15×ATR/close tolerance formula is inlined at its three call sites
+rather than extracted into the single named helper D11.5 describes;
+candidates() recomputes per call instead of caching per-pivot (pure and
+deterministic, so output-identical); dedup clusters per side (the
+side-separated cap framing of D11.8).
 
 Discovers candidate trendlines from confirmed 1m pivots (D11.2: the 1m
 stream only — 5m pivots serve A8 external structure elsewhere):
@@ -60,6 +67,7 @@ FAKE_BREAK_WINDOW = 3                  # re-entry candles after a close-through
 # a qualifying BREAK evaluates True until P2.2 swaps in the real RVOL and
 # re-runs determinism. Do not add volume logic here.
 RVOL_PLACEHOLDER_PASSES = True
+CHANNEL_SLOPE_REL = 0.08               # channel pair parallelism threshold
 
 
 @dataclass(frozen=True)
@@ -168,12 +176,16 @@ class TrendlineDetector:
         last_touch = a_idx
         for t in range(a_idx, cur + 1):
             ts, low, high, close, atr = self._bars[t - self._offset]
-            if atr is None:
-                continue                           # bar unusable (unwarm)
             y = intercept + slope * (t - a_idx)
             log_close = log(close)
             if (log_close < y) if support else (log_close > y):
                 continue                           # close crossed: no touch
+            if t == a_idx or t == b_idx:
+                touches += 1                       # anchors ALWAYS count:
+                last_touch = t                     # distance exactly 0,
+                continue                           # tolerance-independent (D11.7)
+            if atr is None:
+                continue                           # bar unusable (unwarm)
             extreme = low if support else high
             tol = TOUCH_TOLERANCE_ATR_RATIO * atr / close
             if abs(log(extreme) - y) <= tol:
@@ -260,6 +272,23 @@ def line_to_row(line: KeptTrendline) -> dict:
     }
 
 
+@dataclass(frozen=True)
+class Channel:
+    """A parallel support+resistance pair (§4.3/D11.10): slope delta < 8%
+    relative, both lines >= 3 touches. DERIVED, state-only — never
+    persisted (the frozen levels.kind vocabulary has no CHANNEL value).
+    The mid-line is the log-space midpoint of the two lines."""
+
+    support: KeptTrendline
+    resistance: KeptTrendline
+    mid_slope: float
+    mid_intercept: float           # log-space mid-line value at bar index 0
+
+    def mid_value(self, bar_index: int) -> float:
+        """ln(price) of the mid-line (mean-reversion reference) at a bar."""
+        return self.mid_intercept + self.mid_slope * bar_index
+
+
 class TrendlineBook:
     """The kept-line set: dedup, 3+3 cap, and lifecycle (roadmap P1.15;
     D11 Steps 3 + 5's archive rules).
@@ -308,6 +337,29 @@ class TrendlineBook:
     def flip_candidates(self) -> list[FlipCandidate]:
         """Role-flip candidates still earning their >= 3 touches."""
         return list(self._flips)
+
+    def channels(self) -> list[Channel]:
+        """All D11.10 channels among the kept lines, derived on demand
+        (state-only, deterministic pair order: supports x resistances in
+        the active list's stored order)."""
+        supports = [l for l in self._active if l.side == "support"]
+        resistances = [l for l in self._active if l.side == "resistance"]
+        out = []
+        for sup in supports:
+            for res in resistances:
+                if (sup.touches < MIN_TOUCHES
+                        or res.touches < MIN_TOUCHES):
+                    continue
+                if not (abs(sup.slope - res.slope)
+                        < CHANNEL_SLOPE_REL * max(abs(sup.slope),
+                                                  abs(res.slope))):
+                    continue
+                mid_slope = (sup.slope + res.slope) / 2.0
+                mid_intercept = (
+                    (sup.intercept - sup.slope * sup.a_index)
+                    + (res.intercept - res.slope * res.a_index)) / 2.0
+                out.append(Channel(sup, res, mid_slope, mid_intercept))
+        return out
 
     def refresh(self, candle: Candle) -> list[TrendlineEvent]:
         """Fold one closed candle in; returns this bar's events, in the
@@ -360,9 +412,14 @@ class TrendlineBook:
                         (line.side, line.a_index, line.b_index))
                     flip_side = ("resistance" if line.side == "support"
                                  else "support")
-                    self._flips.append(FlipCandidate(
-                        flip_side, line.a_index, line.b_index, line.a_pivot,
-                        line.b_pivot, line.slope, line.intercept, cur))
+                    flip_key = (flip_side, line.a_index, line.b_index)
+                    if (flip_key not in self._archived_keys
+                            and flip_key not in self._broken_keys):
+                        # a flip-back onto a terminal key is dead on arrival
+                        self._flips.append(FlipCandidate(
+                            flip_side, line.a_index, line.b_index,
+                            line.a_pivot, line.b_pivot, line.slope,
+                            line.intercept, cur))
                 else:
                     survivors.append(line)
             self._active = survivors
@@ -378,10 +435,19 @@ class TrendlineBook:
                     flip.touches += 1
                     flip.last_touch_index = cur
 
-        # 4. staleness archive (terminal)
+        # 3b. flip expiry: a flip untouched for the frozen staleness age is
+        # dropped (bounds state; symmetric with the kept-line archive rule)
+        self._flips = [
+            f for f in self._flips
+            if cur - max(f.created_index, f.last_touch_index)
+            < ARCHIVE_AGE_BARS]
+
+        # 4. staleness archive (terminal). A line with an OPEN WATCH is
+        # exempt — D11.9: it stays active until the episode resolves.
         survivors = []
         for line in self._active:
-            if cur - line.last_touch_index >= ARCHIVE_AGE_BARS:
+            if (line.watch_remaining is None
+                    and cur - line.last_touch_index >= ARCHIVE_AGE_BARS):
                 self._archive(line)
             else:
                 survivors.append(line)
@@ -390,9 +456,23 @@ class TrendlineBook:
         # 5. re-selection (dedup + cap); engine inactive while ATR unwarm
         if atr is None:
             return events
+        # D11.9: a line with an OPEN WATCH stays active until its episode
+        # resolves — pre-seeded into the chosen set, exempt from eviction.
+        chosen: dict[str, list] = {"support": [], "resistance": []}
+        geoms: dict[str, list] = {"support": [], "resistance": []}
+        taken_keys: set[tuple] = set()
+        for line in self._active:
+            if line.watch_remaining is not None:
+                chosen[line.side].append((line, None))
+                geoms[line.side].append(
+                    (line.slope,
+                     line.intercept + line.slope * (cur - line.a_index)))
+                taken_keys.add((line.side, line.a_index, line.b_index))
         kept_keys = {(l.side, l.a_index, l.b_index) for l in self._active}
         entries = []
         for line in self._active:
+            if line.watch_remaining is not None:
+                continue                           # pre-selected above
             entries.append((self._line_score(line, cur), line.b_index,
                             line.a_index, line.side, line, None))
         for cand in self._detector.candidates():
@@ -416,23 +496,23 @@ class TrendlineBook:
                             None, flip))
         entries.sort(key=lambda e: (-e[0], -e[1], -e[2], e[3]))
 
-        chosen: dict[str, list] = {"support": [], "resistance": []}
-        geoms: dict[str, list] = {"support": [], "resistance": []}
         for score, _b, _a, side, line, other in entries:
+            obj = line if line is not None else other
+            key = (obj.side, obj.a_index, obj.b_index)
+            if key in taken_keys:
+                continue                           # one line per key per bar
             bucket = chosen[side]
             if len(bucket) == CAP_PER_SIDE:
                 continue
-            slope = line.slope if line is not None else other.slope
-            a_index = line.a_index if line is not None else other.a_index
-            intercept = (line.intercept if line is not None
-                         else other.intercept)
-            y = intercept + slope * (cur - a_index)
+            slope = obj.slope
+            y = obj.intercept + obj.slope * (cur - obj.a_index)
             if any(abs(slope - s2) < DEDUP_SLOPE_REL * max(abs(slope), abs(s2))
                    and abs(y - y2) < DEDUP_INTERCEPT_ATR_RATIO * atr / candle.c
                    for s2, y2 in geoms[side]):
                 continue                           # clustered: best already in
             bucket.append((line, other))
             geoms[side].append((slope, y))
+            taken_keys.add(key)
 
         new_active = []
         selected_lines = {id(line) for side_bucket in chosen.values()

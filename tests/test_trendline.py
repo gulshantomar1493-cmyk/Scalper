@@ -358,9 +358,9 @@ def test_ordering_stability_and_deterministic_replay():
 
 # ============================================ break episodes + role flip
 # Kept line (support, 3, 9): y(t) = 100 * 1.1^((t-3)/6); hand values:
-# y13=117.216 y14=119.093 y15=121.000 y16=122.937 y17=124.893 y18=126.905
-# y19=128.940 y20=131.003 y21=133.100 y22=135.231. All TR/tolerance margins
-# hand-verified with the period-1 ATR.
+# y13=117.216 y14=119.093 y15=121.000 y16=122.937 y17=124.906 y18=126.906
+# y19=128.938 y20=131.002 y21=133.100 y22=135.231. All TR/tolerance margins
+# hand-verified with the period-1 ATR (freeze audit re-verified them).
 
 
 def _kept_book():
@@ -509,6 +509,124 @@ def test_full_lifecycle_and_replay_determinism():
     assert snapshot == [(("resistance", 3, 9), "active", 3, None)]
     assert broken == frozenset({("support", 3, 9)})
     assert run() == (events, snapshot, broken, archived)   # replay-identical
+
+
+def test_channels_from_parallel_flip_pair_and_geometric_mid():
+    # Channels need same-direction parallel lines; the only in-engine path
+    # to an ascending resistance is a role flip — exactly what this builds:
+    # the flipped resistance (3,9) plus a new parallel support (20,26), both
+    # slope ln(1.1)/6 (delta 0 < 8%). Mid-line = log midpoint (geometric
+    # mean in price space). Channels are derived only — never persisted.
+    atr, det, book = _kept_book()
+    _bars(atr, det, book, [_QUAL_BREAKER] + _BELOW, 13)      # broken @16
+    _bars(atr, det, book, [(121, 125, 123, 122), (123, 127, 125, 124),
+                           (125, 129, 127, 126)], 17)        # flip kept @19
+    assert book.channels() == []                             # no support yet
+    ext = [_candle(20, 120, h=124, o=121, c=123),
+           _candle(21, 127.2, h=131.2, o=128.2, c=130.2),
+           _candle(22, 128.4, h=132.4, o=129.4, c=131.4),
+           _candle(23, 126, h=130, o=127, c=129),            # touch on y(23)
+           _candle(24, 129.6, h=133.6, o=130.6, c=132.6),
+           _candle(25, 131.4, h=135.4, o=132.4, c=134.4),
+           _candle(26, 132, h=136, o=133, c=135)]
+    _book_feed(atr, det, book, ext,
+               {0: [_pivot("L", 120, 20)], 6: [_pivot("L", 132, 26)]}.items())
+    keys = {_key(l) for l in book.active}
+    # cross-pivot pairs (3,20)/(9,20) legitimately fill the support cap but
+    # are NOT 8%-parallel to the resistance — the channel set stays single
+    assert {("resistance", 3, 9), ("support", 20, 26)} <= keys
+    [ch] = book.channels()
+    assert _key(ch.support) == ("support", 20, 26)
+    assert _key(ch.resistance) == ("resistance", 3, 9)
+    assert ch.mid_slope == pytest.approx(log(1.1) / 6, rel=1e-12)
+    # mid-line at bar 26 = geometric mean of the two line prices there
+    y_res_26 = log(100.0) + (log(1.1) / 6) * 23
+    expected_mid = (log(132.0) + y_res_26) / 2
+    assert ch.mid_value(26) == pytest.approx(expected_mid, rel=1e-12)
+    from math import exp, sqrt
+    assert exp(ch.mid_value(26)) == pytest.approx(
+        sqrt(132.0 * exp(y_res_26)), rel=1e-9)
+    # determinism: derived on demand, identical on repeat
+    assert book.channels() == [ch]
+
+
+def test_no_channel_for_opposite_slope_pair():
+    # ordinary geometry: ascending support + descending resistance -> the
+    # 8% parallelism test fails -> no channel (tie-break rig reused)
+    spec = [(112, 118), (112, 118), (112, 118), (100, 130), (112, 118),
+            (112, 118), (105, 125), (112, 118), (112, 118), (110, 120),
+            (112, 118), (112, 118), (112, 118)]
+    candles = [_candle(i, l, h=h, c=115, o=114) for i, (l, h) in enumerate(spec)]
+    atr, det, book = _book_rig()
+    _book_feed(atr, det, book, candles,
+               {6: [_pivot("L", 100, 3), _pivot("H", 130, 3)],
+                12: [_pivot("L", 110, 9), _pivot("H", 120, 9)]}.items())
+    assert len(book.active) == 2 and book.channels() == []
+
+
+# --------------------------------------------- freeze-audit regression tests
+
+
+def test_open_watch_survives_staleness_and_resolves_as_broken():
+    # Fix: archive paths exempt watch-open lines (D11.9 "stays active").
+    # Line (3,9), last touch 12. 297 riser bars (no touches, no crossing);
+    # the close-through at bar 310 opens a watch; staleness (cur-12 >= 300)
+    # would hit at bar 312 MID-WATCH — the line must survive to resolve as
+    # BROKEN at bar 313, never archived.
+    atr, det, book = _kept_book()
+    level = 600.0
+    risers = []
+    for i in range(297):                                   # bars 13..309
+        risers.append(_candle(13 + i, level, h=level * 1.01,
+                              c=level * 1.005, o=level * 1.002))
+        level *= 1.02
+    _book_feed(atr, det, book, risers)
+    [line] = book.active
+    assert line.last_touch_index == 12                     # starved, not stale yet
+    events = _bars(atr, det, book, [
+        (12000, 13000, 12800, 12500),                      # bar 310: through
+        (11800, 12400, 12200, 12000),                      # watch...
+        (11600, 12200, 12000, 11800),                      # (staleness bar 312
+        (11400, 12000, 11800, 11600),                      #  passes harmlessly)
+    ], 310)
+    assert book.active == []
+    assert book.broken_keys == frozenset({("support", 3, 9)})
+    assert book.archived_keys == frozenset()               # NOT archived
+    assert len(book.flip_candidates) == 1                  # episode completed
+
+
+def test_flip_candidate_expires_after_staleness_age():
+    # Fix: flips that never earn their touches are dropped after the frozen
+    # 300-bar staleness age — no unbounded state in a 24/7 process.
+    atr, det, book = _kept_book()
+    _bars(atr, det, book, [_QUAL_BREAKER] + _BELOW, 13)    # broken @16, flip born
+    assert len(book.flip_candidates) == 1
+    level = 600.0
+    risers = []
+    for i in range(ARCHIVE_AGE_BARS + 2):                  # bars 17..318
+        risers.append(_candle(17 + i, level, h=level * 1.01,
+                              c=level * 1.005, o=level * 1.002))
+        level *= 1.02
+    _book_feed(atr, det, book, risers)
+    assert book.flip_candidates == []                      # expired, dropped
+
+
+def test_flip_back_onto_terminal_key_is_never_created():
+    # Fix: a promoted flip that later breaks would flip BACK onto the
+    # original (terminally broken) key — dead on arrival, so never created.
+    atr, det, book = _kept_book()
+    _bars(atr, det, book, [_QUAL_BREAKER] + _BELOW, 13)    # support broken @16
+    _bars(atr, det, book, [(121, 125, 123, 122), (123, 127, 125, 124),
+                           (125, 129, 127, 126)], 17)      # flip kept @19
+    assert [_key(l) for l in book.active] == [("resistance", 3, 9)]
+    _bars(atr, det, book, [(137, 141, 138, 140),           # close 140 > y20:
+                           (138, 142, 139, 141),           # resistance watch
+                           (139, 143, 140, 142),
+                           (140, 144, 141, 143)], 20)      # broken @23
+    assert book.active == []
+    assert book.broken_keys == frozenset({("support", 3, 9),
+                                          ("resistance", 3, 9)})
+    assert book.flip_candidates == []                      # no dead flip-back
 
 
 async def test_persistence_capability_lines_only(db_conn):
