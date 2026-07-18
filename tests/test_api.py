@@ -327,6 +327,29 @@ async def test_analytics_endpoint_roundtrip(db_conn):
         await _stop(server, task)
 
 
+async def test_journal_list_endpoint(db_conn):
+    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
+    await _seed_evaluated_rec(db_conn, "S2", "sl", -1.0, "loss", -1.0, hour=15)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/journal") as r:
+                assert r.status == 401                     # Bearer required
+            async with s.get(f"http://{addr}/journal?limit=100",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+        assert len(body) == 2
+        # newest first (hour 15 before hour 9)
+        assert body[0]["strategy"] == "S2" and body[1]["strategy"] == "S1"
+        assert body[0]["eval_outcome"] == "sl" and body[0]["result"] == "loss"
+        assert body[1]["taken"] is True and body[1]["reason_text"] == "x"
+        assert "entry" in body[0] and "status" in body[0]
+    finally:
+        await _stop(server, task)
+
+
 # -------------------------------------------------------------- WebSocket
 
 

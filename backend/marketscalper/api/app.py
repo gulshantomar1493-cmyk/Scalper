@@ -54,7 +54,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db
-from marketscalper.analytics import compute_analytics
+from marketscalper.analytics import compute_analytics, journal_list
 from marketscalper.core.bus import EventBus
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
@@ -302,6 +302,14 @@ def create_app(
         strategy / per session. Read-only over the persisted rows."""
         async with pool.acquire() as conn:
             return await compute_analytics(conn)
+
+    @app.get("/journal", dependencies=[Depends(require_token)])
+    async def journal_list_endpoint(limit: int = 100) -> list:
+        """Recent recommendations + journal context (the P4.12 journal
+        tab), newest first. Read-only."""
+        limit = max(1, min(limit, 500))               # bounded
+        async with pool.acquire() as conn:
+            return await journal_list(conn, limit)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

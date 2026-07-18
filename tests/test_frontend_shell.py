@@ -458,3 +458,60 @@ def test_css_carries_quicklog_tokens():
     css = _read("styles.css")
     assert ".quicklog" in css and ".ql-toggle" in css and ".ql-result" in css
     assert ".ql-submit" in css
+
+
+# ---------------------------------------------------------------- P4.12
+
+
+def test_index_wires_dashboard():
+    html = _read("index.html")
+    assert 'src="dashboard.js"' in html
+    assert html.index("dashboard.js") < html.index('src="app.js"')  # load order
+    assert 'id="dash-open"' in html and 'id="dashboard"' in html
+    for slot in ("dash-tab-analytics", "dash-tab-journal", "dash-close",
+                 "dash-analytics", "dash-journal"):
+        assert f'id="{slot}"' in html, slot
+
+
+def test_dashboard_js_is_pure_consumer():
+    js = _read("dashboard.js")
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket", "XMLHttpRequest"):
+        assert banned not in js, banned
+    assert ".innerHTML" not in js and "textContent" in js
+    assert "localStorage" not in js and "sessionStorage" not in js
+
+
+def test_dashboard_js_renders_analytics_and_journal():
+    js = _read("dashboard.js")
+    assert "function renderAnalytics" in js and "function renderJournal" in js
+    # analytics: overall + per strategy + per session, from the payload
+    assert "a.overall" in js and "a.by_strategy" in js and "a.by_session" in js
+    assert "hypothetical" in js and "system_vs_actual" in js
+    # journal card: outcome, manual result, tags, rule-trace
+    assert "j.eval_outcome" in js and "j.result" in js
+    assert "j.tags" in js and "j.reason_text" in js
+    assert "function statTable" in js
+
+
+def test_app_js_opens_dashboard_via_fetch():
+    js = _read("app.js")
+    assert "async function openDashboard" in js
+    assert '"/analytics"' in js and "/journal?limit=" in js
+    assert "Dashboard.render" in js and "Dashboard.show" in js
+    assert "Dashboard.init()" in js
+
+
+def test_css_carries_dashboard_tokens():
+    css = _read("styles.css")
+    assert "#dashboard" in css and ".dash-tab" in css and ".jcard" in css
+    assert ".stat-grid" in css and ".dash-table" in css
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_dashboard_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "dashboard.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr

@@ -109,6 +109,33 @@ def _f(v):
     return None if v is None else float(v)
 
 
+JOURNAL_LIST_SQL = (
+    "SELECT r.id, r.ts, s.strategy, r.direction, r.entry_px, r.sl, r.tp1,"
+    " r.tp2, r.status, r.eval_outcome, r.eval_r, j.reason_text, j.taken,"
+    " j.result, j.actual_r, j.notes, j.tags"
+    " FROM recommendations r"
+    " JOIN signals s ON s.id = r.signal_id"
+    " LEFT JOIN journal j ON j.recommendation_id = r.id"
+    " ORDER BY r.ts DESC LIMIT $1"
+)
+
+
+async def journal_list(conn, limit: int = 100) -> list:
+    """Recent recommendations + their journal context, newest first —
+    the P4.12 journal tab. Read-only."""
+    rows = await conn.fetch(JOURNAL_LIST_SQL, limit)
+    return [{
+        "id": r["id"], "ts": r["ts"].isoformat(), "strategy": r["strategy"],
+        "direction": r["direction"], "entry": _f(r["entry_px"]),
+        "sl": _f(r["sl"]), "tp1": _f(r["tp1"]), "tp2": _f(r["tp2"]),
+        "status": r["status"], "eval_outcome": r["eval_outcome"],
+        "eval_r": _f(r["eval_r"]), "reason_text": r["reason_text"],
+        "taken": r["taken"], "result": r["result"],
+        "actual_r": _f(r["actual_r"]), "notes": r["notes"],
+        "tags": list(r["tags"]) if r["tags"] is not None else None,
+    } for r in rows]
+
+
 async def compute_analytics(conn) -> dict:
     """Fetch + aggregate (the thin DB layer). Read-only."""
     rows = await conn.fetch(ANALYTICS_SQL)

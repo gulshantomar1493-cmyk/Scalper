@@ -405,6 +405,151 @@ body {
   cursor: pointer;
 }
 .ql-status { font-size: 11px; color: var(--text-dim); }
+
+/* -------------------------------------------- analytics dashboard (P4.12) */
+.dash-open-btn {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 4px 12px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 14px;
+}
+#dashboard {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: rgba(5, 8, 16, 0.72);
+  display: none;
+  align-items: flex-start;
+  justify-content: center;
+  padding: 40px 16px;
+}
+#dashboard.open { display: flex; }
+.dash-panel {
+  width: 100%;
+  max-width: 880px;
+  max-height: 88vh;
+  display: flex;
+  flex-direction: column;
+  background: var(--surface-raised);
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.dash-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dash-tab {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 5px 14px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.dash-tab.active { color: var(--accent); border-color: var(--accent); }
+.dash-close {
+  margin-left: auto;
+  background: transparent;
+  color: var(--text-dim);
+  border: none;
+  font-size: 16px;
+  cursor: pointer;
+}
+.dash-body { overflow-y: auto; padding: 16px; }
+.dash-empty { color: var(--text-dim); font-size: 13px; }
+.dash-count { color: var(--text-dim); font-size: 12px; margin-bottom: 14px; }
+.dash-h3 {
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin: 4px 0 8px;
+}
+.stat-block { margin-bottom: 20px; }
+.stat-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+}
+.stat-cell {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 10px;
+  background: var(--surface);
+}
+.stat-label { font-size: 10px; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em; }
+.stat-value { font-size: 17px; margin-top: 4px; }
+.dash-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+.dash-table th {
+  text-align: right;
+  font-weight: 500;
+  color: var(--text-dim);
+  font-size: 10px;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--hairline);
+}
+.dash-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.dash-table td.row-key { text-align: left; color: var(--accent); font-weight: 600; }
+
+/* journal tab */
+.jcard {
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  padding: 12px;
+  margin-bottom: 10px;
+  background: var(--surface);
+}
+.jcard-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.jcard-strategy { font-weight: 600; }
+.jcard-dir { font-size: 11px; font-weight: 600; }
+.jcard-dir.long { color: var(--up); }
+.jcard-dir.short { color: var(--down); }
+.jcard-status {
+  font-size: 10px;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  padding: 0 6px;
+}
+.jcard-ts { margin-left: auto; font-size: 11px; color: var(--text-dim); }
+.jcard-rail { display: flex; gap: 14px; font-size: 12px; margin-bottom: 6px; }
+.jcard-rail .stop { color: var(--down); }
+.jcard-rail .tp { color: var(--up); }
+.jcard-out { display: flex; gap: 12px; font-size: 12px; margin-bottom: 6px; }
+.j-eval { color: var(--text-dim); }
+.j-manual { font-weight: 600; }
+.j-manual.j-win { color: var(--up); }
+.j-manual.j-loss { color: var(--down); }
+.jcard-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.jtag {
+  font-size: 10px;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: 999px;
+  padding: 0 7px;
+}
+.jcard-notes { font-size: 12px; color: var(--text); margin-bottom: 6px; }
+.jcard-trace summary { font-size: 11px; color: var(--text-dim); cursor: pointer; }
+.jtrace-pre {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+  white-space: pre-wrap;
+  margin-top: 6px;
+  line-height: 1.5;
+}
 .rail-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
 .rail-label { color: var(--text-dim); }
 .rail-value { color: var(--text); }

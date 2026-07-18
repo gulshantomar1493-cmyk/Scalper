@@ -23,11 +23,28 @@
       <button id="sym-ETHUSDT" type="button">ETHUSDT</button>
     </div>
     <div class="conn">
+      <button id="dash-open" type="button" class="dash-open-btn">Dashboard</button>
       <span id="trend-state" class="mono trend">trend: —</span>
       <span id="conn-dot" class="dot"></span>
       <span id="conn-text" class="mono">CONNECTING</span>
     </div>
   </header>
+
+  <!-- Analytics dashboard + journal tab (P4.12; §11). Overlay, hidden
+       until the header button opens it; app.js fetches, dashboard.js draws. -->
+  <div id="dashboard">
+    <div class="dash-panel">
+      <div class="dash-bar">
+        <button id="dash-tab-analytics" type="button" class="dash-tab active">Analytics</button>
+        <button id="dash-tab-journal" type="button" class="dash-tab">Journal</button>
+        <button id="dash-close" type="button" class="dash-close">✕</button>
+      </div>
+      <div class="dash-body">
+        <div id="dash-analytics"></div>
+        <div id="dash-journal" style="display:none"></div>
+      </div>
+    </div>
+  </div>
 
   <div class="replay-bar mono">
     <span class="strip-label-inline">REPLAY</span>
@@ -109,6 +126,7 @@
 
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
+  <script src="dashboard.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

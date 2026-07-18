@@ -58,6 +58,7 @@ const mainChart = makeChart(document.getElementById("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
 Overlays.init(mainChart, mainSeries);            // P1.19 overlays + P1.20 audit
 Panel.init(quickLogSubmit);                      // P3.19 panel + P4.7 quick-log
+Dashboard.init();                                // P4.12 analytics + journal
 const lastStructure = {};                        // latest payload per symbol
 
 const stripChart = makeChart(document.getElementById("strip"));
@@ -170,6 +171,22 @@ async function quickLogSubmit(recId, fields) {
     body: JSON.stringify(fields),
   });
 }
+
+/* P4.12: open the analytics dashboard + journal tab — app.js fetches
+ * (GET /analytics, GET /journal), dashboard.js renders (pure consumer). */
+async function openDashboard() {
+  try {
+    const [analytics, journal] = await Promise.all([
+      replayCall("/analytics", { method: "GET" }),
+      replayCall("/journal?limit=100", { method: "GET" }),
+    ]);
+    Dashboard.render(analytics, journal);
+    Dashboard.show();
+  } catch (err) {
+    lastEvent.textContent = `dashboard: ${err.message}`;
+  }
+}
+document.getElementById("dash-open").addEventListener("click", openDashboard);
 
 document.getElementById("replay-start").addEventListener("click", async () => {
   const from = document.getElementById("replay-from").value;
