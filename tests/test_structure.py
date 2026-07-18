@@ -7,8 +7,12 @@ from datetime import datetime, timedelta, timezone
 import pytest
 
 from marketscalper import db
+from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.structure import (
+    BOS_DISPLACEMENT_ATR_RATIO,
     K_BY_TF,
+    BosDetector,
+    BosEvent,
     Pivot,
     PivotDetector,
     PivotLabeler,
@@ -415,6 +419,181 @@ def test_trend_end_to_end_detector_labeler_machine():
         states.append(tm.update(candle))
     assert states[:17] == [None] * 17
     assert states[17] == "BEARISH" and states[18] == "BEARISH"
+
+
+# ------------------------------------------------------- BosDetector (P1.9)
+# Cadence (pinned): ATR update -> pivots -> on_pivot fan-out ->
+# trend.update(candle) -> bos.update(candle).
+
+
+def _bos_rig(h_label="HH", l_label="HL", h=110.0, l=100.0, atr_period=2):
+    tm, atr = TrendState(), IncrementalATR(period=atr_period)
+    bos = BosDetector(tm, atr)
+    for p in (_lp("H", h, h_label), _lp("L", l, l_label, 1)):
+        tm.on_pivot(p)
+        bos.on_pivot(p)
+    return tm, atr, bos
+
+
+def _bos_step(tm, atr, bos, candle):
+    atr.update(candle)
+    tm.update(candle)
+    return bos.update(candle)
+
+
+def _warm(tm, atr, bos):
+    """Three small candles: sets prev_close=105 and seeds ATR(2) = 2.0."""
+    _bos_step(tm, atr, bos, _body_candle(105, 105, 0))
+    _bos_step(tm, atr, bos, _body_candle(105, 106, 1))   # TR 2.0
+    _bos_step(tm, atr, bos, _body_candle(106, 105, 2))   # TR 2.0 -> ATR 2.0
+    assert atr.value == pytest.approx(2.0)
+
+
+def test_bos_bullish_fires_with_all_fields():
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    breaker = _body_candle(104, 111, 3)                  # close 111 > H 110
+    event = _bos_step(tm, atr, bos, breaker)
+    assert isinstance(event, BosEvent)
+    assert (event.symbol, event.tf, event.ts) == ("BTCUSDT", "1m", breaker.ts)
+    assert event.direction == "UP" and event.close == 111.0
+    assert event.broken_pivot.price == 110.0
+
+
+def test_bos_strict_equality_and_below_do_not_fire():
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    assert _bos_step(tm, atr, bos, _body_candle(105, 110, 3)) is None  # == pivot
+    assert _bos_step(tm, atr, bos, _body_candle(105, 109, 4)) is None  # below
+
+
+def test_bos_bearish_mirrored():
+    tm, atr, bos = _bos_rig(h_label="LH", l_label="LL")
+    _warm(tm, atr, bos)
+    event = _bos_step(tm, atr, bos, _body_candle(105, 99, 3))   # close < L 100
+    assert event.direction == "DOWN" and event.broken_pivot.price == 100.0
+
+
+def test_bos_once_per_pivot_then_rearms_on_new_pivot():
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    assert _bos_step(tm, atr, bos, _body_candle(104, 111, 3)) is not None
+    assert _bos_step(tm, atr, bos, _body_candle(111, 112, 4)) is None  # latched
+    new_h = _lp("H", 115, "HH", 10)                      # new confirmed swing
+    tm.on_pivot(new_h)
+    bos.on_pivot(new_h)
+    assert _bos_step(tm, atr, bos, _body_candle(112, 114, 5)) is None  # 114 < 115
+    event = _bos_step(tm, atr, bos, _body_candle(114, 116, 6))
+    assert event is not None and event.broken_pivot.price == 115.0
+
+
+def test_bos_never_fires_outside_trend():
+    # RANGE via mixed labels: same break geometry -> nothing
+    tm, atr, bos = _bos_rig(h_label="HH", l_label="LL")
+    _warm(tm, atr, bos)
+    assert tm.state == "RANGE"
+    assert _bos_step(tm, atr, bos, _body_candle(104, 111, 3)) is None
+    # warm-up unknown: seeds only -> nothing
+    tm, atr, bos = _bos_rig(h_label=None, l_label=None)
+    assert _bos_step(tm, atr, bos, _body_candle(104, 111, 3)) is None
+    # against-trend break: BEARISH but close ABOVE the high -> CHOCH turf
+    tm, atr, bos = _bos_rig(h_label="LH", l_label="LL")
+    _warm(tm, atr, bos)
+    assert _bos_step(tm, atr, bos, _body_candle(104, 111, 3)) is None
+
+
+def test_bos_displacement_true_weak_and_equality():
+    # displacement True: warm ATR 2.0; breaker o=104 c=111 h=111.5 l=103.5:
+    # TR = max(8, 6.5, 1.5) = 8 -> ATR = (2+8)/2 = 5, thr 6.0, body 7 > 6
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    event = _bos_step(tm, atr, bos, _body_candle(104, 111, 3))
+    assert atr.value == pytest.approx(5.0) and event.displacement is True
+    # weak: breaker o=106 c=111: TR = max(6, 6.5, 0.5) = 6.5 -> ATR 4.25,
+    # thr 5.1, body 5 <= 5.1
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    event = _bos_step(tm, atr, bos, _body_candle(106, 111, 3))
+    assert atr.value == pytest.approx(4.25) and event.displacement is False
+    # exact equality = weak: custom candle body 6, TR 8 -> ATR 5, thr 6.0
+    assert BOS_DISPLACEMENT_ATR_RATIO * 5.0 == 6.0      # float precondition
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    breaker = Candle(symbol="BTCUSDT", tf="1m", ts=M0 + timedelta(minutes=3),
+                     o=105.0, h=112.0, l=104.0, c=111.0,
+                     v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+    event = _bos_step(tm, atr, bos, breaker)
+    assert atr.value == pytest.approx(5.0) and event.displacement is False
+
+
+def test_bos_displacement_none_while_atr_unwarm():
+    tm, atr, bos = _bos_rig(atr_period=14)
+    _bos_step(tm, atr, bos, _body_candle(105, 105, 0))
+    event = _bos_step(tm, atr, bos, _body_candle(104, 111, 1))
+    assert event is not None and event.displacement is None
+
+
+def test_bos_displacement_uses_body_not_range():
+    # monstrous wicks, tiny body: ATR explodes but body is 0.5 -> weak
+    tm, atr, bos = _bos_rig()
+    _warm(tm, atr, bos)
+    breaker = Candle(symbol="BTCUSDT", tf="1m", ts=M0 + timedelta(minutes=3),
+                     o=110.5, h=140.0, l=90.0, c=111.0,
+                     v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+    event = _bos_step(tm, atr, bos, breaker)
+    assert event is not None and event.displacement is False
+
+
+def test_bos_timeframe_generic_on_5m():
+    tm, atr = TrendState(), IncrementalATR(period=2)
+    bos = BosDetector(tm, atr)
+    for p in (_lp("H", 110, "HH", tf="5m"), _lp("L", 100, "HL", 1, tf="5m")):
+        tm.on_pivot(p)
+        bos.on_pivot(p)
+    for o, c, i in ((105, 105, 0), (105, 106, 1), (106, 105, 2)):
+        _bos_step(tm, atr, bos, _body_candle(o, c, i, tf="5m"))
+    event = _bos_step(tm, atr, bos, _body_candle(104, 111, 3, tf="5m"))
+    assert event is not None and event.tf == "5m" and event.direction == "UP"
+
+
+def test_bos_determinism_same_feed_twice():
+    def run():
+        tm, atr, bos = _bos_rig()
+        _warm(tm, atr, bos)
+        out = [_bos_step(tm, atr, bos, _body_candle(104 + i, 108 + i, 3 + i))
+               for i in range(6)]
+        new_h = _lp("H", 115, "HH", 20)
+        tm.on_pivot(new_h)
+        bos.on_pivot(new_h)
+        out.append(_bos_step(tm, atr, bos, _body_candle(114, 116, 20)))
+        return out
+    assert run() == run()
+
+
+def test_bos_end_to_end_full_chain():
+    # highs 10,11,12,15,12,11,10,11,14,11,10,9,8,9,10,11 (lows h-1), k=3:
+    #   H 15 @3 (upd 7, seed) · L 9 @6 (upd 10, seed)
+    #   H 14 @8 (upd 12, LH)  · L 7 @12 (upd 16, LL) -> BEARISH at upd 16
+    # break candle idx16 close 6.5 < L 7 -> BOS DOWN (17 candles: band asleep)
+    highs = [10, 11, 12, 15, 12, 11, 10, 11, 14, 11, 10, 9, 8, 9, 10, 11]
+    d, lab = PivotDetector("BTCUSDT", "1m"), PivotLabeler()
+    tm, atr = TrendState(), IncrementalATR()
+    bos = BosDetector(tm, atr)
+    events = []
+    for i, h in enumerate(highs + [6.5]):
+        candle = _candle(h, h - 1, i)
+        atr.update(candle)
+        for p in d.update(candle):
+            labeled = lab.label(p)
+            tm.on_pivot(labeled)
+            bos.on_pivot(labeled)
+        tm.update(candle)
+        events.append(bos.update(candle))
+    assert events[:16] == [None] * 16
+    event = events[16]
+    assert event is not None and event.direction == "DOWN"
+    assert event.broken_pivot.price == 7.0 and event.close == 6.5
+    assert event.displacement is not None                # ATR(14) warm by now
 
 
 # -------------------------------------------------------------- persistence

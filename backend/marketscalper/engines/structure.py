@@ -28,6 +28,7 @@ from collections import deque
 from dataclasses import dataclass, replace
 from datetime import datetime
 
+from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.providers.base import Candle
 
 # Frozen §4.2 confirmation depths: k=3 on 1m, k=2 on 5m. Not configuration.
@@ -192,3 +193,81 @@ class TrendState:
         inside = sum(
             1 for b_lo, b_hi in self._bodies if b_lo >= lo and b_hi <= hi)
         return inside >= self._INSIDE_MIN
+
+
+BOS_DISPLACEMENT_ATR_RATIO = 1.2   # frozen §4.2 literal (impulse vs drift)
+
+
+@dataclass(frozen=True)
+class BosEvent:
+    """One break of structure — §4.2 continuation break (roadmap P1.9)."""
+
+    symbol: str
+    tf: str
+    ts: datetime                 # breaking candle identity (open time)
+    direction: str               # 'UP' | 'DOWN' (trend direction at break)
+    broken_pivot: Pivot          # the confirmed swing that was broken
+    close: float                 # the breaking close
+    displacement: bool | None    # body > 1.2*ATR strict; None if ATR unwarm
+
+
+class BosDetector:
+    """BOS detection + displacement classification for one (symbol, tf)
+    stream (roadmap P1.9; §4.2).
+
+    BOS (continuation): CLOSE strictly beyond the last confirmed swing in
+    trend direction — close > last H in BULLISH, close < last L in BEARISH.
+    Nothing fires in RANGE/unknown; against-trend breaks are CHOCH (P1.10),
+    never BOS. Each confirmed swing breaks at most once — the latch re-arms
+    only when a NEW confirmed same-kind pivot arrives. Wicks through the
+    level are not BOS (sweeps are P2 territory).
+
+    Displacement (impulse vs drift): |c - o| > 1.2 * ATR(14) of the same
+    stream at the breaking bar; strict (equality = weak); None while the
+    ATR is unwarm. Cadence per closed candle: ATR update -> pivot
+    detection/labeling -> on_pivot fan-out -> trend.update -> update.
+    """
+
+    __slots__ = ("_trend", "_atr", "_last_h", "_last_l", "_h_fired", "_l_fired")
+
+    def __init__(self, trend: TrendState, atr: IncrementalATR) -> None:
+        self._trend = trend
+        self._atr = atr
+        self._last_h: Pivot | None = None
+        self._last_l: Pivot | None = None
+        self._h_fired = False
+        self._l_fired = False
+
+    def on_pivot(self, pivot: Pivot) -> None:
+        """Track the latest confirmed pivot per kind; a new pivot re-arms."""
+        if pivot.kind == "H":
+            if self._last_h is None or pivot.ts != self._last_h.ts:
+                self._h_fired = False
+            self._last_h = pivot
+        else:
+            if self._last_l is None or pivot.ts != self._last_l.ts:
+                self._l_fired = False
+            self._last_l = pivot
+
+    def update(self, candle: Candle) -> BosEvent | None:
+        """Evaluate the just-closed candle (trend already classified)."""
+        state = self._trend.state
+        if state == "BULLISH":
+            pivot = self._last_h
+            if pivot is None or self._h_fired or not candle.c > pivot.price:
+                return None
+            self._h_fired = True
+            direction = "UP"
+        elif state == "BEARISH":
+            pivot = self._last_l
+            if pivot is None or self._l_fired or not candle.c < pivot.price:
+                return None
+            self._l_fired = True
+            direction = "DOWN"
+        else:
+            return None                      # no trend, no continuation
+        atr = self._atr.value
+        displacement = None if atr is None else (
+            abs(candle.c - candle.o) > BOS_DISPLACEMENT_ATR_RATIO * atr)
+        return BosEvent(candle.symbol, candle.tf, candle.ts, direction,
+                        pivot, candle.c, displacement)
