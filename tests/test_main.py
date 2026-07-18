@@ -59,6 +59,20 @@ def test_refuses_unknown_feed_provider(tmp_path):
     assert r.returncode == 2
 
 
+@pytest.mark.parametrize("equity", ["0", "-5", "abc"])
+def test_refuses_bad_equity(tmp_path, equity):
+    # D21.5: non-positive or non-numeric equity would silently kill all
+    # recommendations (plan_trade geometry-rejects) — refuse to start.
+    env = _env(tmp_path, {
+        "MARKETSCALPER_API_TOKEN": "t",
+        "MARKETSCALPER_DB_DSN": "postgresql://unused",
+        "MARKETSCALPER_EQUITY_USD": equity,
+    })
+    r = subprocess.run(CMD, env=env, cwd=ROOT,
+                       capture_output=True, text=True, timeout=30)
+    assert r.returncode == 2
+
+
 # --------------------------------------------- P1.19 structure composition
 
 
@@ -111,6 +125,7 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert volume["absorption"] is None and volume["exhaustion"] is None
     assert structure["confluence"] == []                   # ATR unwarm (D15)
     assert structure["signals"] == []                      # Strategy (D20)
+    assert structure["recommendations"] == []              # D21.7 (P3.18)
     qual = structure["qualification"]                      # D16: G1 warming
     assert qual["verdict"] == "NO_SIGNAL" and qual["score"] is None
     assert [g["name"] for g in qual["gates"]] == ["G1", "G2", "G3",
@@ -188,10 +203,13 @@ async def test_pipeline_projects_confluence_and_qualification_non_empty():
     assert all(z["lo"] <= z["hi"] for z in zones)
     qual = structure["qualification"]
     assert qual["data_integrity"] == "PASS"
-    assert qual["score"] == 36.0                           # empirically pinned
+    assert qual["score"] == 38.5                           # empirically pinned
     assert qual["verdict"] == "BELOW_THRESHOLD"
     assert qual["components"]["structure"] == 100.0        # flip-tail aligned
-    assert qual["components"]["volume"] == 0.0             # flagged (D16.3)
+    # D21.3: the composition attaches the Volume Engine — on the unseeded
+    # V1 tail only the no-absorption/exhaustion item fires (rvol None,
+    # delta 0 on synthetic 50/50 taker volumes, VWAP None mid-day start)
+    assert qual["components"]["volume"] == 10.0
     assert qual["agreement"].endswith("rules aligned")
     assert all(g["passed"] for g in qual["gates"])
     assert qual["gates"][0]["flagged"]                     # no sampler wired

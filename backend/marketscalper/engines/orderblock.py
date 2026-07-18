@@ -27,6 +27,9 @@ from datetime import datetime
 from marketscalper.engines.structure import BosEvent
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.5/D13 literals — module constants, not config.
 OB_LOOKBACK_BARS = 20                  # source-candle scan bound (D13.1)
 OB_TRACKED_PER_BUCKET = 10             # per (direction, breaker) (D13.4)

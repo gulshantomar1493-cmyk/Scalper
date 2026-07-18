@@ -32,6 +32,9 @@ from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.trendline import FAKE_BREAK_WINDOW
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §5/D20 literals — module constants, not config.
 SL_BUFFER_ATR_RATIO = 0.25         # §5: beyond wick/extreme + 0.25×ATR
 S2_DEPTH_MIN = 0.30                # §5: pullback depth 30–70%, inclusive

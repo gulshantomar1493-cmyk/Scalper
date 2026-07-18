@@ -271,8 +271,10 @@ async def test_v2_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"trend": "BULLISH"' in joined
     # D20.2 reversal check at composition level: every gate episode pairs
     # a LOW sweep with a DOWN (continuation) CHOCH — S1 must refuse all
-    # of them, and S2/S3 cannot fire unseeded (D20.6) -> no signals ever.
+    # of them, and S2/S3 cannot fire unseeded (D20.6) -> no signals ever,
+    # hence no recommendations either (D21.2).
     assert '"signals": [{' not in joined
+    assert '"recommendations": [{' not in joined
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable
@@ -302,6 +304,15 @@ async def test_v3_signal_stream_byte_identical_across_double_replay(db_conn):
     assert 'swept ASIA_L (LOW)' in joined           # §8 fact trace hashed
     assert '"strategy": "S2"' not in joined         # unseeded -> silent
     assert '"strategy": "S3"' not in joined
+    # D21.7/D21.8: the recommendations key is carried (structural) but
+    # stays empty — the S1 bar scores 52.5 (BELOW_THRESHOLD): Structure
+    # forfeits the opposing-CHOCH +20 (its own reversal CHOCH), Liquidity
+    # loses the +40 pool item (ASIA_L is a key level, not a pool), and
+    # unseeded Volume loses the +40 rvol item and the +30 delta item (the
+    # synthetic 50/50 taker split zeroes delta). The recommendation-
+    # carrying stream is P3.20's milestone (seeded rvol).
+    assert '"recommendations": [' in joined
+    assert '"recommendations": [{' not in joined
     # exactly one signal, with the D20.2 geometry invariants
     final = json.loads(first[-1].split("|", 1)[1])
     assert len(final["signals"]) == 1

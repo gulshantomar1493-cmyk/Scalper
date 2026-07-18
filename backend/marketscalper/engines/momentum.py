@@ -20,6 +20,9 @@ from dataclasses import dataclass
 
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 log = logging.getLogger(__name__)
 
 

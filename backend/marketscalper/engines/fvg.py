@@ -26,6 +26,9 @@ from datetime import datetime
 from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.5/D14 literals — module constants, not config.
 FVG_MIN_GAP_ATR_RATIO = 0.3            # inclusive minimum size (D14.1)
 FVG_TRACKED_PER_DIRECTION = 10         # unfilled gaps kept (D14.3)

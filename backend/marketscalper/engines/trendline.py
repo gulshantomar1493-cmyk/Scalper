@@ -50,6 +50,9 @@ from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.structure import Pivot
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.3/D11 literals — module constants, not config.
 N_PIVOTS = 12
 TOUCH_TOLERANCE_ATR_RATIO = 0.15

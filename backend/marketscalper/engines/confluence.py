@@ -20,6 +20,9 @@ from dataclasses import dataclass
 from datetime import datetime
 from math import exp
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.5/D15 literal — module constant, not config.
 CONFLUENCE_BAND_ATR_RATIO = 0.3        # inclusive "within" (D15.2)
 HTF_MAGNET_MIN_COUNT = 3               # §4.5: "3+ overlapping objects"

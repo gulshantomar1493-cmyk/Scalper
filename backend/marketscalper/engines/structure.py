@@ -31,6 +31,9 @@ from datetime import datetime
 from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.2 confirmation depths: k=3 on 1m, k=2 on 5m. Not configuration.
 K_BY_TF = {"1m": 3, "5m": 2}
 

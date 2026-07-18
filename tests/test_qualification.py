@@ -32,14 +32,15 @@ def _candle(i, o=100.0, c=100.2, h=101.0, l=99.5, tf="1m"):
 class _Rig:
     """The real frozen instances in the pinned composition cadence."""
 
-    def __init__(self):
+    def __init__(self, volume=None):
         self.atr = IncrementalATR()
         self.atr_5m = IncrementalATR()
         self.trend = TrendState()
         self.momentum = MomentumState(self.atr)
         self.regime = RegimeClassifier("BTCUSDT", self.atr, self.atr_5m)
         self.qual = QualificationEngine("BTCUSDT", self.atr, self.trend,
-                                        self.momentum, self.regime)
+                                        self.momentum, self.regime,
+                                        volume=volume)
 
     def step(self, candle, **kw):
         self.atr.update(candle)
@@ -381,3 +382,132 @@ def test_determinism_same_feed_twice():
         out.append(rig.step(_candle(31), zones=[_zone(99.0, 101.0, 2)]))
         return out
     assert run() == run()
+
+
+# ------------------------------------------- Volume rubric (D21.3, P3.18)
+
+
+class _FakeVolume:
+    """Duck-typed frozen-VolumeEngine surface for the D21.3 seam."""
+
+    def __init__(self, rvol=None, delta=0.0, session_vwap=None,
+                 absorption=None, exhaustion=None):
+        self.rvol = rvol
+        self.delta = delta
+        self.session_vwap = session_vwap
+        self.absorption = absorption
+        self.exhaustion = exhaustion
+
+
+def _bullish(rig):
+    _warm(rig, 30)
+    rig.trend.on_pivot(_pivot("H", 200.0, "HH"))   # far above the candles:
+    rig.trend.on_pivot(_pivot("L", 190.0, "HL"))   # band never fires
+
+
+def test_volume_component_all_items_fire():
+    vol = _FakeVolume(rvol=1.5, delta=3.0, session_vwap=99.0)
+    rig = _Rig(volume=vol)
+    _bullish(rig)                                  # close 100.2 > vwap 99
+    result = rig.step(_candle(30))
+    assert result.components["volume"] == 100.0
+    assert result.evaluable == 14                  # m grows with the seam
+    assert "✓ elevated participation rvol (+40 volume)" in result.reasons
+    assert "✓ delta aligned with trend (+30 volume)" in result.reasons
+    assert "✓ close on trend side of VWAP (+20 volume)" in result.reasons
+    assert ("✓ no absorption/exhaustion warning (+10 volume)"
+            in result.reasons)
+    # structure 50 (trend + no-CHOCH) -> score = 15 + 0.25*100 = 40
+    assert result.score == 40.0
+
+
+def test_volume_component_boundaries_and_none_paths():
+    # rvol 1.49 (below the inclusive 1.5): participation item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.49, delta=3.0, session_vwap=99.0))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 60.0
+    # rvol None (unseeded, D7): same
+    rig = _Rig(volume=_FakeVolume(rvol=None, delta=3.0, session_vwap=99.0))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 60.0
+    # zero delta: alignment item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=0.0, session_vwap=99.0))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 70.0
+    # opposing delta (negative under BULLISH): item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=-1.0, session_vwap=99.0))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 70.0
+    # VWAP None (mid-day start, D7): side item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=3.0, session_vwap=None))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 80.0
+    # close on the wrong side of VWAP: side item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=3.0, session_vwap=150.0))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 80.0
+    # absorption present: the absence item 0
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=3.0, session_vwap=99.0,
+                                  absorption=object()))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 90.0
+    # exhaustion present: same
+    rig = _Rig(volume=_FakeVolume(rvol=1.5, delta=3.0, session_vwap=99.0,
+                                  exhaustion="TOP"))
+    _bullish(rig)
+    assert rig.step(_candle(30)).components["volume"] == 90.0
+
+
+def test_volume_alignment_items_need_a_directional_trend():
+    # no pivots at all -> trend None: delta/VWAP items are 0 even with
+    # perfect values (the D16.3 "nothing to align" precedent)
+    rig = _Rig(volume=_FakeVolume(rvol=2.0, delta=5.0, session_vwap=99.0))
+    _warm(rig, 30)
+    result = rig.step(_candle(30))
+    assert result.components["volume"] == 50.0     # rvol 40 + absence 10
+
+
+def test_volume_detached_stays_legacy():
+    rig = _Rig()                                   # volume=None (legacy)
+    _bullish(rig)
+    result = rig.step(_candle(30))
+    assert result.components["volume"] == 0.0
+    assert result.evaluable == 10                  # D16.4 unchanged
+    assert not any("volume)" in r for r in result.reasons)
+
+
+def _bearish(rig):
+    # a clean downtrend: LH/LL far below the candles so the band never
+    # fires and the memoryless machine reads BEARISH
+    for i in range(30):
+        rig.step(_candle(i, o=100.0, c=99.8, h=100.1, l=99.5))
+    rig.trend.on_pivot(_pivot("H", 10.0, "LH"))
+    rig.trend.on_pivot(_pivot("L", 5.0, "LL"))
+
+
+def test_volume_bearish_arms_mirror():
+    # BEARISH: delta must be negative, close must be BELOW vwap
+    vol = _FakeVolume(rvol=1.5, delta=-3.0, session_vwap=105.0)
+    rig = _Rig(volume=vol)
+    _bearish(rig)                                  # close 99.8 < vwap 105
+    result = rig.step(_candle(30, o=100.0, c=99.8, h=100.1, l=99.5))
+    assert result.components["volume"] == 100.0
+    assert "✓ delta aligned with trend (+30 volume)" in result.reasons
+    assert "✓ close on trend side of VWAP (+20 volume)" in result.reasons
+    # positive delta under BEARISH does NOT align; close above vwap is
+    # the wrong side — both items drop
+    vol2 = _FakeVolume(rvol=1.5, delta=+3.0, session_vwap=95.0)
+    rig2 = _Rig(volume=vol2)
+    _bearish(rig2)
+    result2 = rig2.step(_candle(30, o=100.0, c=99.8, h=100.1, l=99.5))
+    assert result2.components["volume"] == 50.0    # rvol 40 + absence 10
+
+
+def test_volume_vwap_boundary_is_strict():
+    # close exactly AT vwap is not "on the trend side" (strict >/<)
+    vol = _FakeVolume(rvol=1.0, delta=0.0, session_vwap=100.2)
+    rig = _Rig(volume=vol)
+    _bullish(rig)                                  # close == 100.2 == vwap
+    result = rig.step(_candle(30))
+    assert "✓ close on trend side of VWAP (+20 volume)" not in result.reasons
+    assert result.components["volume"] == 10.0     # only the absence item

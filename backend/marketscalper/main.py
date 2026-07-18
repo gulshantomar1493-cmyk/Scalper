@@ -41,6 +41,7 @@ from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
+from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
 from marketscalper.core.state import StateStore
 from marketscalper.engines.confluence import confluence_zones
 from marketscalper.engines.fvg import FvgEngine
@@ -50,6 +51,7 @@ from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
                                             RegimeClassifier)
 from marketscalper.engines.qualification import (QualificationEngine,
                                                  spread_pct_of)
+from marketscalper.engines.risk import management_guidance, plan_trade
 from marketscalper.engines.strategy import StrategyEngine
 from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
@@ -65,6 +67,11 @@ log = logging.getLogger(__name__)
 
 _FEEDS = {"binance": BinanceFeed}  # provider selection map (Part D: plain config)
 
+# D21.5: display-scaling default for §7 suggested qty (qty/risk_amt are
+# display-only; net RR is equity-independent). Live main() overrides via
+# MARKETSCALPER_EQUITY_USD; replay/tests use this constant — replay ≡ live.
+DEFAULT_EQUITY_USD = 10000.0
+
 
 class _StructurePipeline:
     """One symbol's 1m analysis chain (P1.19 composition, frozen engines,
@@ -78,11 +85,13 @@ class _StructurePipeline:
     _ZONES_SHOWN = 10       # confluence display cap (D15.3)
 
     def __init__(self, symbol: str, store: StateStore,
-                 clock_provider=None, volume_seed=None) -> None:
+                 clock_provider=None, volume_seed=None,
+                 equity=DEFAULT_EQUITY_USD) -> None:
         self._symbol = symbol
         self._store = store
         self._clock_provider = clock_provider      # D16.2 G1 (live only)
         self._spread_pct = None                    # latest G2 input
+        self._equity = equity                      # D21.5 (display scaling)
         self._atr = IncrementalATR()
         self._atr_5m = IncrementalATR()            # regime input (D16.5)
         self._momentum = MomentumState(self._atr)
@@ -106,10 +115,14 @@ class _StructurePipeline:
         self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
         self._trend_5m = TrendState()                     # D20.2: S1/S2 context
         self._qual = QualificationEngine(symbol, self._atr, self._trend,
-                                         self._momentum, self._regime)
+                                         self._momentum, self._regime,
+                                         volume=self._volume)   # D21.3 seam
         self._strategy = StrategyEngine(symbol, self._atr)   # D20 (P3.12)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
         self._signals: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._recommendations: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._records: list = []    # (signal, qual, plan, rec|None) —
+        self._last_payload = None   # drained every bar (D21.6)
         self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._sweep_events: deque = deque(maxlen=self._EVENTS_SHOWN)
@@ -189,8 +202,47 @@ class _StructurePipeline:
                 session_vwap=self._volume.session_vwap,
                 rvol=self._volume.rvol):
             self._signals.append(signal)
-        self._store.set_structure(self._symbol,
-                                  self._payload(candle, zones, qual))
+            plan, rec = self._admit(signal, qual)  # D21.2 (§6→§7 flow)
+            if rec is not None:
+                self._recommendations.append(rec)
+            self._records.append((signal, qual, plan, rec))
+        payload = self._payload(candle, zones, qual)
+        self._last_payload = payload               # D21.1 state_snapshot
+        self._store.set_structure(self._symbol, payload)
+
+    def snapshot_payload(self) -> dict | None:
+        """The last published payload — the signal row's state_snapshot."""
+        return self._last_payload
+
+    def _admit(self, signal, qual):
+        """§7 planning + the D21.2 recommendation admission — pure, runs
+        in every wiring so payloads are identical with or without a
+        recorder. Returns (plan, rec_dict | None)."""
+        plan = plan_trade(direction=signal.direction, entry=signal.entry,
+                          sl=signal.sl, tp1=signal.tp1, tp2=signal.tp2,
+                          equity=self._equity)
+        if (qual.verdict not in ("TRADEABLE", "A_PLUS")
+                or plan.status != "suggested" or not plan.rr_floor_ok):
+            return plan, None                      # signal row only (D21.2)
+        rec = {
+            "strategy": signal.strategy, "direction": signal.direction,
+            "created_ts": signal.created_ts.isoformat(),
+            "entry": plan.entry, "sl": plan.sl,
+            "tp1": plan.tp1, "tp2": plan.tp2,
+            "qty": plan.qty, "risk_amt": plan.risk_amt,
+            "est_fees": plan.qty * plan.fee_per_unit,
+            "net_rr_tp1": plan.net_rr_tp1, "net_rr_tp2": plan.net_rr_tp2,
+            "guidance": list(management_guidance(plan)),
+            "score": qual.score, "verdict": qual.verdict,
+        }
+        return plan, rec
+
+    def drain_records(self) -> list:
+        """This bar's (signal, qual, plan, rec) tuples for the recorder
+        (D21.6); empties the buffer. Recorder-less wirings simply never
+        call it — the bounded payload deques carry the display state."""
+        records, self._records = self._records, []
+        return records
 
     def step_5m(self, candle: Candle) -> None:
         """5m closed candle: pivots feed the A8 external range (D12.6)."""
@@ -309,6 +361,7 @@ class _StructurePipeline:
                          "invalid_after_bars": s.invalid_after_bars,
                          "facts": list(s.facts)}
                         for s in self._signals],
+            "recommendations": list(self._recommendations),   # D21.7
             "qualification": {
                 "gates": [{"name": g.name, "passed": g.passed,
                            "flagged": g.flagged, "detail": g.detail}
@@ -335,7 +388,8 @@ def _row_to_candle(r) -> Candle:
 
 def _wire_structure_engines(bus: EventBus, store: StateStore,
                             symbols, clock_provider=None,
-                            seed_candles=None) -> None:
+                            seed_candles=None, recorder=None,
+                            equity=DEFAULT_EQUITY_USD) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
@@ -343,11 +397,14 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
     replay/tests leave it None (flagged pass, D16.2).
     seed_candles: dict symbol -> historical 1m candles for the D19.2
     RVOL bucket seed (the 20 days preceding the stream start); None ->
-    unseeded (rvol warms from the stream)."""
+    unseeded (rvol warms from the stream).
+    recorder: live main()'s SignalRecorder (D21.6); replay/tests pass
+    None — payloads are identical either way, only persistence differs."""
     pipelines = {
         symbol: _StructurePipeline(
             symbol, store, clock_provider,
-            volume_seed=(seed_candles or {}).get(symbol))
+            volume_seed=(seed_candles or {}).get(symbol),
+            equity=equity)
         for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
@@ -356,6 +413,10 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
             return
         if candle.tf == "1m":
             pipeline.step(candle)
+            records = pipeline.drain_records()     # always drained (bounded)
+            if recorder is not None and records:
+                await recorder.record(candle.symbol, records,
+                                      pipeline.snapshot_payload())
         elif candle.tf == "5m":
             pipeline.step_5m(candle)
 
@@ -384,6 +445,21 @@ def main() -> int:
         log.error("unknown feed provider %r (available: %s)",
                   feed_name, ", ".join(_FEEDS))
         return 2
+    # D21.5: equity is validated at startup (the D3 refuse-to-start
+    # pattern) — a non-positive value would make plan_trade geometry-
+    # reject every plan, silently killing all recommendations.
+    raw_equity = os.environ.get("MARKETSCALPER_EQUITY_USD",
+                                str(DEFAULT_EQUITY_USD))
+    try:
+        equity = float(raw_equity)
+    except ValueError:
+        log.error("MARKETSCALPER_EQUITY_USD=%r is not a number — refusing "
+                  "to start (D21.5)", raw_equity)
+        return 2
+    if not equity > 0:
+        log.error("MARKETSCALPER_EQUITY_USD must be positive (got %s) — "
+                  "refusing to start (D21.5)", equity)
+        return 2
 
     host = os.environ.get("MARKETSCALPER_API_HOST", "127.0.0.1")
     port = int(os.environ.get("MARKETSCALPER_API_PORT", "8000"))
@@ -393,12 +469,13 @@ def main() -> int:
         "feed=%s symbols=%s api=%s:%d",
         feed_name, ",".join(config.symbols), host, port,
     )
-    asyncio.run(_run(config, _FEEDS[feed_name], token, host, port))
+    asyncio.run(_run(config, _FEEDS[feed_name], token, host, port, equity))
     log.info("MarketScalper stopped")
     return 0
 
 
-async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> None:
+async def _run(config: Config, feed_cls, token: str, host: str, port: int,
+               equity: float = DEFAULT_EQUITY_USD) -> None:
     pool = await db.create_pool(config.database.dsn)
     async with pool.acquire() as conn:
         created = await db.ensure_partitions(conn)         # D2: startup
@@ -429,10 +506,11 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
             seed_candles[symbol] = [_row_to_candle(r) for r in rows]
             log.info("volume seed: %s — %d candles [%s .. %s)",
                      symbol, len(rows), seed_start, seed_end)
+    recorder = SignalRecorder(pool, engine_version_stamp())   # D21.6 (live)
     _wire_structure_engines(
         bus, store, config.symbols,
         clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
-        seed_candles=seed_candles)
+        seed_candles=seed_candles, recorder=recorder, equity=equity)
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)

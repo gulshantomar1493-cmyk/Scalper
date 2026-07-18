@@ -21,6 +21,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §7/§6 literals — module constants, not config (D17.2).
 RISK_PCT = 0.005                    # §7: equity × 0.5% per trade
 NET_RR_TP1_FLOOR = 1.0              # §7: reject if net RR(TP1) < 1.0 (strict)

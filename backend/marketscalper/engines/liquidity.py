@@ -28,6 +28,9 @@ from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.structure import ChochEvent, Pivot
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §4.4/D12 literals — module constants, not config.
 EQ_TOLERANCE_ATR_RATIO = 0.1           # cluster membership (strict <)
 POOL_MIN_SIZE = 2

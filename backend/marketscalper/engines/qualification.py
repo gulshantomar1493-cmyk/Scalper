@@ -10,13 +10,19 @@ S1–S3 + planner outputs (P3.12–P3.17) — NOT produced here (D16.1).
 
 Flagged placeholders (each recorded in D16.2/D16.3, self-healing when the
 owning task lands): G1 clock arm without a provider (replay), G2 without a
-BookTicker (replay), G3 until strategies (P3.12), G4 until events.yaml,
-G5 until the journal (P4), G6 until the planner (P3.17), the Liquidity
-R-distance item (P3.17), the ENTIRE Volume component = 0 until the Volume
-Engine (P2.1–P2.7) — max achievable score is 72.0 until those land
-(0.30×100 + 0.30×90 + 0.15×100), so TRADEABLE/A_PLUS are mathematically
-unreachable this delivery: a recorded, conservative consequence of the
-frozen weights, not a formula change.
+BookTicker (replay), G3 (no roadmap-defined session sets — owner/P5, per
+D21.3), G4 until events.yaml, G5 until the journal (P4), G6 enforced at
+recommendation creation via the D17 plan's rr_floor_ok (D21.2 — the
+bar-level gate stays flagged because no plan exists before the
+strategies run), the Liquidity R-distance item (P5-era, D21.3).
+
+The Volume component placeholder was RESOLVED at P3.18 (D21.3, the
+pre-recorded P2.2 seam doctrine): an optional frozen VolumeEngine
+reference attaches the four-item rubric (rvol ≥ 1.5 +40, delta-trend
+alignment +30, VWAP side +20, no absorption/exhaustion +10; m grows
+10 → 14); without one the legacy flagged-0 component and m = 10 are
+preserved byte-for-byte. Max achievable score with volume attached is
+97.0 (the R-item still flagged) — TRADEABLE/A_PLUS reachable.
 
 Pure fold over frozen-engine outputs — recomputes nothing; replay and
 live produce identical results for identical input streams (§0 rule 2).
@@ -42,6 +48,9 @@ from marketscalper.engines.momentum import (
 from marketscalper.engines.structure import TrendState
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 # Frozen §6 literals — module constants, not config.
 GAP_WINDOW_CANDLES = 30                # G1: no gap in last 30 candles
 # G1 clock boundary is enforced by the frozen D6 sampler surface
@@ -56,6 +65,9 @@ WEIGHTS = {"structure": 0.30, "liquidity": 0.30,
 W_SWEEP = 20
 W_STRUCT = 20
 W_MOM = 5
+
+# D21.3 Volume rubric threshold (the D11/D12 rvol family; uncalibrated).
+VOLUME_RVOL_MIN = 1.5
 
 _BOS_TREND = {"UP": "BULLISH", "DOWN": "BEARISH"}
 # A CHOCH fires against the trend it broke: DOWN warns BULLISH, UP BEARISH.
@@ -105,17 +117,23 @@ class QualificationEngine:
     """§6 for one symbol's 1m stream (cadence per D16.5 — last engine)."""
 
     __slots__ = ("_symbol", "_atr", "_trend", "_momentum", "_regime",
+                 "_volume",
                  "_bar", "_ts_window", "_bos_window", "_choch_window",
                  "_last_pool_sweep_bar", "_last_shift_bar",
                  "_last_tl_signal_bar", "_last_shift_flag_bar")
 
     def __init__(self, symbol: str, atr: IncrementalATR, trend: TrendState,
-                 momentum: MomentumState, regime: RegimeClassifier) -> None:
+                 momentum: MomentumState, regime: RegimeClassifier,
+                 volume=None) -> None:
+        # volume: an optional frozen VolumeEngine reference (D21.3 — the
+        # pre-recorded D16.3 placeholder resolution, P2.2 seam doctrine).
+        # None preserves the legacy flagged-0 component byte-for-byte.
         self._symbol = symbol
         self._atr = atr
         self._trend = trend
         self._momentum = momentum
         self._regime = regime
+        self._volume = volume
         self._bar = -1
         self._ts_window: deque = deque(maxlen=GAP_WINDOW_CANDLES)
         # Every (bar, direction) inside W_STRUCT — D16.3 quantifies over
@@ -286,8 +304,33 @@ class QualificationEngine:
                 reasons.append("✓ entry zone confluence ≥2 objects"
                                " (+20 liquidity)")
 
-        # Volume — component absent (flagged, D16.3): 0.0
+        # Volume — flagged 0.0 without an attached engine (D16.3 legacy);
+        # with one, the D21.3 rubric (trend = the direction-neutral
+        # reference, None fails its item, constants uncalibrated/P5-owned)
         volume = 0.0
+        if self._volume is not None:
+            rvol = self._volume.rvol
+            if rvol is not None and rvol >= VOLUME_RVOL_MIN:
+                volume += 40.0
+                reasons.append("✓ elevated participation rvol"
+                               " (+40 volume)")
+            delta = self._volume.delta
+            if trend in ("BULLISH", "BEARISH") and (
+                    delta > 0 if trend == "BULLISH" else delta < 0):
+                volume += 30.0
+                reasons.append("✓ delta aligned with trend (+30 volume)")
+            vwap = self._volume.session_vwap
+            if trend in ("BULLISH", "BEARISH") and vwap is not None and (
+                    candle.c > vwap if trend == "BULLISH"
+                    else candle.c < vwap):
+                volume += 20.0
+                reasons.append("✓ close on trend side of VWAP"
+                               " (+20 volume)")
+            if (self._volume.absorption is None
+                    and self._volume.exhaustion is None):
+                volume += 10.0
+                reasons.append("✓ no absorption/exhaustion warning"
+                               " (+10 volume)")
 
         # Momentum (3 items)
         momentum = 0.0
@@ -307,7 +350,9 @@ class QualificationEngine:
             reasons.append("✓ body dominance > 0.5 (+30 momentum)")
 
         aligned = len(reasons)
-        evaluable = 10                     # D16.4: 4 + 3 + 0 + 3
+        # D16.4: 4 + 3 + 0 + 3 legacy; the attached Volume Engine makes
+        # its 4 items evaluable (D21.3)
+        evaluable = 14 if self._volume is not None else 10
         components = {"structure": structure, "liquidity": liquidity,
                       "volume": volume, "momentum": momentum}
         return components, aligned, evaluable, reasons

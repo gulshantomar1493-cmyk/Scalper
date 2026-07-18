@@ -41,6 +41,9 @@ from math import sqrt
 from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.providers.base import Candle
 
+# D1 stamp component: bump on ANY logic/threshold change here.
+ENGINE_VERSION = 1
+
 log = logging.getLogger(__name__)
 
 # Frozen §4.6/D19 literals — module constants, not config.
