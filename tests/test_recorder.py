@@ -114,7 +114,9 @@ def test_engine_version_stamp_format():
                           "confluence", "qualification", "risk",
                           "strategy", "evaluator", "lifecycle",
                           "psychology"}
-    assert all(v == "1" for v in parts.values())   # D1: all at version 1
+    # D1: qualification bumped to 2 at D24.1 (real G3 gate); all others at 1
+    assert parts["qualification"] == "2"
+    assert all(v == "1" for k, v in parts.items() if k != "qualification")
 
 
 # ----------------------------------------------------------- persistence

@@ -88,21 +88,24 @@ TRUSTED_MIN_RECOMMENDATIONS = 200      # §0 rule 4 / §11 P5.8
 
 def expectancy_report(analytics: dict) -> dict:
     """P5.7: the fees-included expectancy summary per strategy — the P5.8
-    TRUSTED gate's number. `analytics` is compute_analytics output; the
-    hypothetical/manual expectancies are already R multiples (fee-adjusted
-    at plan time via the D17 net RR, then realized by the candle geometry).
-    A strategy is TRUSTED-eligible iff it has >= 200 recommendations AND
-    positive hypothetical expectancy after fees. Pure."""
+    TRUSTED gate's number. `analytics` is compute_analytics output. The
+    gross hypothetical `expectancy` is `mean(eval_r)`, a pure candle-
+    geometry R with NO fee term; the after-fees figure the gate uses is
+    `net_expectancy` = `mean(eval_r − est_fees/risk_amt)` (§0 rule 4). A
+    strategy is TRUSTED-eligible iff it has >= 200 recommendations AND
+    positive NET (after-fees) hypothetical expectancy. Pure."""
     strategies = {}
     for strat, s in sorted(analytics.get("by_strategy", {}).items()):
         n = s["n"]
-        hyp_exp = s["hypothetical"]["expectancy"]
+        hyp_gross = s["hypothetical"]["expectancy"]
+        hyp_net = s["hypothetical"].get("net_expectancy")
         man_exp = s["manual"]["expectancy"]
         enough = n >= TRUSTED_MIN_RECOMMENDATIONS
-        positive = hyp_exp is not None and hyp_exp > 0
+        positive = hyp_net is not None and hyp_net > 0    # AFTER fees
         strategies[strat] = {
             "n": n,
-            "hypothetical_expectancy": hyp_exp,
+            "hypothetical_expectancy_gross": hyp_gross,
+            "hypothetical_expectancy_net": hyp_net,
             "manual_expectancy": man_exp,
             "hypothetical_win_rate": s["hypothetical"]["win_rate"],
             "system_vs_actual_delta": s["system_vs_actual"]["delta"],

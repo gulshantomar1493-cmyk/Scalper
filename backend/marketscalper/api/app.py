@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import math
 from datetime import datetime, timedelta, timezone
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
@@ -124,7 +125,10 @@ def create_app(
     pipelines onto a replay session's private bus — composition passes
     _wire_structure_engines so replay drives the full engine chain.
     None -> replay streams candles without engine output (chart-only)."""
-    app = FastAPI(title="MarketScalper", docs_url=None, redoc_url=None)
+    # docs + the OpenAPI schema off: the schema would otherwise be served
+    # unauthenticated (contract only, but consistent with docs disabled).
+    app = FastAPI(title="MarketScalper", docs_url=None, redoc_url=None,
+                  openapi_url=None)
     # The standalone frontend (§9; deploy.sh: index.html opened from disk or
     # any static host) is always a foreign origin to this API, and file://
     # pages send the unpinnable literal origin "null" — so origins cannot be
@@ -260,6 +264,9 @@ def create_app(
                 except (TypeError, ValueError):
                     raise HTTPException(status_code=400,
                                         detail=f"{k} must be a number or null")
+                if not math.isfinite(payload[k]):     # no NaN/inf into numeric
+                    raise HTTPException(status_code=400,
+                                        detail=f"{k} must be finite")
         async with pool.acquire() as conn:
             existing = await db.select_journal(conn, recommendation_id)
             if existing is None:

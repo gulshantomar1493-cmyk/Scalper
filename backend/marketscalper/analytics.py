@@ -19,7 +19,8 @@ _HYP_TERMINAL = ("tp1", "tp2", "sl")   # 'none' = un-resolved, excluded
 
 ANALYTICS_SQL = (
     "SELECT s.strategy, r.ts, r.eval_outcome, r.eval_r, r.eval_mae,"
-    " r.eval_mfe, r.status, j.taken, j.result, j.actual_r"
+    " r.eval_mfe, r.est_fees, r.risk_amt, r.status, j.taken, j.result,"
+    " j.actual_r"
     " FROM recommendations r"
     " JOIN signals s ON s.id = r.signal_id"
     " LEFT JOIN journal j ON j.recommendation_id = r.id"
@@ -35,6 +36,16 @@ def _mean(values: list):
     return None if not values else sum(values) / len(values)
 
 
+def _fee_r(r: dict) -> float:
+    """The round-trip taker fee for one trade expressed in R (fee dollars /
+    1R dollars). est_fees = qty·entry·taker_fee·2, risk_amt = qty·|entry−SL|
+    = 1R in dollars, so est_fees/risk_amt is the fee as a fraction of R —
+    what must be subtracted from the gross eval_r for a net-of-fees figure
+    (§0 rule 4). Missing fee data (older/test rows) → 0."""
+    est, risk = r.get("est_fees"), r.get("risk_amt")
+    return est / risk if est is not None and risk else 0.0
+
+
 def _stats(rows: list) -> dict:
     """All metrics for one group of recommendation rows (pure)."""
     # -- hypothetical evaluator (candle-based, §7): terminal outcomes only
@@ -42,12 +53,16 @@ def _stats(rows: list) -> dict:
     hwins = sum(1 for r in evaluated if r["eval_outcome"] in _HYP_WIN)
     hlosses = sum(1 for r in evaluated if r["eval_outcome"] == "sl")
     hyp_r = [r["eval_r"] for r in evaluated if r["eval_r"] is not None]
+    hyp_net = [r["eval_r"] - _fee_r(r) for r in evaluated
+               if r["eval_r"] is not None]
     hypothetical = {
         "n_evaluated": len(evaluated),
         "wins": hwins, "losses": hlosses,
         "win_rate": _ratio(hwins, hwins + hlosses),
         "avg_r": _mean(hyp_r),
-        "expectancy": _mean(hyp_r),          # expected R per evaluated trade
+        "expectancy": _mean(hyp_r),          # gross R per evaluated trade
+        # §0 rule 4: expected R AFTER round-trip fees (the TRUSTED metric)
+        "net_expectancy": _mean(hyp_net),
         "avg_mae": _mean([r["eval_mae"] for r in evaluated
                           if r["eval_mae"] is not None]),
         "avg_mfe": _mean([r["eval_mfe"] for r in evaluated
@@ -212,6 +227,7 @@ async def _analytics_rows(conn) -> list:
         "strategy": r["strategy"], "ts": r["ts"],
         "eval_outcome": r["eval_outcome"], "eval_r": _f(r["eval_r"]),
         "eval_mae": _f(r["eval_mae"]), "eval_mfe": _f(r["eval_mfe"]),
+        "est_fees": _f(r["est_fees"]), "risk_amt": _f(r["risk_amt"]),
         "status": r["status"], "taken": r["taken"], "result": r["result"],
         "actual_r": _f(r["actual_r"]),
     } for r in rows]

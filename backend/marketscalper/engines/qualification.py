@@ -8,10 +8,14 @@ Stage 2 weighted score 0.30×Structure + 0.30×Liquidity + 0.25×Volume +
 0.15×Momentum with the D16.3 rubric. Direction/entry/SL/invalidation are
 S1–S3 + planner outputs (P3.12–P3.17) — NOT produced here (D16.1).
 
+G3 (session filter) became a REAL gate at D24.1 — the LATE session
+(21:00–00:00 UTC) is excluded, a deterministic function of candle.ts
+(replay ≡ live); ENGINE_VERSION bumped 1 → 2 for it.
+
 Flagged placeholders (each recorded in D16.2/D16.3, self-healing when the
 owning task lands): G1 clock arm without a provider (replay), G2 without a
-BookTicker (replay), G3 (no roadmap-defined session sets — owner/P5, per
-D21.3), G4 until events.yaml, G5 via the P4.9 psychology-guard seam
+BookTicker (replay), G4 until events.yaml (D24.2 — owner-operational), G5
+via the P4.9 psychology-guard seam
 (D23.4 — `psych=None` keeps the flagged placeholder for replay/tests; a
 G5State makes it a real risk-budget gate live), G6 enforced at
 recommendation creation via the D17 plan's rr_floor_ok (D21.2 — the
@@ -51,7 +55,9 @@ from marketscalper.engines.structure import TrendState
 from marketscalper.providers.base import Candle
 
 # D1 stamp component: bump on ANY logic/threshold change here.
-ENGINE_VERSION = 1
+# v2 (D24): G3 became a real session gate (LATE excluded) — the first
+# post-freeze logic change; the stamp distinguishes pre/post-G3 signals.
+ENGINE_VERSION = 2
 
 # Frozen §6 literals — module constants, not config.
 GAP_WINDOW_CANDLES = 30                # G1: no gap in last 30 candles
@@ -245,10 +251,13 @@ class QualificationEngine:
                 "G2", spread_pct < SPREAD_LIMIT_PCT, False,
                 f"spread {spread_pct:.4f}%"))
 
-        # G3–G6 — flagged placeholder passes (owners recorded in D16.2)
+        # G3 — session filter (D24.1, real gate): the LATE session
+        # (21:00–00:00 UTC, the D12.1 low-liquidity window) is excluded;
+        # ASIA/LONDON/NY pass. A pure function of candle.ts → replay ≡ live.
+        session = session_of(candle.ts.hour)
         gates.append(GateResult(
-            "G3", True, True,
-            f"session {session_of(candle.ts.hour)}; no strategy filter yet"))
+            "G3", session != "LATE", False, f"session {session}"))
+        # G4–G6
         gates.append(GateResult("G4", True, True, "no events calendar yet"))
         # G5 — the psychology guard (D23.4/P4.9). No guard wired
         # (replay/tests) → the D16.2 flagged placeholder pass; a G5State

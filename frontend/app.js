@@ -241,7 +241,9 @@ function connect() {
   ws.onopen = () => {
     backoffMs = BACKOFF_INITIAL_MS;
     setStatus("LIVE");
-    loadHistory(activeSymbol);                 // initial load AND reconnect reload
+    // Don't clobber an in-progress replay view on a mid-replay reconnect
+    // (F4 can drop a backgrounded tab); replayPoll re-bootstraps on finish.
+    if (!replayMode) loadHistory(activeSymbol); // initial load AND reconnect reload
   };
 
   ws.onmessage = (event) => {

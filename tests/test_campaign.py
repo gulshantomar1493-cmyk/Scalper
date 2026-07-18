@@ -20,10 +20,14 @@ M0 = datetime(2026, 7, 22, 9, 0, tzinfo=UTC)
 
 
 def _analytics(strategies):
+    # tuple = (n, net_expectancy, manual_exp, win_rate, sva_delta[, gross])
     by = {}
-    for name, (n, hyp_exp, man_exp, wr, delta) in strategies.items():
+    for name, vals in strategies.items():
+        n, net_exp, man_exp, wr, delta = vals[:5]
+        gross = vals[5] if len(vals) > 5 else net_exp
         by[name] = {"n": n,
-                    "hypothetical": {"expectancy": hyp_exp, "win_rate": wr},
+                    "hypothetical": {"expectancy": gross,
+                                     "net_expectancy": net_exp, "win_rate": wr},
                     "manual": {"expectancy": man_exp},
                     "system_vs_actual": {"delta": delta}}
     return {"n_recommendations": sum(v[0] for v in strategies.values()),
@@ -32,9 +36,9 @@ def _analytics(strategies):
 
 def test_expectancy_report_trusted_eligibility():
     rep = expectancy_report(_analytics({
-        "S1": (250, 0.35, 0.30, 0.62, -0.05),   # enough + positive -> eligible
-        "S2": (300, -0.10, -0.2, 0.45, -0.1),   # enough but NEGATIVE
-        "S3": (50, 0.80, 0.7, 0.7, 0.0),        # positive but too few
+        "S1": (250, 0.35, 0.30, 0.62, -0.05),   # enough + net-positive -> ok
+        "S2": (300, -0.10, -0.2, 0.45, -0.1),   # enough but NET NEGATIVE
+        "S3": (50, 0.80, 0.7, 0.7, 0.0),        # net-positive but too few
     }))
     assert rep["trusted_threshold"] == TRUSTED_MIN_RECOMMENDATIONS
     s = rep["strategies"]
@@ -44,6 +48,20 @@ def test_expectancy_report_trusted_eligibility():
     assert s["S3"]["positive_after_fees"] and not s["S3"]["sample_sufficient"]
     assert s["S3"]["trusted_eligible"] is False
     assert rep["any_trusted_eligible"] is True      # S1
+
+
+def test_expectancy_report_fees_flip_eligibility():
+    # B1 fix: a strategy GROSS-positive but NET-negative after fees is NOT
+    # eligible — the after-fees gate must use net_expectancy, not gross.
+    rep = expectancy_report(_analytics({
+        "S1": (250, -0.05, 0.1, 0.60, 0.0, 0.28),   # net -0.05, gross +0.28
+    }))
+    s = rep["strategies"]["S1"]
+    assert s["hypothetical_expectancy_gross"] == 0.28
+    assert s["hypothetical_expectancy_net"] == -0.05
+    assert s["positive_after_fees"] is False        # fees flipped it
+    assert s["trusted_eligible"] is False
+    assert rep["any_trusted_eligible"] is False
 
 
 def test_expectancy_report_none_expectancy_not_positive():

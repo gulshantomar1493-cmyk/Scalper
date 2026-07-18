@@ -162,12 +162,31 @@ def test_g5_psychology_seam():
     assert g5.passed and g5.flagged and g5.detail == "no journal yet"
 
 
+def test_g3_session_gate_passes_outside_late():
+    # D24.1: G3 is a REAL gate now — LONDON (T0 = 09:00) passes, not flagged.
+    result = _warm(_Rig(), 30)
+    g3 = result.gates[2]
+    assert g3.name == "G3" and g3.passed and not g3.flagged
+    assert g3.detail == "session LONDON"
+
+
+def test_g3_fails_in_the_late_session():
+    # D24.1: the LATE session (21:00–00:00 UTC) is excluded -> NO_SIGNAL.
+    rig = _Rig()
+    # warm 30 contiguous candles starting 21:00 UTC (T0 09:00 + 720 min)
+    result = _warm(rig, 30, start=720)
+    g3 = result.gates[2]
+    assert g3.name == "G3" and not g3.passed and not g3.flagged
+    assert g3.detail == "session LATE"
+    assert result.verdict == "NO_SIGNAL"           # a real hard-gate fail
+    assert result.score is None and result.components is None
+
+
 def test_placeholder_gates_flagged_with_pinned_details():
     result = _warm(_Rig(), 30)
-    g3, g4, g5, g6 = result.gates[2:6]
-    assert [g.name for g in (g3, g4, g5, g6)] == ["G3", "G4", "G5", "G6"]
-    assert all(g.passed and g.flagged for g in (g3, g4, g5, g6))
-    assert "LONDON" in g3.detail                   # A9 via frozen session_of
+    g4, g5, g6 = result.gates[3:6]                  # G3 is real now (D24.1)
+    assert [g.name for g in (g4, g5, g6)] == ["G4", "G5", "G6"]
+    assert all(g.passed and g.flagged for g in (g4, g5, g6))
     assert g4.detail == "no events calendar yet"
     assert g5.detail == "no journal yet"
     assert g6.detail == "no trade plan yet"
