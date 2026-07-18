@@ -47,15 +47,29 @@ def engine_version_stamp() -> str:
     return f"{short}+{parts}"
 
 
+def build_reason_text(symbol: str, signal, qual, plan) -> str:
+    """§8 deterministic rule-trace (no LLM) — the journal AUTO context.
+    Built from the signal facts + the qualification reasons (both already
+    in the state_snapshot, A17) + the §7 risk line. Pure/deterministic."""
+    lines = [f"{signal.direction} {symbol} @ {plan.entry:.10g} | "
+             f"{signal.strategy} | Score {qual.score:.0f}"]
+    lines.extend(signal.facts)
+    lines.extend(qual.reasons)
+    lines.append(f"Risk: SL {plan.sl:.10g} | Net RR "
+                 f"{plan.net_rr_tp1:.2f} to TP1")
+    return "\n".join(lines)
+
+
 class SignalRecorder:
     """One per process; shared across symbols (the pool serializes)."""
 
     def __init__(self, pool: asyncpg.Pool, stamp: str) -> None:
         self._pool = pool
         self._stamp = stamp
-        self._rec_ids: dict = {}       # (symbol, created_ts) -> row id (P4.5)
+        self._rec_ids: dict = {}       # (symbol, created_ts, strategy) -> id
         self.signals_written = 0
         self.recommendations_written = 0
+        self.journal_written = 0
         self.lifecycle_written = 0
         self.failures = 0
 
@@ -109,6 +123,14 @@ class SignalRecorder:
                         # is not unique — S1/S2/S3 can admit on one bar)
                         self._rec_ids[(symbol, signal.created_ts.isoformat(),
                                        signal.strategy)] = rec_id
+                        # P4.6: seed the journal AUTO context (§8 rule-trace;
+                        # A17 — no PNG dependency, psychology is P4.9)
+                        await db.insert_journal_seed(
+                            conn, recommendation_id=rec_id,
+                            reason_text=build_reason_text(symbol, signal,
+                                                          qual, plan),
+                            chart_snapshot_path=None, rule_violations=None)
+                        self.journal_written += 1
             except Exception:
                 self.failures += 1
                 log.exception("recorder: failed to persist %s %s signal "

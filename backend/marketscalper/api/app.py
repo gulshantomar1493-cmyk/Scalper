@@ -66,6 +66,11 @@ _REPLAY_SPEEDS = (1, 10, 60, "max")        # §10
 _WS_QUEUE_MAX = 256    # F4: per-client send budget before disconnect
 
 
+def _num_or_none(v):
+    """numeric column (Decimal) -> JSON number, preserving NULL."""
+    return None if v is None else float(v)
+
+
 def _candle_json(c: Candle) -> dict:
     return {
         "symbol": c.symbol, "tf": c.tf, "ts": c.ts.isoformat(),
@@ -123,8 +128,8 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET", "POST"],
-        allow_headers=["Authorization"],
+        allow_methods=["GET", "POST", "PATCH"],   # PATCH: the P4.8 journal
+        allow_headers=["Authorization", "Content-Type"],
     )
     clients: dict[WebSocket, asyncio.Queue] = {}   # F4: per-client queues
 
@@ -188,6 +193,89 @@ def create_app(
              "n_trades": r["n_trades"], "taker_buy_v": float(r["taker_buy_v"])}
             for r in rows
         ]
+
+    # ------------------------------------------------------ journal (P4.8)
+    # The recommendation core + the AUTO journal context (reason_text,
+    # chart_snapshot_path) are immutable — no endpoint writes them. PATCH
+    # touches ONLY the owner's MANUAL outcome fields (db.update_journal_
+    # manual writes exactly those columns).
+
+    def _journal_json(row) -> dict:
+        return {
+            "recommendation_id": row["recommendation_id"],
+            "reason_text": row["reason_text"],
+            "chart_snapshot_path": row["chart_snapshot_path"],
+            "taken": row["taken"], "result": row["result"],
+            "actual_entry": _num_or_none(row["actual_entry"]),
+            "actual_exit": _num_or_none(row["actual_exit"]),
+            "actual_pnl": _num_or_none(row["actual_pnl"]),
+            "actual_r": _num_or_none(row["actual_r"]),
+            "rule_violations": row["rule_violations"],
+            "notes": row["notes"],
+            "tags": list(row["tags"]) if row["tags"] is not None else None,
+        }
+
+    @app.get("/journal/{recommendation_id}",
+             dependencies=[Depends(require_token)])
+    async def get_journal(recommendation_id: int) -> dict:
+        async with pool.acquire() as conn:
+            row = await db.select_journal(conn, recommendation_id)
+        if row is None:
+            raise HTTPException(status_code=404,
+                                detail="no journal for that recommendation")
+        return _journal_json(row)
+
+    @app.patch("/journal/{recommendation_id}",
+               dependencies=[Depends(require_token)])
+    async def patch_journal(recommendation_id: int,
+                            payload: dict = Body(...)) -> dict:
+        # PATCH merge: validate the PROVIDED manual fields; keys absent from
+        # the body keep their existing value (a partial update never wipes
+        # unspecified fields). The AUTO context is never writable here.
+        if "taken" in payload and payload["taken"] is not None \
+                and not isinstance(payload["taken"], bool):
+            raise HTTPException(status_code=400,
+                                detail="taken must be a boolean or null")
+        if "result" in payload and payload["result"] not in (
+                None, "win", "loss", "be"):
+            raise HTTPException(status_code=400,
+                                detail="result must be win|loss|be|null")
+        if "tags" in payload and payload["tags"] is not None and not (
+                isinstance(payload["tags"], list)
+                and all(isinstance(t, str) for t in payload["tags"])):
+            raise HTTPException(status_code=400,
+                                detail="tags must be a list of strings")
+        if "notes" in payload and payload["notes"] is not None \
+                and not isinstance(payload["notes"], str):
+            raise HTTPException(status_code=400,
+                                detail="notes must be a string or null")
+        for k in ("actual_entry", "actual_exit", "actual_pnl", "actual_r"):
+            if k in payload and payload[k] is not None:
+                try:
+                    payload[k] = float(payload[k])
+                except (TypeError, ValueError):
+                    raise HTTPException(status_code=400,
+                                        detail=f"{k} must be a number or null")
+        async with pool.acquire() as conn:
+            existing = await db.select_journal(conn, recommendation_id)
+            if existing is None:
+                raise HTTPException(
+                    status_code=404,
+                    detail="no journal for that recommendation")
+
+            def merged(key):
+                return payload[key] if key in payload else existing[key]
+
+            await db.update_journal_manual(
+                conn, recommendation_id,
+                taken=merged("taken"), result=merged("result"),
+                actual_entry=merged("actual_entry"),
+                actual_exit=merged("actual_exit"),
+                actual_pnl=merged("actual_pnl"),
+                actual_r=merged("actual_r"),
+                notes=merged("notes"), tags=merged("tags"))
+            row = await db.select_journal(conn, recommendation_id)
+        return _journal_json(row)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

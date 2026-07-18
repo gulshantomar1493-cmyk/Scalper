@@ -139,6 +139,107 @@ async def test_candles_rejects_unknown_tf():
         await _stop(server, task)
 
 
+# ------------------------------------------------------------- journal (P4.8)
+
+
+async def _seed_journal(db_conn) -> int:
+    """Insert signal + recommendation + journal seed; return the rec id."""
+    sig_id = await db.insert_signal(
+        db_conn, ts=M0, symbol="BTCUSDT", tf="1m", strategy="S1",
+        direction="LONG", score=80.0, gates=None, components=None,
+        state_snapshot=None, engine_version="test")
+    rec_id = await db.insert_recommendation(
+        db_conn, signal_id=sig_id, ts=M0, direction="LONG", entry_px=100.0,
+        sl=99.0, tp1=102.0, tp2=103.5, suggested_qty=1.0, risk_amt=50.0,
+        est_fees=0.1, net_rr_tp1=1.7)
+    await db.insert_journal_seed(
+        db_conn, recommendation_id=rec_id,
+        reason_text="LONG BTCUSDT @ 100 | S1 | Score 80\n✓ swept",
+        chart_snapshot_path=None, rule_violations=None)
+    return rec_id
+
+
+async def test_journal_get_and_manual_patch_roundtrip(db_conn):
+    rec_id = await _seed_journal(db_conn)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/journal/{rec_id}") as r:
+                assert r.status == 401                     # Bearer required
+            async with s.get(f"http://{addr}/journal/{rec_id}",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+            assert body["reason_text"].startswith("LONG BTCUSDT")
+            assert body["taken"] is None and body["chart_snapshot_path"] is None
+            # PATCH the owner's MANUAL fields
+            patch = {"taken": True, "result": "win", "actual_entry": 100.5,
+                     "actual_exit": 102.0, "actual_r": 1.8,
+                     "notes": "clean setup", "tags": ["A+", "sweep"]}
+            async with s.patch(f"http://{addr}/journal/{rec_id}",
+                               json=patch, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+            assert body["taken"] is True and body["result"] == "win"
+            assert body["actual_entry"] == 100.5 and body["actual_r"] == 1.8
+            assert body["tags"] == ["A+", "sweep"] and body["notes"] == "clean setup"
+            # AUTO context immutable — reason_text unchanged by the PATCH
+            assert body["reason_text"].startswith("LONG BTCUSDT")
+            # PATCH merge: a partial body preserves unspecified fields
+            async with s.patch(f"http://{addr}/journal/{rec_id}",
+                               json={"notes": "revised"}, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+            assert body["notes"] == "revised"
+            assert body["taken"] is True and body["result"] == "win"  # kept
+            assert body["actual_entry"] == 100.5                       # kept
+    finally:
+        await _stop(server, task)
+
+
+async def test_journal_patch_cors_preflight_allowed():
+    """The journal UI (P4.7) is always a foreign origin; a browser sends a
+    CORS preflight for the JSON PATCH. Guard that PATCH + Content-Type are
+    allowed (aiohttp ignores CORS, so this must be asserted explicitly)."""
+    _, _, app = _pipeline()
+    server, task, addr = await _serve(app)
+    preflight = {
+        "Origin": "null",                              # file:// pages send null
+        "Access-Control-Request-Method": "PATCH",
+        "Access-Control-Request-Headers": "authorization, content-type",
+    }
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.options(f"http://{addr}/journal/1",
+                                 headers=preflight) as r:
+                assert r.status == 200                 # preflight accepted
+                allow = r.headers.get("Access-Control-Allow-Methods", "")
+                assert "PATCH" in allow
+    finally:
+        await _stop(server, task)
+
+
+async def test_journal_404_and_validation(db_conn):
+    rec_id = await _seed_journal(db_conn)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/journal/999999", headers=AUTH) as r:
+                assert r.status == 404
+            async with s.patch(f"http://{addr}/journal/999999",
+                               json={"taken": True}, headers=AUTH) as r:
+                assert r.status == 404
+            for bad in ({"result": "great"}, {"taken": "yes"},
+                        {"tags": "notalist"}, {"actual_entry": "abc"}):
+                async with s.patch(f"http://{addr}/journal/{rec_id}",
+                                   json=bad, headers=AUTH) as r:
+                    assert r.status == 400
+    finally:
+        await _stop(server, task)
+
+
 # -------------------------------------------------------------- WebSocket
 
 

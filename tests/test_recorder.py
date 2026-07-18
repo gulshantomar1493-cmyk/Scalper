@@ -13,7 +13,11 @@ from datetime import datetime, timezone
 
 from conftest import TxPool
 from marketscalper.core.bus import EventBus
-from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
+from marketscalper.core.recorder import (
+    SignalRecorder,
+    build_reason_text,
+    engine_version_stamp,
+)
 from marketscalper.core.state import StateStore
 from marketscalper.engines.evaluator import Outcome
 from marketscalper.engines.lifecycle import LifecycleEvent
@@ -174,6 +178,55 @@ async def test_recorder_multi_record_one_bar(db_conn):
     strategies = await db_conn.fetch(
         "SELECT strategy FROM signals WHERE ts = $1 ORDER BY strategy", T0)
     assert [r["strategy"] for r in strategies] == ["S1", "S3"]
+
+
+def test_build_reason_text_is_deterministic_rule_trace():
+    signal = _signal()
+    qual = _qual()
+    plan, _ = _pipeline()._admit(signal, qual)
+    a = build_reason_text("BTCUSDT", signal, qual, plan)
+    assert a == build_reason_text("BTCUSDT", signal, qual, plan)  # deterministic
+    assert a.startswith("LONG BTCUSDT @ 100 | S1 | Score 80")
+    assert "swept EQL (LOW)" in a                   # signal §8 fact
+    assert "✓ test" in a                            # qualification reason
+    assert "Net RR" in a                            # §7 risk line
+
+
+async def test_recorder_seeds_journal_auto_context(db_conn):
+    """P4.6: every admitted recommendation seeds a journal row with the §8
+    rule-trace; A17 — no PNG dependency, psychology (rule_violations) P4.9;
+    manual outcome columns stay NULL."""
+    pipe = _pipeline()
+    signal = _signal()
+    qual = _qual()
+    plan, rec = pipe._admit(signal, qual)
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    await recorder.record("BTCUSDT", [(signal, qual, plan, rec)], None)
+    assert recorder.journal_written == 1
+    rid = await db_conn.fetchval(
+        "SELECT id FROM recommendations ORDER BY id DESC LIMIT 1")
+    j = await db_conn.fetchrow(
+        "SELECT * FROM journal WHERE recommendation_id = $1", rid)
+    assert j is not None
+    assert j["reason_text"].startswith("LONG BTCUSDT")
+    assert "swept EQL (LOW)" in j["reason_text"]
+    assert j["chart_snapshot_path"] is None         # A17
+    assert j["rule_violations"] is None             # psychology is P4.9
+    assert j["taken"] is None and j["result"] is None    # manual unset
+
+
+async def test_recorder_no_journal_when_not_admitted(db_conn):
+    """A below-threshold signal persists a signal row but no rec and no
+    journal (D21.1/P4.6)."""
+    pipe = _pipeline()
+    signal = _signal()
+    qual = _qual("BELOW_THRESHOLD", 60.0)
+    plan, rec = pipe._admit(signal, qual)
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    await recorder.record("BTCUSDT", [(signal, qual, plan, rec)], None)
+    assert recorder.journal_written == 0
+    n = await db_conn.fetchval("SELECT count(*) FROM journal")
+    assert n == 0
 
 
 async def test_record_lifecycle_persists_status_and_eval(db_conn):
