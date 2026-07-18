@@ -274,6 +274,59 @@ async def test_journal_404_and_validation(db_conn):
         await _stop(server, task)
 
 
+# ------------------------------------------------------------- analytics (P4.11)
+
+
+async def _seed_evaluated_rec(db_conn, strategy, outcome, eval_r, result,
+                              actual_r, hour=9):
+    ts = M0.replace(hour=hour)
+    sig_id = await db.insert_signal(
+        db_conn, ts=ts, symbol="BTCUSDT", tf="1m", strategy=strategy,
+        direction="LONG", score=80.0, gates=None, components=None,
+        state_snapshot=None, engine_version="test")
+    rec_id = await db.insert_recommendation(
+        db_conn, signal_id=sig_id, ts=ts, direction="LONG", entry_px=100.0,
+        sl=99.0, tp1=102.0, tp2=None, suggested_qty=1.0, risk_amt=50.0,
+        est_fees=0.1, net_rr_tp1=1.7)
+    await db.update_recommendation_eval(
+        db_conn, rec_id, eval_outcome=outcome, eval_r=eval_r,
+        eval_mae=-0.4, eval_mfe=2.2)
+    await db.insert_journal_seed(
+        db_conn, recommendation_id=rec_id, reason_text="x",
+        chart_snapshot_path=None, rule_violations=None)
+    await db.update_journal_manual(
+        db_conn, rec_id, taken=True, result=result, actual_entry=None,
+        actual_exit=None, actual_pnl=None, actual_r=actual_r, notes=None,
+        tags=None)
+    return rec_id
+
+
+async def test_analytics_endpoint_roundtrip(db_conn):
+    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
+    await _seed_evaluated_rec(db_conn, "S1", "sl", -1.0, "loss", -1.0, hour=15)
+    await _seed_evaluated_rec(db_conn, "S2", "tp1", 3.0, "win", 2.5, hour=3)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/analytics") as r:
+                assert r.status == 401                     # Bearer required
+            async with s.get(f"http://{addr}/analytics", headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+        assert body["n_recommendations"] == 3
+        assert set(body["by_strategy"]) == {"S1", "S2"}
+        s1 = body["by_strategy"]["S1"]
+        assert s1["hypothetical"]["wins"] == 1 and s1["hypothetical"]["losses"] == 1
+        assert abs(s1["hypothetical"]["win_rate"] - 0.5) < 1e-9
+        assert s1["manual"]["n_taken"] == 2
+        # system-vs-actual delta present (user vs hypothetical)
+        assert s1["system_vs_actual"]["n"] == 2
+        assert set(body["by_session"]) == {"ASIA", "LONDON", "NY"}
+    finally:
+        await _stop(server, task)
+
+
 # -------------------------------------------------------------- WebSocket
 
 

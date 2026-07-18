@@ -54,6 +54,7 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db
+from marketscalper.analytics import compute_analytics
 from marketscalper.core.bus import EventBus
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
@@ -292,6 +293,15 @@ def create_app(
                 else:
                     psych_guard.forget(recommendation_id)
         return _journal_json(row)
+
+    # ---------------------------------------------------- analytics (P4.11)
+
+    @app.get("/analytics", dependencies=[Depends(require_token)])
+    async def analytics() -> dict:
+        """Manual + hypothetical stats + system-vs-actual, overall and per
+        strategy / per session. Read-only over the persisted rows."""
+        async with pool.acquire() as conn:
+            return await compute_analytics(conn)
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
