@@ -103,6 +103,7 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert set(liquidity["levels"]) <= {"PDH", "PDL", "PWH", "PWL"} | {
         f"{s}_{x}" for s in ("ASIA", "LONDON", "NY", "LATE") for x in "HL"}
     assert structure["orderblocks"] == {"blocks": [], "breakers": []}
+    assert structure["fvgs"] == []                         # FVG Engine (D14)
     assert await run() == structure                        # deterministic
     assert "XRPUSDT" not in str(structure)
 
@@ -128,6 +129,30 @@ async def test_pipeline_projects_order_blocks_non_empty():
     assert block["lo"] < block["hi"]
     assert block["created_ts"].endswith("+00:00")
     assert ob["breakers"] == []
+
+
+async def test_pipeline_projects_fvgs_non_empty():
+    """The FVG payload field mapping must be executed with real content,
+    not just the empty shape (the OB-projection precedent)."""
+    from test_determinism import V1_DATASET
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])
+    for candle in V1_DATASET:
+        if candle.symbol == "BTCUSDT":
+            await bus.publish(candle)
+    fvgs = store.snapshot("BTCUSDT").structure["fvgs"]
+    assert len(fvgs) == 3                          # empirically pinned (V1)
+    for gap in fvgs:
+        assert gap["direction"] == "BEAR"          # the crash-side imbalances
+        assert gap["lo"] < gap["ce"] < gap["hi"]
+        assert gap["ce"] == (gap["lo"] + gap["hi"]) / 2.0
+        assert gap["status"] in ("active", "ce_tested")
+        assert gap["created_ts"].endswith("+00:00")
 
 
 async def test_pipeline_drops_out_of_order_candles():

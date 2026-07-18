@@ -42,6 +42,7 @@ from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.state import StateStore
+from marketscalper.engines.fvg import FvgEngine
 from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import IncrementalATR
@@ -82,6 +83,7 @@ class _StructurePipeline:
         self._book = TrendlineBook(self._tl_detector, self._atr)
         self._liq = LiquidityEngine(symbol, self._atr)
         self._ob = OrderBlockEngine(symbol)
+        self._fvg = FvgEngine(symbol, self._atr)
         self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
         self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
@@ -133,6 +135,7 @@ class _StructurePipeline:
             else:
                 self._shift_events.append(event)
         self._ob.update(candle)                    # after liquidity (D13.5)
+        self._fvg.update(candle)                   # after order blocks (D14.3)
         self._store.set_structure(self._symbol, self._payload(candle))
 
     def step_5m(self, candle: Candle) -> None:
@@ -205,6 +208,10 @@ class _StructurePipeline:
                               "created_ts": b.created_ts.isoformat()}
                              for b in self._ob.breakers],
             },
+            "fvgs": [{"direction": g.direction, "lo": g.lo, "hi": g.hi,
+                      "ce": g.ce, "status": g.status,
+                      "created_ts": g.created_ts.isoformat()}
+                     for g in self._fvg.gaps],
         }
 
 

@@ -225,6 +225,7 @@ async def test_v1_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"displacement": false' in joined        # weak BOS hashed...
     assert '"displacement": true' in joined         # ...and a qualified one
     assert '"blocks": [{' in joined                 # OB content in the hash
+    assert '"fvgs": [{' in joined                   # FVG content in the hash
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable
