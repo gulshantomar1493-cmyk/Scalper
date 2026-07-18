@@ -271,3 +271,108 @@ class BosDetector:
             abs(candle.c - candle.o) > BOS_DISPLACEMENT_ATR_RATIO * atr)
         return BosEvent(candle.symbol, candle.tf, candle.ts, direction,
                         pivot, candle.c, displacement)
+
+
+@dataclass(frozen=True)
+class ChochEvent:
+    """Reversal warning — first close beyond the last confirmed swing
+    AGAINST trend (§4.2; roadmap P1.10). Alone it confirms nothing."""
+
+    symbol: str
+    tf: str
+    ts: datetime                 # the CHOCH candle identity (open time)
+    direction: str               # 'DOWN' (in BULLISH) | 'UP' (in BEARISH)
+    broken_pivot: Pivot          # the against-side swing closed through
+    close: float
+    prior_trend: str             # the trend being warned against
+
+
+@dataclass(frozen=True)
+class ConfirmedFlip:
+    """CHOCH + later same-direction BOS = confirmed trend flip (§4.2)."""
+
+    symbol: str
+    tf: str
+    ts: datetime                 # the confirming BOS bar
+    direction: str               # the new trend direction (== choch.direction)
+    choch: ChochEvent
+    bos: BosEvent
+
+
+class ChochDetector:
+    """CHOCH detection + confirmed-flip logic for one (symbol, tf) stream
+    (roadmap P1.10; §4.2).
+
+    CHOCH: first CLOSE strictly beyond the last confirmed against-side
+    swing while a trend is established — close < last L in BULLISH (DOWN),
+    close > last H in BEARISH (UP). Once per pivot (latch re-armed only by
+    a NEW confirmed same-kind pivot); wick-throughs are sweeps (P2), never
+    CHOCH; RANGE/unknown trend -> nothing.
+
+    Flip: a pending CHOCH is confirmed by a LATER BOS in the same
+    direction; a BOS in the old trend direction cancels it; a newer CHOCH
+    replaces it. No timeout, no price-based auto-confirmation — CHOCH
+    alone never flips anything. Cadence per closed candle: ATR -> pivots ->
+    on_pivot fan-out -> trend.update -> bos.update -> on_bos(event if any)
+    -> update(candle) — a CHOCH can never confirm on its own bar.
+    """
+
+    __slots__ = ("_trend", "_last_h", "_last_l", "_h_fired", "_l_fired",
+                 "_pending")
+
+    def __init__(self, trend: TrendState) -> None:
+        self._trend = trend
+        self._last_h: Pivot | None = None
+        self._last_l: Pivot | None = None
+        self._h_fired = False
+        self._l_fired = False
+        self._pending: ChochEvent | None = None
+
+    @property
+    def pending_flip(self) -> str | None:
+        """Direction of the unconfirmed reversal warning, if any."""
+        return None if self._pending is None else self._pending.direction
+
+    def on_pivot(self, pivot: Pivot) -> None:
+        """Track the latest confirmed pivot per kind; a new pivot re-arms."""
+        if pivot.kind == "H":
+            if self._last_h is None or pivot.ts != self._last_h.ts:
+                self._h_fired = False
+            self._last_h = pivot
+        else:
+            if self._last_l is None or pivot.ts != self._last_l.ts:
+                self._l_fired = False
+            self._last_l = pivot
+
+    def on_bos(self, bos: BosEvent) -> ConfirmedFlip | None:
+        """Feed every BOS of the stream; returns the flip it confirms."""
+        pending = self._pending
+        if pending is None:
+            return None                      # ordinary continuation BOS
+        self._pending = None                 # confirmed or cancelled below
+        if bos.direction == pending.direction:
+            return ConfirmedFlip(bos.symbol, bos.tf, bos.ts,
+                                 pending.direction, pending, bos)
+        return None                          # old trend resumed: cancelled
+
+    def update(self, candle: Candle) -> ChochEvent | None:
+        """Evaluate the just-closed candle (trend + BOS already processed)."""
+        state = self._trend.state
+        if state == "BULLISH":
+            pivot = self._last_l
+            if pivot is None or self._l_fired or not candle.c < pivot.price:
+                return None
+            self._l_fired = True
+            direction = "DOWN"
+        elif state == "BEARISH":
+            pivot = self._last_h
+            if pivot is None or self._h_fired or not candle.c > pivot.price:
+                return None
+            self._h_fired = True
+            direction = "UP"
+        else:
+            return None                      # no trend, nothing to be against
+        event = ChochEvent(candle.symbol, candle.tf, candle.ts, direction,
+                           pivot, candle.c, state)
+        self._pending = event
+        return event

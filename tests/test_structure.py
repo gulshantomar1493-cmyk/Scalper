@@ -13,6 +13,9 @@ from marketscalper.engines.structure import (
     K_BY_TF,
     BosDetector,
     BosEvent,
+    ChochDetector,
+    ChochEvent,
+    ConfirmedFlip,
     Pivot,
     PivotDetector,
     PivotLabeler,
@@ -594,6 +597,169 @@ def test_bos_end_to_end_full_chain():
     assert event is not None and event.direction == "DOWN"
     assert event.broken_pivot.price == 7.0 and event.close == 6.5
     assert event.displacement is not None                # ATR(14) warm by now
+
+
+# ----------------------------------------------------- ChochDetector (P1.10)
+# Cadence (pinned): ... -> trend.update -> bos.update -> on_bos(event if
+# any) -> choch.update(candle) — a CHOCH can never confirm on its own bar.
+
+
+def _choch_rig(h_label="HH", l_label="HL", h=110.0, l=100.0):
+    tm = TrendState()
+    ch = ChochDetector(tm)
+    for p in (_lp("H", h, h_label), _lp("L", l, l_label, 1)):
+        tm.on_pivot(p)
+        ch.on_pivot(p)
+    return tm, ch
+
+
+def _choch_step(tm, ch, candle):
+    tm.update(candle)
+    return ch.update(candle)
+
+
+def _bos_ev(direction, i=50):
+    kind = "H" if direction == "UP" else "L"
+    return BosEvent("BTCUSDT", "1m", M0 + timedelta(minutes=i), direction,
+                    _lp(kind, 100, "HH"), 100.0, False)
+
+
+def test_choch_fires_in_bullish_with_all_fields():
+    tm, ch = _choch_rig()
+    assert _choch_step(tm, ch, _body_candle(101, 100.5, 0)) is None  # above L
+    assert _choch_step(tm, ch, _body_candle(101, 100.0, 1)) is None  # equality
+    breaker = _body_candle(101, 99.0, 2)                             # close 99 < 100
+    event = _choch_step(tm, ch, breaker)
+    assert isinstance(event, ChochEvent)
+    assert (event.symbol, event.tf, event.ts) == ("BTCUSDT", "1m", breaker.ts)
+    assert event.direction == "DOWN" and event.close == 99.0
+    assert event.broken_pivot.price == 100.0 and event.prior_trend == "BULLISH"
+    assert ch.pending_flip == "DOWN"
+
+
+def test_choch_bearish_mirrored():
+    tm, ch = _choch_rig(h_label="LH", l_label="LL")
+    event = _choch_step(tm, ch, _body_candle(109, 111, 0))           # close 111 > 110
+    assert event.direction == "UP" and event.broken_pivot.price == 110.0
+    assert event.prior_trend == "BEARISH" and ch.pending_flip == "UP"
+
+
+def test_choch_never_fires_without_trend():
+    tm, ch = _choch_rig(h_label="HH", l_label="LL")                  # RANGE (mixed)
+    assert _choch_step(tm, ch, _body_candle(101, 99, 0)) is None
+    tm, ch = _choch_rig(h_label=None, l_label=None)                  # unknown
+    assert _choch_step(tm, ch, _body_candle(101, 99, 0)) is None
+
+
+def test_choch_ignores_with_trend_break():
+    tm, ch = _choch_rig()                                            # BULLISH
+    assert _choch_step(tm, ch, _body_candle(104, 111, 0)) is None    # that's BOS
+
+
+def test_choch_once_per_pivot_then_rearms_on_new_pivot():
+    tm, ch = _choch_rig()
+    assert _choch_step(tm, ch, _body_candle(101, 99, 0)) is not None
+    assert _choch_step(tm, ch, _body_candle(99, 98, 1)) is None      # latched
+    new_l = _lp("L", 105, "HL", 10)          # higher low keeps BULLISH labels
+    tm.on_pivot(new_l)
+    ch.on_pivot(new_l)
+    event = _choch_step(tm, ch, _body_candle(105, 104, 2))           # 104 < 105
+    assert event is not None and event.broken_pivot.price == 105.0
+
+
+def test_flip_confirmed_by_same_direction_bos():
+    tm, ch = _choch_rig()
+    choch = _choch_step(tm, ch, _body_candle(101, 99, 0))
+    bos = _bos_ev("DOWN")
+    flip = ch.on_bos(bos)
+    assert isinstance(flip, ConfirmedFlip)
+    assert flip.direction == "DOWN" and flip.ts == bos.ts
+    assert flip.choch is choch and flip.bos is bos
+    assert ch.pending_flip is None
+
+
+def test_flip_cancelled_by_opposite_bos_and_stays_cancelled():
+    tm, ch = _choch_rig()
+    _choch_step(tm, ch, _body_candle(101, 99, 0))
+    assert ch.on_bos(_bos_ev("UP")) is None                # old trend resumed
+    assert ch.pending_flip is None
+    assert ch.on_bos(_bos_ev("DOWN", 51)) is None          # stale warning gone
+
+
+def test_choch_alone_never_flips():
+    tm, ch = _choch_rig()
+    _choch_step(tm, ch, _body_candle(101, 99, 0))
+    for i in range(5):                                     # candles, no BOS
+        _choch_step(tm, ch, _body_candle(99, 98.5, 1 + i))
+    assert ch.pending_flip == "DOWN"                       # still just pending
+
+
+def test_newer_choch_replaces_pending():
+    tm, ch = _choch_rig()
+    _choch_step(tm, ch, _body_candle(101, 99, 0))
+    new_l = _lp("L", 105, "HL", 10)
+    tm.on_pivot(new_l)
+    ch.on_pivot(new_l)
+    second = _choch_step(tm, ch, _body_candle(105, 104, 1))
+    flip = ch.on_bos(_bos_ev("DOWN"))
+    assert flip.choch is second                            # latest warning wins
+    assert flip.choch.broken_pivot.price == 105.0
+
+
+def test_same_bar_bos_cannot_confirm_that_bars_choch():
+    tm, ch = _choch_rig()
+    assert ch.on_bos(_bos_ev("DOWN")) is None              # BOS first: no pending
+    choch = _choch_step(tm, ch, _body_candle(101, 99, 0))  # CHOCH after
+    assert choch is not None and ch.pending_flip == "DOWN" # unconfirmed
+    assert ch.on_bos(_bos_ev("DOWN", 51)) is not None      # next bar confirms
+
+
+def test_choch_timeframe_generic_on_5m():
+    tm = TrendState()
+    ch = ChochDetector(tm)
+    for p in (_lp("H", 110, "LH", tf="5m"), _lp("L", 100, "LL", 1, tf="5m")):
+        tm.on_pivot(p)
+        ch.on_pivot(p)
+    event = _choch_step(tm, ch, _body_candle(109, 111, 0, tf="5m"))
+    assert event is not None and event.tf == "5m" and event.direction == "UP"
+
+
+def test_choch_determinism_same_feed_twice():
+    def run():
+        tm, ch = _choch_rig()
+        out = [_choch_step(tm, ch, _body_candle(101, 100.5 - 0.5 * i, i))
+               for i in range(4)]
+        out.append(ch.on_bos(_bos_ev("DOWN")))
+        return out
+    assert run() == run()
+
+
+def test_choch_end_to_end_full_chain():
+    # P1.9 end-to-end scenario + one more candle closing above last H (14)
+    # while BEARISH -> a real-chain CHOCH UP with the flip pending.
+    highs = [10, 11, 12, 15, 12, 11, 10, 11, 14, 11, 10, 9, 8, 9, 10, 11]
+    d, lab = PivotDetector("BTCUSDT", "1m"), PivotLabeler()
+    tm, atr = TrendState(), IncrementalATR()
+    bos, ch = BosDetector(tm, atr), ChochDetector(tm)
+    chochs = []
+    for i, h in enumerate(highs + [6.5, 15]):
+        candle = _candle(h, h - 1, i)
+        atr.update(candle)
+        for p in d.update(candle):
+            labeled = lab.label(p)
+            tm.on_pivot(labeled)
+            bos.on_pivot(labeled)
+            ch.on_pivot(labeled)
+        tm.update(candle)
+        bos_event = bos.update(candle)
+        if bos_event is not None:
+            ch.on_bos(bos_event)
+        chochs.append(ch.update(candle))
+    assert chochs[:17] == [None] * 17          # incl. the BOS bar at idx16
+    event = chochs[17]
+    assert event is not None and event.direction == "UP"
+    assert event.broken_pivot.price == 14.0 and event.prior_trend == "BEARISH"
+    assert ch.pending_flip == "UP"
 
 
 # -------------------------------------------------------------- persistence
