@@ -42,6 +42,7 @@ from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.state import StateStore
+from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
@@ -78,13 +79,29 @@ class _StructurePipeline:
         self._choch = ChochDetector(self._trend)
         self._tl_detector = TrendlineDetector(self._atr)
         self._book = TrendlineBook(self._tl_detector, self._atr)
+        self._liq = LiquidityEngine(symbol, self._atr)
+        self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
+        self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
         self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._sweep_events: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._shift_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._bar = -1          # positional axis, lockstep with the engines
+        # Freeze-audit fix: the reconnect path can emit a stale pre-gap
+        # bucket AFTER its backfilled successors (accepted D7 residual).
+        # The engines assume chronological candles, so the composition
+        # drops out-of-order candles here — one guard for every engine.
+        self._last_ts = None
+        self._last_ts_5m = None
 
     def step(self, candle: Candle) -> None:
         """The pinned per-closed-candle cadence, engines in §1 order."""
+        if self._last_ts is not None and candle.ts <= self._last_ts:
+            log.warning("engines: dropped out-of-order 1m candle %s %s "
+                        "(last %s)", self._symbol, candle.ts, self._last_ts)
+            return
+        self._last_ts = candle.ts
         self._bar += 1
         self._atr.update(candle)
         self._tl_detector.update(candle)
@@ -95,6 +112,7 @@ class _StructurePipeline:
             self._bos.on_pivot(labeled)
             self._choch.on_pivot(labeled)
             self._tl_detector.on_pivot(labeled)
+            self._liq.on_pivot(labeled)
         self._trend.update(candle)
         bos_event = self._bos.update(candle)
         if bos_event is not None:
@@ -104,7 +122,24 @@ class _StructurePipeline:
         if choch_event is not None:
             self._choch_events.append(choch_event)
         self._book.refresh(candle)
+        if choch_event is not None:                # D12.7: CHOCH before liq
+            self._liq.on_choch(choch_event)
+        for event in self._liq.update(candle):
+            if isinstance(event, SweepEvent):
+                self._sweep_events.append(event)
+            else:
+                self._shift_events.append(event)
         self._store.set_structure(self._symbol, self._payload(candle))
+
+    def step_5m(self, candle: Candle) -> None:
+        """5m closed candle: pivots feed the A8 external range (D12.6)."""
+        if self._last_ts_5m is not None and candle.ts <= self._last_ts_5m:
+            log.warning("engines: dropped out-of-order 5m candle %s %s "
+                        "(last %s)", self._symbol, candle.ts, self._last_ts_5m)
+            return
+        self._last_ts_5m = candle.ts
+        for pivot in self._detector_5m.update(candle):
+            self._liq.on_external_pivot(self._labeler_5m.label(pivot))
 
     def _payload(self, candle: Candle) -> dict:
         """Everything the overlays draw — pre-serialized, no frontend math
@@ -143,6 +178,19 @@ class _StructurePipeline:
                       for e in self._choch_events],
             "trendlines": lines,
             "channels": channels,
+            "liquidity": {
+                "pools": [{"kind": p.kind, "price": p.price, "size": p.size,
+                           "strength": p.strength}
+                          for p in self._liq.pools],
+                "levels": self._liq.key_levels,
+                "premium_discount": self._liq.premium_discount,
+                "sweeps": [{"ts": e.ts.isoformat(), "side": e.side,
+                            "target": e.target, "price": e.target_price}
+                           for e in self._sweep_events],
+                "shifts": [{"sweep_ts": e.sweep.ts.isoformat(),
+                            "ts": e.ts.isoformat()}
+                           for e in self._shift_events],
+            },
         }
 
 
@@ -156,8 +204,12 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
 
     async def on_candle(candle: Candle) -> None:
         pipeline = pipelines.get(candle.symbol)
-        if pipeline is not None and candle.tf == "1m":
+        if pipeline is None:
+            return
+        if candle.tf == "1m":
             pipeline.step(candle)
+        elif candle.tf == "5m":
+            pipeline.step_5m(candle)
 
     bus.subscribe(Candle, on_candle)
 

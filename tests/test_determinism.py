@@ -116,3 +116,95 @@ def test_hash_is_sensitive_to_any_stream_difference():
 
     truncated = base[:2]
     assert stream_hash(truncated) != stream_hash(base)
+
+
+# ------------------------------------------------- harness v1 (roadmap P1.21)
+# Grown per Part D note 4: the object stream — every engine payload the
+# composition publishes (pivots+labels, trend, BOS/CHOCH, trendlines,
+# channels, liquidity pools/levels/sweeps) — must be byte-identical across a
+# double replay. The stream is the composition's own JSON payload,
+# canonicalized with sorted keys.
+
+import json  # noqa: E402
+
+
+# Session-crossing window (LONDON 08:00 observed from its boundary,
+# completing at 13:00) so level promotion and session bookkeeping are part
+# of the hashed object stream.
+V1_M0 = datetime(2026, 7, 14, 7, 30, tzinfo=UTC)
+V1_MINUTES = 360                                   # 07:30 -> 13:30 UTC
+
+
+def _v1_candle(symbol: str, minute: int, base: float) -> Candle:
+    """Oscillating dataset with a tie-breaking drift: pivots on both
+    chains, labels, trend states, pools and session levels all emit."""
+    o = base + ((minute * 7) % 13) - 6 + minute * 0.01
+    h = o + ((minute * 5) % 7) + 1
+    l = o - ((minute * 3) % 5) - 1
+    c = o + ((minute * 2) % 3) - 1
+    ts = V1_M0 + timedelta(minutes=minute)
+    return Candle(symbol=symbol, tf="1m", ts=ts, o=o, h=h, l=l, c=c,
+                  v=1.0, qv=o, n_trades=2, taker_buy_v=0.5)
+
+
+V1_DATASET = [_v1_candle("BTCUSDT", m, 100.0) for m in range(V1_MINUTES)] + \
+             [_v1_candle("ETHUSDT", m, 3500.0) for m in range(V1_MINUTES)]
+V1_RANGE = (V1_M0, V1_M0 + timedelta(minutes=V1_MINUTES))
+
+
+async def _replay_object_stream_once(db_conn) -> list[str]:
+    """Replay through the REAL composition pipelines; canonicalize every
+    published structure payload (per symbol, per closed candle)."""
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT", "ETHUSDT"])
+    stream: list[str] = []
+
+    async def collect(candle: Candle) -> None:      # subscribed AFTER engines
+        state = store.snapshot(candle.symbol)
+        if state is not None and state.structure is not None:
+            stream.append(candle.symbol + "|" +
+                          json.dumps(state.structure, sort_keys=True))
+
+    bus.subscribe(Candle, collect)
+    feed = ReplayFeed(["BTCUSDT", "ETHUSDT"], bus, TxPool(db_conn),
+                      V1_RANGE[0], V1_RANGE[1], speed="max")
+    await feed.start()
+    for _ in range(500):
+        if feed._task is not None and feed._task.done():
+            break
+        await asyncio.sleep(0.01)
+    await feed.stop()
+    return stream
+
+
+async def test_v1_object_stream_byte_identical_across_double_replay(db_conn):
+    await db.insert_candles(
+        db_conn,
+        [(c.symbol, c.tf, c.ts, c.o, c.h, c.l, c.c, c.v, c.qv,
+          c.n_trades, c.taker_buy_v) for c in V1_DATASET],
+    )
+    first = await _replay_object_stream_once(db_conn)
+    second = await _replay_object_stream_once(db_conn)
+    assert len(first) >= len(V1_DATASET)            # every close published
+    joined = "\n".join(first)
+    assert '"pivots": [{' in joined                 # objects actually emitted
+    assert '"trend": "' in joined                   # trend classified
+    assert '"LONDON_H"' in joined                   # session level promoted
+    assert '"pools": [{' in joined                  # liquidity pools emitted
+    assert '"premium_discount": "' in joined        # 5m external range live
+    h1 = hashlib.sha256(joined.encode()).hexdigest()
+    h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
+    assert h1 == h2                                 # §10, non-negotiable
+
+
+def test_v1_canonicalization_is_sensitive():
+    a = json.dumps({"trend": "BULLISH", "pivots": [{"price": 100.0}]},
+                   sort_keys=True)
+    b = json.dumps({"trend": "BULLISH", "pivots": [{"price": 100.000001}]},
+                   sort_keys=True)
+    assert hashlib.sha256(a.encode()).hexdigest() != \
+        hashlib.sha256(b.encode()).hexdigest()

@@ -97,8 +97,41 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert structure["trend"] is None                      # chains unlabeled yet
     assert structure["bos"] == [] and structure["choch"] == []
     assert structure["trendlines"] == [] and structure["channels"] == []
+    liquidity = structure["liquidity"]                     # Liquidity Engine
+    assert liquidity["pools"] == [] and liquidity["sweeps"] == []
+    assert liquidity["premium_discount"] is None           # no 5m pivots yet
+    assert set(liquidity["levels"]) <= {"PDH", "PDL", "PWH", "PWL"} | {
+        f"{s}_{x}" for s in ("ASIA", "LONDON", "NY", "LATE") for x in "HL"}
     assert await run() == structure                        # deterministic
     assert "XRPUSDT" not in str(structure)
+
+
+async def test_pipeline_drops_out_of_order_candles():
+    """Freeze-audit fix: the reconnect path can emit a stale bucket after
+    its backfilled successors — the composition guard drops it before any
+    engine ingests it."""
+    from datetime import datetime, timedelta, timezone
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper.providers.base import Candle
+
+    M0 = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
+
+    def candle(i, h):
+        return Candle(symbol="BTCUSDT", tf="1m", ts=M0 + timedelta(minutes=i),
+                      o=float(h - 1), h=float(h), l=float(h - 1), c=float(h),
+                      v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])
+    for i, h in enumerate([10, 11, 12]):
+        await bus.publish(candle(i, h))
+    clean = store.snapshot("BTCUSDT").structure
+    await bus.publish(candle(1, 99))               # stale duplicate: dropped
+    await bus.publish(candle(1, 99))               # equal ts too
+    assert store.snapshot("BTCUSDT").structure == clean   # engines untouched
 
 
 # ------------------------------------------------------- full composition
