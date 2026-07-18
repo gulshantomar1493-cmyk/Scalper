@@ -233,7 +233,9 @@ function connect() {
       console.warn("chart update skipped:", err.message);
     }
     if (diff[activeSymbol] && diff[activeSymbol].structure) {
-      Overlays.setStructure(diff[activeSymbol].structure);
+      // P2.21: pass the already-available close through — transport
+      // only, no calculation; Overlays uses it for premium/discount.
+      Overlays.setStructure(diff[activeSymbol].structure, candle.c);
     }
   };
 

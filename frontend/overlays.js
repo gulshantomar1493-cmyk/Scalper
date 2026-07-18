@@ -1,18 +1,27 @@
 /* MarketScalper overlays + replay-audit tool (roadmap P1.19 + P1.20 +
- * P2.20).
+ * P2.20 + P2.21).
  *
  * PURE CONSUMER of the backend structure payload (state_diff.structure):
  * every number drawn here — pivot prices, labels, trend state, BOS/CHOCH
  * events, trendline/channel endpoints, order block / FVG zones, liquidity
- * pool and key-level prices, sweep events (already computed server-side)
- * — comes from the frozen engines. No calculations beyond canvas
- * rendering.
+ * pool and key-level prices, sweep events, session VWAP + bands, the
+ * premium/discount label (already computed server-side) — comes from the
+ * frozen engines. No calculations beyond canvas rendering.
  *
  * P2.20: order block + breaker + FVG zones as filled boxes, EQH/EQL pools
  * and promoted key levels as full-width horizontal lines, sweep events as
  * chart markers. Boxes/lines extend to the current pane edge using the
  * renderer's own pixel width — no engine math, only chart-space geometry
  * already exposed by the LWC v5 primitive API.
+ *
+ * P2.21: session VWAP + +-1sigma/+-2sigma bands rendered the SAME way as
+ * P2.20's pool/level lines — the current value only, never accumulated
+ * into a history (the payload carries no historical VWAP series; see
+ * D19/P2.21 planning record). Premium/discount renders as a split-pane
+ * tint at the latest candle's close price (passed in by app.js — pure
+ * transport, no computation there either) rather than a uniform wash,
+ * using only priceToCoordinate — the same coordinate mapping already
+ * used everywhere else in this module.
  *
  * Audit tool (P1.20): jump-to-random-trendline + accept/reject tally.
  * Session-local UI state only (the owner records the tally in the gate
@@ -140,6 +149,54 @@ const Overlays = (() => {
     }
   }
 
+  /* P2.21: premium/discount split-pane shading. Splits the pane at the
+   * latest close price — top half tinted for premium, bottom half for
+   * discount — rather than a uniform wash, since the payload carries no
+   * numeric zone boundary, only the qualitative label. Drawn BEHIND the
+   * candles (zOrder "bottom") so price action stays readable. */
+  class ShadingPrimitive {
+    constructor() {
+      this._state = null;           // {closePrice, premiumDiscount}
+      this._series = null;
+      this._requestUpdate = null;
+      const self = this;
+      this._paneView = {
+        renderer() {
+          return { draw(target) { self._draw(target); } };
+        },
+      };
+    }
+    attached(params) {
+      this._series = params.series;
+      this._requestUpdate = params.requestUpdate;
+    }
+    detached() { this._series = this._requestUpdate = null; }
+    paneViews() { return [this._paneView]; }
+    zOrder() { return "bottom"; }
+    setShading(state) {
+      this._state = state;
+      if (this._requestUpdate) this._requestUpdate();
+    }
+    _draw(target) {
+      const s = this._state;
+      if (!this._series || !s || !s.premiumDiscount || s.closePrice == null) return;
+      const y = this._series.priceToCoordinate(s.closePrice);
+      if (y === null) return;
+      target.useMediaCoordinateSpace((scope) => {
+        const ctx = scope.context;
+        const w = scope.mediaSize.width;
+        const h = scope.mediaSize.height;
+        const premium = s.premiumDiscount === "premium";
+        ctx.fillStyle = premium ? COLORS.premiumFill : COLORS.discountFill;
+        if (premium) ctx.fillRect(0, 0, w, y);
+        else ctx.fillRect(0, y, w, h - y);
+        ctx.fillStyle = premium ? COLORS.resistance : COLORS.support;
+        ctx.font = "10px sans-serif";
+        ctx.fillText(s.premiumDiscount.toUpperCase(), 4, premium ? y - 4 : y + 12);
+      });
+    }
+  }
+
   /* ------------------------------------------------------------- state */
 
   const COLORS = {
@@ -153,14 +210,19 @@ const Overlays = (() => {
     fvgBullFill: "rgba(34,197,94,0.10)",
     fvgBearFill: "rgba(239,68,68,0.10)",
     pool: "#A78BFA", level: "#64748B", sweep: "#F472B6",
+    // P2.21
+    vwap: "#FB923C", band: "rgba(251,146,60,0.45)",
+    premiumFill: "rgba(239,68,68,0.06)", discountFill: "rgba(34,197,94,0.06)",
   };
   let chart = null;
   let series = null;
   let primitive = null;
   let boxesPrimitive = null;        // P2.20: OB/breaker/FVG zones
+  let shadingPrimitive = null;      // P2.21: premium/discount split
   let markers = null;               // createSeriesMarkers handle
   let trendEl = null;
   let structure = null;             // latest payload for the active symbol
+  let lastClose = null;             // P2.21: latest close, passed by app.js
   let auditPick = null;             // index into structure.trendlines
   const tally = { accept: 0, reject: 0 };
 
@@ -203,8 +265,35 @@ const Overlays = (() => {
           color: COLORS.level, width: 1, dash: false, label: name,
         });
       });
+      // P2.21: session VWAP + bands — current value only, reusing the
+      // same "full" pane-wide line mode as pools/levels (see module
+      // docstring: no historical VWAP series exists in the payload).
+      const volume = st.volume || {};
+      if (volume.session_vwap != null) {
+        lines.push({
+          full: true, p1: volume.session_vwap, p2: volume.session_vwap,
+          color: COLORS.vwap, width: 1, dash: false, label: "VWAP",
+        });
+        const bandLines = [
+          [volume.band_1_up, "+1σ"], [volume.band_1_dn, "-1σ"],
+          [volume.band_2_up, "+2σ"], [volume.band_2_dn, "-2σ"],
+        ];
+        bandLines.forEach(([price, label]) => {
+          if (price == null) return;
+          lines.push({
+            full: true, p1: price, p2: price,
+            color: COLORS.band, width: 1, dash: true, label,
+          });
+        });
+      }
     }
     primitive.setLines(lines);
+
+    // P2.21: premium/discount split-pane shading at the latest close
+    shadingPrimitive.setShading({
+      closePrice: lastClose,
+      premiumDiscount: st && st.liquidity && st.liquidity.premium_discount,
+    });
 
     // P2.20: order block / breaker / FVG zones
     const boxes = [];
@@ -327,6 +416,8 @@ const Overlays = (() => {
       series.attachPrimitive(primitive);
       boxesPrimitive = new BoxesPrimitive();
       series.attachPrimitive(boxesPrimitive);
+      shadingPrimitive = new ShadingPrimitive();
+      series.attachPrimitive(shadingPrimitive);
       markers = LightweightCharts.createSeriesMarkers(series, []);
       trendEl = document.getElementById("trend-state");
       document.getElementById("audit-pick")
@@ -337,8 +428,12 @@ const Overlays = (() => {
         .addEventListener("click", () => vote("reject"));
       setAuditButtons();
     },
-    setStructure(payload) {     // latest payload for the ACTIVE symbol
+    setStructure(payload, closePrice) {   // latest payload for the ACTIVE symbol
       structure = payload || null;
+      // P2.21: the latest close, used only for the premium/discount
+      // split — a single current-value slot (mirrors `structure` itself),
+      // never accumulated; omitted -> shading absent for this render.
+      lastClose = (typeof closePrice === "number") ? closePrice : null;
       if (auditPick !== null &&
           (!structure || auditPick >= (structure.trendlines || []).length)) {
         auditPick = null;       // the picked line no longer exists

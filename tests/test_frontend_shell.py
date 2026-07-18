@@ -175,3 +175,44 @@ def test_overlays_js_is_still_a_pure_consumer():
                    "tolerance", "fetch(", "WebSocket"):
         assert banned not in js, banned
     assert "localStorage" not in js and "sessionStorage" not in js
+
+
+# ---------------------------------------------------------------- P2.21
+
+
+def test_overlays_js_renders_vwap_and_bands():
+    js = _read("overlays.js")
+    assert "volume.session_vwap" in js
+    assert "band_1_up" in js and "band_1_dn" in js
+    assert "band_2_up" in js and "band_2_dn" in js
+    assert '"VWAP"' in js
+
+
+def test_overlays_js_renders_premium_discount_split_shading():
+    js = _read("overlays.js")
+    assert "class ShadingPrimitive" in js
+    assert "premium_discount" in js
+    assert 'zOrder() { return "bottom"; }' in js       # behind the candles
+    assert "priceToCoordinate(s.closePrice)" in js      # split at close, not a uniform wash
+
+
+def test_overlays_js_setstructure_accepts_close_price():
+    js = _read("overlays.js")
+    assert "setStructure(payload, closePrice)" in js
+    assert "lastClose" in js
+
+
+def test_app_js_passes_close_price_transport_only():
+    """app.js may thread the already-available close through — no new
+    computation, no new fetches, no new WS messages."""
+    js = _read("app.js")
+    assert "Overlays.setStructure(diff[activeSymbol].structure, candle.c)" in js
+
+
+def test_overlays_js_is_still_a_pure_consumer_p221():
+    """P2.21 must not weaken the pure-consumer contract either."""
+    js = _read("overlays.js")
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert "localStorage" not in js and "sessionStorage" not in js
