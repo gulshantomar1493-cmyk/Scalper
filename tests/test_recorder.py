@@ -112,7 +112,8 @@ def test_engine_version_stamp_format():
     assert set(parts) == {"structure", "trendline", "liquidity",
                           "orderblock", "fvg", "volume", "momentum",
                           "confluence", "qualification", "risk",
-                          "strategy"}
+                          "strategy", "evaluator", "lifecycle",
+                          "psychology"}
     assert all(v == "1" for v in parts.values())   # D1: all at version 1
 
 

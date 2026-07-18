@@ -198,6 +198,40 @@ async def test_journal_get_and_manual_patch_roundtrip(db_conn):
         await _stop(server, task)
 
 
+async def test_journal_patch_feeds_psychology_guard(db_conn):
+    """P4.9/D23.5: logging a taken LOSS via PATCH records it in the
+    psychology guard (so a same-symbol signal within 5 min hits revenge)."""
+    from datetime import timezone
+    from marketscalper.engines.psychology import PsychologyGuard
+
+    rec_id = await _seed_journal(db_conn)
+    guard = PsychologyGuard()
+    bus = EventBus()
+    store = StateStore(bus)
+    app = create_app(bus, store, TxPool(db_conn), TOKEN, psych_guard=guard)
+    server, task, addr = await _serve(app)
+    now = datetime.now(timezone.utc)
+    try:
+        # before: the guard is clean
+        assert guard.evaluate(now, "BTCUSDT").passed
+        async with aiohttp.ClientSession() as s:
+            async with s.patch(f"http://{addr}/journal/{rec_id}",
+                               json={"taken": True, "result": "loss"},
+                               headers=AUTH) as r:
+                assert r.status == 200
+        # after: a taken loss on BTCUSDT is recorded -> revenge blocks now
+        st = guard.evaluate(datetime.now(timezone.utc), "BTCUSDT")
+        assert not st.passed and "revenge" in st.detail
+        # un-take -> the record is dropped
+        async with aiohttp.ClientSession() as s:
+            async with s.patch(f"http://{addr}/journal/{rec_id}",
+                               json={"taken": False}, headers=AUTH) as r:
+                assert r.status == 200
+        assert guard.evaluate(datetime.now(timezone.utc), "BTCUSDT").passed
+    finally:
+        await _stop(server, task)
+
+
 async def test_journal_patch_cors_preflight_allowed():
     """The journal UI (P4.7) is always a foreign origin; a browser sends a
     CORS preflight for the JSON PATCH. Guard that PATCH + Content-Type are

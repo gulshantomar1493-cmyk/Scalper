@@ -50,6 +50,7 @@ from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
                                             RegimeClassifier)
 from marketscalper.engines.lifecycle import RecommendationLifecycle
+from marketscalper.engines.psychology import PsychologyGuard
 from marketscalper.engines.qualification import (QualificationEngine,
                                                  spread_pct_of)
 from marketscalper.engines.risk import management_guidance, plan_trade
@@ -87,8 +88,9 @@ class _StructurePipeline:
 
     def __init__(self, symbol: str, store: StateStore,
                  clock_provider=None, volume_seed=None,
-                 equity=DEFAULT_EQUITY_USD) -> None:
+                 equity=DEFAULT_EQUITY_USD, psych_guard=None) -> None:
         self._symbol = symbol
+        self._psych_guard = psych_guard            # D23 (P4.9), live-only
         self._store = store
         self._clock_provider = clock_provider      # D16.2 G1 (live only)
         self._spread_pct = None                    # latest G2 input
@@ -188,12 +190,15 @@ class _StructurePipeline:
             gaps=self._fvg.gaps, lines=self._book.active,
             pools=self._liq.pools, key_levels=self._liq.key_levels,
             atr=self._atr.value, bar_index=self._bar)
+        psych = (self._psych_guard.evaluate(candle.ts, self._symbol)
+                 if self._psych_guard is not None else None)   # D23.5
         qual = self._qual.update(                  # D16.5
             candle, bos_event=bos_event, choch_event=choch_event,
             tl_events=tl_events, liq_events=liq_events, zones=zones,
             spread_pct=self._spread_pct,
             clock=(self._clock_provider()
-                   if self._clock_provider is not None else None))
+                   if self._clock_provider is not None else None),
+            psych=psych)
         new_recs = []
         bar_signals = []
         for signal in self._strategy.evaluate(     # D20.5: last consumer
@@ -430,7 +435,8 @@ def _row_to_candle(r) -> Candle:
 def _wire_structure_engines(bus: EventBus, store: StateStore,
                             symbols, clock_provider=None,
                             seed_candles=None, recorder=None,
-                            equity=DEFAULT_EQUITY_USD) -> None:
+                            equity=DEFAULT_EQUITY_USD,
+                            psych_guard=None) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
@@ -445,7 +451,7 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
         symbol: _StructurePipeline(
             symbol, store, clock_provider,
             volume_seed=(seed_candles or {}).get(symbol),
-            equity=equity)
+            equity=equity, psych_guard=psych_guard)
         for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
@@ -551,15 +557,18 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
             log.info("volume seed: %s — %d candles [%s .. %s)",
                      symbol, len(rows), seed_start, seed_end)
     recorder = SignalRecorder(pool, engine_version_stamp())   # D21.6 (live)
+    psych_guard = PsychologyGuard()                # D23 (P4.9), live-only
     _wire_structure_engines(
         bus, store, config.symbols,
         clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
-        seed_candles=seed_candles, recorder=recorder, equity=equity)
+        seed_candles=seed_candles, recorder=recorder, equity=equity,
+        psych_guard=psych_guard)
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
     app = create_app(bus, store, pool, token, replay_provider=ReplayFeed,
-                     replay_wiring=_wire_structure_engines)   # F2: full chain
+                     replay_wiring=_wire_structure_engines,   # F2: full chain
+                     psych_guard=psych_guard)                 # D23.5 (P4.9)
 
     await feed.start()
     await sampler.start()

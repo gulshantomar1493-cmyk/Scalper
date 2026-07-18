@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -109,6 +109,7 @@ def create_app(
     api_token: str,
     replay_provider=None,
     replay_wiring=None,
+    psych_guard=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -275,6 +276,21 @@ def create_app(
                 actual_r=merged("actual_r"),
                 notes=merged("notes"), tags=merged("tags"))
             row = await db.select_journal(conn, recommendation_id)
+            # P4.9: feed the psychology guard (D23.5). A taken trade WITH a
+            # result counts; anything else drops the record (un-taken /
+            # result cleared). The guard needs the rec's symbol.
+            if psych_guard is not None:
+                if row["taken"] and row["result"]:
+                    rec = await db.select_recommendation(
+                        conn, recommendation_id)
+                    sig = (await db.select_signal(conn, rec["signal_id"])
+                           if rec is not None else None)
+                    if sig is not None:
+                        psych_guard.record_taken(
+                            recommendation_id, datetime.now(timezone.utc),
+                            sig["symbol"], row["result"])
+                else:
+                    psych_guard.forget(recommendation_id)
         return _journal_json(row)
 
     @app.websocket("/ws")

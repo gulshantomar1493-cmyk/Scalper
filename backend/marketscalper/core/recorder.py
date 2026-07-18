@@ -18,17 +18,24 @@ import subprocess
 import asyncpg
 
 from marketscalper import db
-from marketscalper.engines import (confluence, fvg, liquidity, momentum,
-                                   orderblock, qualification, risk,
+from marketscalper.engines import (confluence, evaluator, fvg, liquidity,
+                                   lifecycle, momentum, orderblock,
+                                   psychology, qualification, risk,
                                    strategy, structure, trendline, volume)
 
 log = logging.getLogger(__name__)
 
+# The complete engine roster stamped on every signal row (D1). Includes
+# the post-signal recommendation engines (evaluator/lifecycle) and the
+# psychology guard (which shapes a recorded signal's G5/verdict), so every
+# declared ENGINE_VERSION is forensically live — no dead constants.
 _STAMP_ENGINES = (
     ("structure", structure), ("trendline", trendline),
     ("liquidity", liquidity), ("orderblock", orderblock), ("fvg", fvg),
     ("volume", volume), ("momentum", momentum), ("confluence", confluence),
     ("qualification", qualification), ("risk", risk), ("strategy", strategy),
+    ("evaluator", evaluator), ("lifecycle", lifecycle),
+    ("psychology", psychology),
 )
 
 

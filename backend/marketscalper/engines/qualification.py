@@ -11,7 +11,9 @@ S1–S3 + planner outputs (P3.12–P3.17) — NOT produced here (D16.1).
 Flagged placeholders (each recorded in D16.2/D16.3, self-healing when the
 owning task lands): G1 clock arm without a provider (replay), G2 without a
 BookTicker (replay), G3 (no roadmap-defined session sets — owner/P5, per
-D21.3), G4 until events.yaml, G5 until the journal (P4), G6 enforced at
+D21.3), G4 until events.yaml, G5 via the P4.9 psychology-guard seam
+(D23.4 — `psych=None` keeps the flagged placeholder for replay/tests; a
+G5State makes it a real risk-budget gate live), G6 enforced at
 recommendation creation via the D17 plan's rr_floor_ok (D21.2 — the
 bar-level gate stays flagged because no plan exists before the
 strategies run), the Liquidity R-distance item (P5-era, D21.3).
@@ -149,11 +151,13 @@ class QualificationEngine:
     def update(self, candle: Candle, *, bos_event, choch_event, tl_events,
                liq_events, zones: list[ConfluenceZone],
                spread_pct: float | None,
-               clock: tuple | None) -> QualificationResult:
+               clock: tuple | None, psych=None) -> QualificationResult:
         """Fold one closed 1m candle after every other engine (D16.5).
 
         clock: None = no sampler wired (replay/tests, flagged pass) or
         (offset_s, in_sync) from the D6 sampler surface.
+        psych: None = no psychology guard wired (replay/tests, G5 flagged
+        pass — the D16.2 legacy) or a D23 G5State (the P4.9 real G5).
         """
         self._bar += 1
         cur = self._bar
@@ -179,7 +183,7 @@ class QualificationEngine:
         if self._momentum.momentum_shift:
             self._last_shift_flag_bar = cur
 
-        gates = self._gates(candle, spread_pct, clock)
+        gates = self._gates(candle, spread_pct, clock, psych)
         integrity = ("PASS" if gates[0].passed and gates[1].passed
                      else "DEGRADED")
 
@@ -205,7 +209,8 @@ class QualificationEngine:
 
     # ------------------------------------------------------------ stage 1
 
-    def _gates(self, candle: Candle, spread_pct, clock) -> list[GateResult]:
+    def _gates(self, candle: Candle, spread_pct, clock,
+               psych=None) -> list[GateResult]:
         gates: list[GateResult] = []
 
         # G1 — feed live (per-close evaluation) + 30-candle continuity
@@ -245,7 +250,13 @@ class QualificationEngine:
             "G3", True, True,
             f"session {session_of(candle.ts.hour)}; no strategy filter yet"))
         gates.append(GateResult("G4", True, True, "no events calendar yet"))
-        gates.append(GateResult("G5", True, True, "no journal yet"))
+        # G5 — the psychology guard (D23.4/P4.9). No guard wired
+        # (replay/tests) → the D16.2 flagged placeholder pass; a G5State
+        # (live) → a real, non-flagged risk-budget gate.
+        if psych is None:
+            gates.append(GateResult("G5", True, True, "no journal yet"))
+        else:
+            gates.append(GateResult("G5", psych.passed, False, psych.detail))
         gates.append(GateResult("G6", True, True, "no trade plan yet"))
         return gates
 

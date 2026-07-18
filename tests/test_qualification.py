@@ -54,6 +54,7 @@ class _Rig:
         kw.setdefault("zones", [])
         kw.setdefault("spread_pct", None)
         kw.setdefault("clock", None)
+        kw.setdefault("psych", None)
         return self.qual.update(candle, **kw)
 
 
@@ -139,6 +140,26 @@ def test_g2_spread_strict_boundary():
     assert result.data_integrity == "DEGRADED"
     result = rig.step(_candle(32), spread_pct=None)
     assert result.gates[1].passed and result.gates[1].flagged
+
+
+def test_g5_psychology_seam():
+    from marketscalper.engines.psychology import G5State
+    rig = _Rig()
+    _warm(rig, 30)
+    # a failing G5 (hard lock) -> a real gate -> whole bar NO_SIGNAL (§6)
+    fail = G5State(False, True, False, "hard lock: 9 taken today (> 8)")
+    result = rig.step(_candle(30), psych=fail)
+    g5 = result.gates[4]
+    assert g5.name == "G5" and not g5.passed and not g5.flagged
+    assert result.verdict == "NO_SIGNAL" and result.score is None
+    assert "hard lock" in g5.detail
+    # a passing G5 carrying a warn -> real gate, still passes
+    ok = G5State(True, False, True, "overtrade warn: 7 taken today (> 6)")
+    g5 = rig.step(_candle(31), psych=ok).gates[4]
+    assert g5.passed and not g5.flagged and "overtrade warn" in g5.detail
+    # None (replay/tests) -> the D16.2 legacy flagged placeholder, unchanged
+    g5 = rig.step(_candle(32)).gates[4]
+    assert g5.passed and g5.flagged and g5.detail == "no journal yet"
 
 
 def test_placeholder_gates_flagged_with_pinned_details():

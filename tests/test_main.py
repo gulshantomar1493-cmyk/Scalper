@@ -134,6 +134,36 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert "XRPUSDT" not in str(structure)
 
 
+async def test_pipeline_g5_reflects_psychology_guard():
+    """P4.9/D23.5: a locked psychology guard threads through to G5 in the
+    payload — the whole bar goes NO_SIGNAL (behavioral circuit-breaker)."""
+    from datetime import datetime, timedelta, timezone
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.engines.psychology import PsychologyGuard
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper.providers.base import Candle
+
+    guard = PsychologyGuard()
+    base = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
+    for i in range(9):                             # 9 taken today -> locked
+        guard.record_taken(i, base + timedelta(minutes=i), "BTCUSDT", "win")
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"], psych_guard=guard)
+    for i in range(31):                            # warm past G1 (30 candles)
+        await bus.publish(Candle(
+            symbol="BTCUSDT", tf="1m", ts=base + timedelta(minutes=i),
+            o=100.0, h=100.5, l=99.5, c=100.2, v=1.0, qv=100.0,
+            n_trades=1, taker_buy_v=0.5))
+    qual = store.snapshot("BTCUSDT").structure["qualification"]
+    g5 = qual["gates"][4]
+    assert g5["name"] == "G5" and not g5["passed"] and not g5["flagged"]
+    assert "hard lock" in g5["detail"]
+    assert qual["verdict"] == "NO_SIGNAL"          # any gate fail -> no signal
+
+
 async def test_pipeline_recommendation_carries_lifecycle_status():
     """P4.2: an admitted recommendation flows through the lifecycle wiring
     with a 'status' in the payload (starts 'active'); the pipeline exposes
