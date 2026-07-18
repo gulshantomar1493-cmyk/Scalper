@@ -227,6 +227,9 @@ async def test_v1_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"blocks": [{' in joined                 # OB content in the hash
     assert '"fvgs": [{' in joined                   # FVG content in the hash
     assert '"confluence": [{' in joined             # D15 zones in the hash
+    assert '"volume": {' in joined                  # D19 content in the hash
+    assert '"anchored_vwap": 1' in joined           # a real A8-anchored value
+    assert '"rvol": null' in joined                 # unseeded warm-up (D7)
     assert '"htf_magnet": true' in joined           # a real 3+ stack hashed
     assert '"verdict": "NO_SIGNAL"' in joined       # G1 warming era...
     assert '"verdict": "BELOW_THRESHOLD"' in joined  # ...and scored era

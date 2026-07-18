@@ -48,7 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
@@ -73,6 +73,16 @@ def _candle_json(c: Candle) -> dict:
         "v": c.v, "qv": c.qv, "n_trades": c.n_trades,
         "taker_buy_v": c.taker_buy_v,
     }
+
+
+def _row_to_candle(r) -> Candle:
+    """Stored candle row -> normalized Candle (D19.2 replay-seed reads)."""
+    return Candle(
+        symbol=r["symbol"], tf=r["tf"], ts=r["ts"],
+        o=float(r["o"]), h=float(r["h"]), l=float(r["l"]), c=float(r["c"]),
+        v=float(r["v"]), qv=float(r["qv"]),
+        n_trades=r["n_trades"], taker_buy_v=float(r["taker_buy_v"]),
+    )
 
 
 def _diff_json(diff: dict) -> dict:
@@ -221,7 +231,7 @@ def create_app(
     async def replay_start(payload: dict = Body(...)) -> dict:
         _require_replay_configured()
         _refresh_replay()
-        if replay["feed"] is not None:
+        if replay["feed"] is not None or replay.get("starting"):
             raise HTTPException(status_code=409, detail="replay already running")
 
         symbol = payload.get("symbol")
@@ -241,37 +251,53 @@ def create_app(
             raise HTTPException(status_code=400,
                                 detail="start/end must be timezone-aware and start < end")
 
-        # F2: every session runs on its own bus with its own store and
-        # (when composition provides the wiring) its own fresh engine
-        # pipelines — the determinism harness's exact shape. Replay never
-        # touches the live bus: no out-of-order drops, no duplicate
-        # persistence, no reconciler leakage.
-        session_bus = EventBus()
-        session_store = StateStore(session_bus)      # subscribes first
-        if replay_wiring is not None:
-            replay_wiring(session_bus, session_store, [symbol])
+        # Reserve the slot BEFORE any await (freeze-audit fix): the guard
+        # above and this flag are one atomic section — a concurrent start
+        # arriving during the seed read / feed launch gets the 409 instead
+        # of orphaning this session.
+        replay["starting"] = True
+        try:
+            # F2: every session runs on its own bus with its own store and
+            # (when composition provides the wiring) its own fresh engine
+            # pipelines — the determinism harness's exact shape. Replay never
+            # touches the live bus: no out-of-order drops, no duplicate
+            # persistence, no reconciler leakage.
+            session_bus = EventBus()
+            session_store = StateStore(session_bus)      # subscribes first
+            if replay_wiring is not None:
+                # D19.2: the same seeding rule as live startup — the 20 days
+                # preceding the replay range warm the RVOL buckets, keeping
+                # replay identical to a live run over the same period.
+                async with pool.acquire() as conn:
+                    rows = await db.select_candles(
+                        conn, symbol, "1m", start - timedelta(days=20), start)
+                seeds = {symbol: [_row_to_candle(r) for r in rows]}
+                replay_wiring(session_bus, session_store, [symbol],
+                              seed_candles=seeds)
 
-        async def replay_broadcast(candle: Candle) -> None:
-            _push(candle, session_store)             # last: diff is complete
+            async def replay_broadcast(candle: Candle) -> None:
+                _push(candle, session_store)         # last: diff is complete
 
-        session_bus.subscribe(Candle, replay_broadcast)
-        feed = replay_provider([symbol], session_bus, pool, start, end,
-                               speed=speed)
-        await feed.start()
-        replay["feed"] = feed
-        replay["info"] = {"symbol": symbol, "start": start.isoformat(),
-                          "end": end.isoformat(), "speed": speed}
-        replay["seen_connected"] = False
-        # Observe activation race-free: connected is set at the very start of
-        # the replay task, BEFORE its first await (the DB load) — so a
-        # zero-delay yield interleaves exactly there and must see True.
-        # (A timer-based poll can miss the whole replay at ×max.) After this
-        # latch, connected=False means finished.
-        for _ in range(100):
-            if feed.connected:
-                replay["seen_connected"] = True
-                break
-            await asyncio.sleep(0)
+            session_bus.subscribe(Candle, replay_broadcast)
+            feed = replay_provider([symbol], session_bus, pool, start, end,
+                                   speed=speed)
+            await feed.start()
+            replay["feed"] = feed
+            replay["info"] = {"symbol": symbol, "start": start.isoformat(),
+                              "end": end.isoformat(), "speed": speed}
+            replay["seen_connected"] = False
+            # Observe activation race-free: connected is set at the very
+            # start of the replay task, BEFORE its first await (the DB
+            # load) — so a zero-delay yield interleaves exactly there and
+            # must see True. (A timer-based poll can miss the whole replay
+            # at ×max.) After this latch, connected=False means finished.
+            for _ in range(100):
+                if feed.connected:
+                    replay["seen_connected"] = True
+                    break
+                await asyncio.sleep(0)
+        finally:
+            replay["starting"] = False
         log.info("replay: started %s", replay["info"])
         return {"running": True, **replay["info"]}
 

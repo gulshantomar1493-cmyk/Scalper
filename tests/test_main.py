@@ -104,6 +104,11 @@ async def test_structure_pipeline_wiring_publishes_payload():
         f"{s}_{x}" for s in ("ASIA", "LONDON", "NY", "LATE") for x in "HL"}
     assert structure["orderblocks"] == {"blocks": [], "breakers": []}
     assert structure["fvgs"] == []                         # FVG Engine (D14)
+    volume = structure["volume"]                           # D19: unseeded
+    assert volume["rvol"] is None and volume["spike"] is False
+    assert volume["session_vwap"] is None                  # mid-day start
+    assert isinstance(volume["delta"], float)
+    assert volume["absorption"] is None and volume["exhaustion"] is None
     assert structure["confluence"] == []                   # ATR unwarm (D15)
     qual = structure["qualification"]                      # D16: G1 warming
     assert qual["verdict"] == "NO_SIGNAL" and qual["score"] is None

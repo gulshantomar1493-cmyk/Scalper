@@ -432,3 +432,37 @@ async def test_slow_ws_client_cannot_stall_the_pipeline():
             assert msg["candle"]["ts"] == (M0 + timedelta(minutes=3000)).isoformat()
     finally:
         await _stop(server, task)
+
+
+async def test_concurrent_replay_starts_one_wins(db_conn, monkeypatch):
+    """Freeze-audit fix (Volume milestone): the start slot is reserved
+    BEFORE the seed read / feed launch awaits — two concurrent starts
+    yield exactly one 200 and one 409, never two live sessions."""
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper import db as _db
+
+    await _seed_candles(db_conn)
+    real_select = _db.select_candles
+
+    async def slow_select(conn, symbol, tf, start, end):
+        await asyncio.sleep(0.2)                   # widen the race window
+        return await real_select(conn, symbol, tf, start, end)
+
+    monkeypatch.setattr("marketscalper.api.app.db.select_candles",
+                        slow_select)
+    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed,
+                          replay_wiring=_wire_structure_engines)
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async def start():
+                async with s.post(f"http://{addr}/replay/start",
+                                  json=_replay_body(speed=60),
+                                  headers=AUTH) as r:
+                    return r.status
+            statuses = sorted(await asyncio.gather(start(), start()))
+            assert statuses == [200, 409]
+            async with s.post(f"http://{addr}/replay/stop", headers=AUTH) as r:
+                assert r.status == 200
+    finally:
+        await _stop(server, task)

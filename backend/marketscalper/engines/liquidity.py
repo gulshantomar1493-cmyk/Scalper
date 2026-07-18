@@ -35,10 +35,12 @@ POOL_PIVOT_WINDOW = 20                 # D12.2, explicitly arbitrary (P5)
 POOL_RECENCY_DECAY_BARS = 1440         # strength decay: one day of 1m bars
 SWEEP_WICK_RATIO = 0.6                 # wick > 60% of candle range (strict)
 SWEEP_SHIFT_WINDOW = 3                 # CHOCH within bars +1..+3 (D12.5)
-# FLAGGED PLACEHOLDER (D12.4): the RVOL >= 1.5 OR-arm of sweep detection
-# evaluates False until the Volume Engine lands (a True placeholder would
-# make every wick-through a sweep). The swap re-runs determinism.
-SWEEP_RVOL_PLACEHOLDER_PASSES = False
+# P2.2 swap complete (D19.10): the sweep OR-arm is rvol >= SWEEP_RVOL_MIN,
+# read through the composition-wired provider. Without a provider (or
+# while rvol is unwarm/None) the recorded D12 legacy direction holds: the
+# arm is False (wick rule only). No volume logic lives here.
+SWEEP_RVOL_PLACEHOLDER_PASSES = False  # legacy direction (D12.4)
+SWEEP_RVOL_MIN = 1.5                   # D19.10, owner-approved (inclusive)
 
 # D12.1 session map (A9): UTC hour -> session name.
 SESSIONS = ("ASIA", "LONDON", "NY", "LATE")
@@ -113,7 +115,8 @@ def key_level_to_row(name: str, price: float, symbol: str,
 class LiquidityEngine:
     """§4.4 for one symbol's 1m stream (cadence per D12.7)."""
 
-    __slots__ = ("_symbol", "_atr", "_bar", "_pivots_h", "_pivots_l",
+    __slots__ = ("_symbol", "_atr", "_rvol_provider",
+                 "_bar", "_pivots_h", "_pivots_l",
                  "_pools_dirty", "_pools", "_swept_pools", "_swept_levels",
                  "_levels", "_day", "_day_hi", "_day_lo", "_week_start",
                  "_week_hi", "_week_lo", "_session", "_sess_hi", "_sess_lo",
@@ -121,9 +124,13 @@ class LiquidityEngine:
                  "_pending_sweeps", "_choch_ts", "_ext_h", "_ext_l",
                  "_premium_discount")
 
-    def __init__(self, symbol: str, atr: IncrementalATR) -> None:
+    def __init__(self, symbol: str, atr: IncrementalATR,
+                 rvol_provider=None) -> None:
         self._symbol = symbol
         self._atr = atr
+        # P2.2 seam (D19.10): callable returning the current bar's rvol
+        # (Volume Engine phase 1 runs before update). None -> legacy.
+        self._rvol_provider = rvol_provider
         self._bar = -1
         self._pivots_h: deque = deque(maxlen=POOL_PIVOT_WINDOW)
         self._pivots_l: deque = deque(maxlen=POOL_PIVOT_WINDOW)
@@ -368,8 +375,8 @@ class LiquidityEngine:
         self._swept_pools = {(kind, swept) for kind, swept in self._swept_pools
                              if swept & window_ts[kind]}
 
-    @staticmethod
-    def _is_sweep(candle: Candle, price: float, side: str) -> bool:
+    def _is_sweep(self, candle: Candle, price: float, side: str) -> bool:
+        # instance method since P2.2: the volume OR-arm reads the seam
         rng = candle.h - candle.l
         if rng <= 0:
             return False                             # zero-range never sweeps
@@ -381,8 +388,16 @@ class LiquidityEngine:
             if not (candle.l < price and candle.c > price):
                 return False
             wick = min(candle.o, candle.c) - candle.l
-        return (SWEEP_RVOL_PLACEHOLDER_PASSES
+        return (self._rvol_arm()
                 or wick > SWEEP_WICK_RATIO * rng)    # strict (D12.4)
+
+    def _rvol_arm(self) -> bool:
+        """Sweep volume OR-arm (D19.10): provider absent -> the recorded
+        D12 legacy direction; rvol None (unwarm) -> same; else >= 1.5."""
+        if self._rvol_provider is None:
+            return SWEEP_RVOL_PLACEHOLDER_PASSES
+        rvol = self._rvol_provider()
+        return False if rvol is None else rvol >= SWEEP_RVOL_MIN
 
     def _sweep(self, candle: Candle, cur: int, side: str, target: str,
                price: float) -> SweepEvent:

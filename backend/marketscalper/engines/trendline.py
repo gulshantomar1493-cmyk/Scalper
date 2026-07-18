@@ -63,10 +63,12 @@ CAP_PER_SIDE = 3                       # kept lines: 3 support + 3 resistance
 ARCHIVE_AGE_BARS = 300                 # bars since last touch -> archived
 BREAK_BODY_ATR_RATIO = 0.8             # BREAK quality: body > 0.8*ATR strict
 FAKE_BREAK_WINDOW = 3                  # re-entry candles after a close-through
-# FLAGGED PLACEHOLDER (roadmap P1.16 / D11.9): the RVOL >= 1.5 condition of
-# a qualifying BREAK evaluates True until P2.2 swaps in the real RVOL and
-# re-runs determinism. Do not add volume logic here.
-RVOL_PLACEHOLDER_PASSES = True
+# P2.2 swap complete (D19.10): a qualifying BREAK's volume condition is
+# rvol >= BREAK_RVOL_MIN, read through the composition-wired provider.
+# Without a provider (or while rvol is unwarm/None) the recorded D11
+# legacy direction holds: the arm passes. No volume logic lives here.
+RVOL_PLACEHOLDER_PASSES = True         # legacy direction (D11.9)
+BREAK_RVOL_MIN = 1.5                   # D19.10, owner-approved (inclusive)
 CHANNEL_SLOPE_REL = 0.08               # channel pair parallelism threshold
 
 
@@ -307,9 +309,10 @@ class TrendlineBook:
     """
 
     __slots__ = ("_atr", "_detector", "_active", "_archived_keys",
-                 "_broken_keys", "_flips", "_cur")
+                 "_broken_keys", "_flips", "_cur", "_rvol_provider")
 
-    def __init__(self, detector: TrendlineDetector, atr: IncrementalATR) -> None:
+    def __init__(self, detector: TrendlineDetector, atr: IncrementalATR,
+                 rvol_provider=None) -> None:
         self._detector = detector
         self._atr = atr
         self._active: list[KeptTrendline] = []
@@ -317,6 +320,17 @@ class TrendlineBook:
         self._broken_keys: set[tuple] = set()
         self._flips: list[FlipCandidate] = []
         self._cur = -1
+        # P2.2 seam (D19.10): callable returning the current bar's rvol
+        # (Volume Engine phase 1 runs before refresh). None -> legacy.
+        self._rvol_provider = rvol_provider
+
+    def _rvol_ok(self) -> bool:
+        """BREAK volume arm (D19.10): provider absent -> the recorded D11
+        legacy direction; rvol None (unwarm) -> same; else >= 1.5."""
+        if self._rvol_provider is None:
+            return RVOL_PLACEHOLDER_PASSES
+        rvol = self._rvol_provider()
+        return True if rvol is None else rvol >= BREAK_RVOL_MIN
 
     @property
     def active(self) -> list[KeptTrendline]:
@@ -396,7 +410,7 @@ class TrendlineBook:
                     body = abs(candle.c - candle.o)
                     line.watch_qualified = (
                         body > BREAK_BODY_ATR_RATIO * atr
-                        and RVOL_PLACEHOLDER_PASSES)
+                        and self._rvol_ok())
                     continue
                 extreme = candle.l if support else candle.h
                 if abs(log(extreme) - y) <= tol:

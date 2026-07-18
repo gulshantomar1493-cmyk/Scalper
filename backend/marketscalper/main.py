@@ -54,6 +54,7 @@ from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
                                              TrendState)
 from marketscalper.engines.trendline import TrendlineBook, TrendlineDetector
+from marketscalper.engines.volume import VolumeEngine
 from marketscalper.logging_setup import setup_logging
 from marketscalper.providers.base import BookTicker, Candle
 from marketscalper.providers.binance import BinanceFeed, ClockOffsetSampler
@@ -76,7 +77,7 @@ class _StructurePipeline:
     _ZONES_SHOWN = 10       # confluence display cap (D15.3)
 
     def __init__(self, symbol: str, store: StateStore,
-                 clock_provider=None) -> None:
+                 clock_provider=None, volume_seed=None) -> None:
         self._symbol = symbol
         self._store = store
         self._clock_provider = clock_provider      # D16.2 G1 (live only)
@@ -85,14 +86,19 @@ class _StructurePipeline:
         self._atr_5m = IncrementalATR()            # regime input (D16.5)
         self._momentum = MomentumState(self._atr)
         self._regime = RegimeClassifier(symbol, self._atr, self._atr_5m)
+        self._volume = VolumeEngine(symbol, self._atr)
+        if volume_seed:                            # D19.2: 20-day bucket seed
+            self._volume.seed(volume_seed)
         self._detector = PivotDetector(symbol, "1m")
         self._labeler = PivotLabeler()
         self._trend = TrendState()
         self._bos = BosDetector(self._trend, self._atr)
         self._choch = ChochDetector(self._trend)
         self._tl_detector = TrendlineDetector(self._atr)
-        self._book = TrendlineBook(self._tl_detector, self._atr)
-        self._liq = LiquidityEngine(symbol, self._atr)
+        self._book = TrendlineBook(self._tl_detector, self._atr,
+                                   rvol_provider=lambda: self._volume.rvol)
+        self._liq = LiquidityEngine(symbol, self._atr,
+                                    rvol_provider=lambda: self._volume.rvol)
         self._ob = OrderBlockEngine(symbol)
         self._fvg = FvgEngine(symbol, self._atr)
         self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
@@ -123,7 +129,8 @@ class _StructurePipeline:
         self._atr.update(candle)
         self._momentum.update(candle)              # P1.2: ATR first
         self._regime.update()                      # after both ATRs (D16.5)
-        self._tl_detector.update(candle)
+        self._volume.update(candle)                # D19.8 phase 1: rvol is
+        self._tl_detector.update(candle)           # ready for all consumers
         for pivot in self._detector.update(candle):
             labeled = self._labeler.label(pivot)
             self._pivots.append(labeled)
@@ -150,6 +157,9 @@ class _StructurePipeline:
                 self._sweep_events.append(event)
             else:
                 self._shift_events.append(event)
+        self._volume.classify(candle, self._liq.key_levels,   # D19.8
+                              self._liq.pools,                # phase 2
+                              self._liq.running_extremes)
         self._ob.update(candle)                    # after liquidity (D13.5)
         self._fvg.update(candle)                   # after order blocks (D14.3)
         zones = confluence_zones(                  # D15.3: after fvg
@@ -175,7 +185,9 @@ class _StructurePipeline:
         self._last_ts_5m = candle.ts
         self._atr_5m.update(candle)                # regime input (D16.5)
         for pivot in self._detector_5m.update(candle):
-            self._liq.on_external_pivot(self._labeler_5m.label(pivot))
+            labeled = self._labeler_5m.label(pivot)
+            self._liq.on_external_pivot(labeled)
+            self._volume.on_anchor(labeled)        # D19.4 anchor intake
 
     def on_book_ticker(self, ticker: BookTicker) -> None:
         """Latest spread for the G2 gate (D16.2; live feeds only)."""
@@ -245,6 +257,26 @@ class _StructurePipeline:
                       "ce": g.ce, "status": g.status,
                       "created_ts": g.created_ts.isoformat()}
                      for g in self._fvg.gaps],
+            "volume": {
+                "rvol": self._volume.rvol,
+                "session_vwap": self._volume.session_vwap,
+                "band_1_up": self._volume.band_1_up,
+                "band_1_dn": self._volume.band_1_dn,
+                "band_2_up": self._volume.band_2_up,
+                "band_2_dn": self._volume.band_2_dn,
+                "anchored_vwap": self._volume.anchored_vwap,
+                "anchor_ts": (self._volume.anchor_ts.isoformat()
+                              if self._volume.anchor_ts else None),
+                "delta": self._volume.delta,
+                "cum_delta": self._volume.cum_delta,
+                "spike": self._volume.spike,
+                "absorption": (None if self._volume.absorption is None else
+                               {"level": self._volume.absorption.level,
+                                "price": self._volume.absorption.price,
+                                "delta_sign": self._volume.absorption.delta_sign,
+                                "ts": self._volume.absorption.ts.isoformat()}),
+                "exhaustion": self._volume.exhaustion,
+            },
             "confluence": [{"kind": z.kind, "direction": z.direction,
                             "lo": z.lo, "hi": z.hi, "count": z.count,
                             "members": list(z.members),
@@ -265,15 +297,32 @@ class _StructurePipeline:
         }
 
 
+def _row_to_candle(r) -> Candle:
+    """Stored candle row -> normalized Candle (D19.2 seed reads)."""
+    return Candle(
+        symbol=r["symbol"], tf=r["tf"], ts=r["ts"],
+        o=float(r["o"]), h=float(r["h"]), l=float(r["l"]), c=float(r["c"]),
+        v=float(r["v"]), qv=float(r["qv"]),
+        n_trades=r["n_trades"], taker_buy_v=float(r["taker_buy_v"]),
+    )
+
+
 def _wire_structure_engines(bus: EventBus, store: StateStore,
-                            symbols, clock_provider=None) -> None:
+                            symbols, clock_provider=None,
+                            seed_candles=None) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
     clock_provider: live main() passes the D6 sampler surface for G1;
-    replay/tests leave it None (flagged pass, D16.2)."""
-    pipelines = {symbol: _StructurePipeline(symbol, store, clock_provider)
-                 for symbol in symbols}
+    replay/tests leave it None (flagged pass, D16.2).
+    seed_candles: dict symbol -> historical 1m candles for the D19.2
+    RVOL bucket seed (the 20 days preceding the stream start); None ->
+    unseeded (rvol warms from the stream)."""
+    pipelines = {
+        symbol: _StructurePipeline(
+            symbol, store, clock_provider,
+            volume_seed=(seed_candles or {}).get(symbol))
+        for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
         pipeline = pipelines.get(candle.symbol)
@@ -341,9 +390,23 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
 
     bus.subscribe(Candle, to_built)
     sampler = ClockOffsetSampler()                 # before wiring: G1 input
+    # D19.2 (owner-approved): seed the RVOL buckets from the 20 days
+    # preceding the stream start — composition owns the read, the engine
+    # stays database-unaware. Empty history -> unseeded warm-up.
+    seed_end = datetime.now(tz=timezone.utc).replace(second=0, microsecond=0)
+    seed_start = seed_end - timedelta(days=20)
+    seed_candles: dict[str, list[Candle]] = {}
+    async with pool.acquire() as conn:
+        for symbol in config.symbols:
+            rows = await db.select_candles(conn, symbol, "1m",
+                                           seed_start, seed_end)
+            seed_candles[symbol] = [_row_to_candle(r) for r in rows]
+            log.info("volume seed: %s — %d candles [%s .. %s)",
+                     symbol, len(rows), seed_start, seed_end)
     _wire_structure_engines(
         bus, store, config.symbols,
-        clock_provider=lambda: (sampler.offset_s, sampler.in_sync))
+        clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
+        seed_candles=seed_candles)
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
