@@ -122,3 +122,73 @@ class PivotLabeler:
             last, self._last_l = self._last_l, pivot.price
             name = None if last is None else ("HL" if pivot.price > last else "LL")
         return replace(pivot, label=name)
+
+
+class TrendState:
+    """Trend-state machine BULLISH/BEARISH/RANGE (roadmap P1.8; Decision D10).
+
+    Literal D10 transcription — memoryless classification, one evaluation
+    per closed candle AFTER that candle's pivot processing (cadence:
+    detector -> labeler -> on_pivot(each) -> update(candle); the just-closed
+    candle is part of the last-20 window at its own evaluation). Rules, in
+    the mandated order:
+
+        1. either chain missing/unlabeled            -> None (unknown)
+        2. band test (needs 20 closed candles):
+           >= 12 of the last 20 bodies inside
+           [min, max] of the last H/L pivot prices,
+           inclusive edges, wicks irrelevant         -> RANGE (wins ties)
+        3. labels HH and HL                          -> BULLISH
+        4. labels LH and LL                          -> BEARISH
+        5. otherwise (mixed labels)                  -> RANGE
+
+    Timeframe-generic: the class never reads symbol/tf; instances pair with
+    their stream by construction. No hysteresis — any state may follow any.
+    """
+
+    __slots__ = ("_last_h", "_last_l", "_bodies", "_state")
+
+    _WINDOW = 20
+    _INSIDE_MIN = 12          # D10: >= 60% of 20
+
+    def __init__(self) -> None:
+        self._last_h: Pivot | None = None
+        self._last_l: Pivot | None = None
+        self._bodies: deque[tuple[float, float]] = deque(maxlen=self._WINDOW)
+        self._state: str | None = None
+
+    @property
+    def state(self) -> str | None:
+        return self._state
+
+    def on_pivot(self, pivot: Pivot) -> None:
+        """Store the latest labeled pivot per kind (seeds included — their
+        prices define the band while their None labels hold rule 1)."""
+        if pivot.kind == "H":
+            self._last_h = pivot
+        else:
+            self._last_l = pivot
+
+    def update(self, candle: Candle) -> str | None:
+        """Classify for the just-closed candle (D10 rules 1-5, in order)."""
+        self._bodies.append((min(candle.o, candle.c), max(candle.o, candle.c)))
+        h, l = self._last_h, self._last_l
+        if h is None or l is None or h.label is None or l.label is None:
+            self._state = None
+        elif self._band_says_range(h.price, l.price):
+            self._state = "RANGE"
+        elif h.label == "HH" and l.label == "HL":
+            self._state = "BULLISH"
+        elif h.label == "LH" and l.label == "LL":
+            self._state = "BEARISH"
+        else:
+            self._state = "RANGE"
+        return self._state
+
+    def _band_says_range(self, h_price: float, l_price: float) -> bool:
+        if len(self._bodies) < self._WINDOW:
+            return False                     # band asleep until 20 candles
+        lo, hi = min(h_price, l_price), max(h_price, l_price)
+        inside = sum(
+            1 for b_lo, b_hi in self._bodies if b_lo >= lo and b_hi <= hi)
+        return inside >= self._INSIDE_MIN

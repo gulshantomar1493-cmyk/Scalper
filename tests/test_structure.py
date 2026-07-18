@@ -12,6 +12,7 @@ from marketscalper.engines.structure import (
     Pivot,
     PivotDetector,
     PivotLabeler,
+    TrendState,
     pivot_to_row,
 )
 from marketscalper.providers.base import Candle
@@ -251,6 +252,169 @@ async def test_labeled_pivot_persistence_round_trip(db_conn):
     await db.insert_pivot(db_conn, **pivot_to_row(labeled))
     rows = await db.select_pivots(db_conn, "BTCUSDT", "1m")
     assert [r["label"] for r in rows] == ["HH"]
+
+
+# -------------------------------------------------------- TrendState (P1.8)
+# Cadence contract (pinned): per closed candle — detector -> labeler ->
+# on_pivot(each labeled pivot) -> update(candle). The just-closed candle is
+# part of the last-20 window at its own evaluation.
+
+
+def _lp(kind, price, label, i=0, tf="1m"):
+    """A labeled pivot as the P1.6 labeler would emit it."""
+    ts = M0 + timedelta(minutes=i)
+    return Pivot("BTCUSDT", tf, ts, ts, kind, float(price), label)
+
+
+def _body_candle(o, c, i=0, tf="1m"):
+    """Candle with an exact body [min(o,c), max(o,c)]; wicks poke 0.5
+    beyond both body ends — proving wicks are irrelevant to the band."""
+    h, l = max(o, c) + 0.5, min(o, c) - 0.5
+    step = 5 if tf == "5m" else 1
+    return Candle(symbol="BTCUSDT", tf=tf, ts=M0 + timedelta(minutes=i * step),
+                  o=float(o), h=float(h), l=float(l), c=float(c),
+                  v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+
+
+def _bullish_machine():
+    """TrendState with labels HH/HL and band [100, 110]."""
+    tm = TrendState()
+    tm.on_pivot(_lp("H", 110, "HH"))
+    tm.on_pivot(_lp("L", 100, "HL"))
+    return tm
+
+
+def test_trend_warmup_ladder():
+    tm = TrendState()
+    assert tm.update(_body_candle(105, 106, 0)) is None      # no pivots
+    tm.on_pivot(_lp("H", 110, None, 1))                      # H seed
+    assert tm.update(_body_candle(105, 106, 1)) is None
+    tm.on_pivot(_lp("L", 100, None, 2))                      # L seed
+    assert tm.update(_body_candle(105, 106, 2)) is None
+    tm.on_pivot(_lp("H", 112, "HH", 3))                      # L still seed
+    assert tm.update(_body_candle(105, 106, 3)) is None
+    tm.on_pivot(_lp("L", 101, "HL", 4))                      # both labeled
+    assert tm.update(_body_candle(105, 106, 4)) == "BULLISH"
+
+
+def test_trend_bullish_with_bodies_outside_band():
+    tm = _bullish_machine()
+    for i in range(20):
+        state = tm.update(_body_candle(120, 121, i))         # outside [100,110]
+    assert state == "BULLISH"
+
+
+def test_trend_bearish_mirrored():
+    tm = TrendState()
+    tm.on_pivot(_lp("H", 110, "LH"))
+    tm.on_pivot(_lp("L", 100, "LL"))
+    for i in range(20):
+        state = tm.update(_body_candle(90, 89, i))           # outside band
+    assert state == "BEARISH"
+
+
+def test_trend_mixed_labels_are_range():
+    for h_label, l_label in (("HH", "LL"), ("LH", "HL")):
+        tm = TrendState()
+        tm.on_pivot(_lp("H", 110, h_label))
+        tm.on_pivot(_lp("L", 100, l_label))
+        assert tm.update(_body_candle(120, 121, 0)) == "RANGE"
+
+
+def test_trend_band_overrides_bullish_labels():
+    tm = _bullish_machine()
+    states = [tm.update(_body_candle(104, 105, i)) for i in range(20)]
+    assert states[18] == "BULLISH"                # band asleep at 19 candles
+    assert states[19] == "RANGE"                  # 20/20 inside -> override
+
+
+def test_trend_band_boundary_12_vs_11():
+    tm = _bullish_machine()                       # 12 inside + 8 outside
+    for i in range(12):
+        tm.update(_body_candle(104, 105, i))
+    for i in range(8):
+        state = tm.update(_body_candle(120, 121, 12 + i))
+    assert state == "RANGE"
+    tm = _bullish_machine()                       # 11 inside + 9 outside
+    for i in range(11):
+        tm.update(_body_candle(104, 105, i))
+    for i in range(9):
+        state = tm.update(_body_candle(120, 121, 11 + i))
+    assert state == "BULLISH"
+
+
+def test_trend_band_edges_inclusive():
+    tm = _bullish_machine()                       # 11 clearly inside...
+    for i in range(11):
+        tm.update(_body_candle(104, 105, i))
+    tm.update(_body_candle(100, 110, 11))         # ...12th spans band exactly
+    for i in range(8):
+        state = tm.update(_body_candle(120, 121, 12 + i))
+    assert state == "RANGE"
+
+
+def test_trend_doji_on_edge_counts_inside():
+    tm = _bullish_machine()
+    for i in range(11):
+        tm.update(_body_candle(104, 105, i))
+    tm.update(_body_candle(110, 110, 11))         # doji exactly on band_hi
+    for i in range(8):
+        state = tm.update(_body_candle(120, 121, 12 + i))
+    assert state == "RANGE"
+
+
+def test_trend_band_normalized_when_pivots_crossed():
+    tm = TrendState()
+    tm.on_pivot(_lp("H", 100, "LH"))              # H price BELOW L price
+    tm.on_pivot(_lp("L", 110, "LL"))
+    for i in range(20):
+        state = tm.update(_body_candle(104, 105, i))   # inside [100,110]
+    assert state == "RANGE"                       # min/max normalization
+
+
+def test_trend_memoryless_flips_without_stickiness():
+    tm = _bullish_machine()
+    for i in range(20):
+        tm.update(_body_candle(104, 105, i))
+    assert tm.state == "RANGE"
+    for i in range(9):                            # 9 outside -> 11/20 inside
+        tm.update(_body_candle(120, 121, 20 + i))
+    assert tm.state == "BULLISH"                  # flips straight back
+
+
+def test_trend_timeframe_generic_on_5m():
+    tm = TrendState()
+    tm.on_pivot(_lp("H", 110, "HH", tf="5m"))
+    tm.on_pivot(_lp("L", 100, "HL", tf="5m"))
+    states = [tm.update(_body_candle(104, 105, i, tf="5m")) for i in range(20)]
+    assert states[18] == "BULLISH" and states[19] == "RANGE"
+
+
+def test_trend_determinism_same_feed_twice():
+    def run():
+        tm = _bullish_machine()
+        out = [tm.update(_body_candle(104 + (i % 3), 105, i)) for i in range(25)]
+        tm.on_pivot(_lp("L", 108, "LL", 30))
+        out.append(tm.update(_body_candle(120, 121, 30)))
+        return out
+    assert run() == run()
+
+
+def test_trend_end_to_end_detector_labeler_machine():
+    # highs 10,11,12,15,12,11,10,11,12,14,12,11,10,9,8,9,10,11,12 (lows h-1):
+    #   H 15 @ idx3 (upd 7, seed) · L 9 @ idx6 (upd 10, seed)
+    #   H 14 @ idx9 (upd 13, LH)  · L 7 @ idx14 (upd 18, LL)
+    # -> None until update 18, then BEARISH (band asleep: < 20 candles).
+    highs = [10, 11, 12, 15, 12, 11, 10, 11, 12, 14, 12, 11, 10, 9, 8, 9, 10, 11, 12]
+    d, lab, tm = PivotDetector("BTCUSDT", "1m"), PivotLabeler(), TrendState()
+    states = []
+    for i, h in enumerate(highs):
+        candle = _candle(h, h - 1, i)
+        for p in d.update(candle):
+            tm.on_pivot(lab.label(p))
+        states.append(tm.update(candle))
+    assert states[:17] == [None] * 17
+    assert states[17] == "BEARISH" and states[18] == "BEARISH"
 
 
 # -------------------------------------------------------------- persistence
