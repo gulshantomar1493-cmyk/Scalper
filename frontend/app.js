@@ -57,6 +57,7 @@ function makeChart(el) {
 const mainChart = makeChart(document.getElementById("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
 Overlays.init(mainChart, mainSeries);            // P1.19 overlays + P1.20 audit
+Panel.init();                                    // P3.19 quality panel
 const lastStructure = {};                        // latest payload per symbol
 
 const stripChart = makeChart(document.getElementById("strip"));
@@ -109,6 +110,7 @@ function setSymbol(symbol) {
   }
   loadHistory(symbol);
   Overlays.setStructure(lastStructure[symbol]);  // redraw from cached payload
+  Panel.setStructure(lastStructure[symbol]);     // P3.19 panel follows symbol
 }
 
 for (const s of SYMBOLS) {
@@ -132,6 +134,7 @@ function enterReplayMode() {
   stripSeries.setData([]);
   delete lastStructure[activeSymbol];
   Overlays.setStructure(null);
+  Panel.setStructure(null);                  // P3.19: clear the panel too
   if (replayPoll) clearInterval(replayPoll);
   replayPoll = setInterval(async () => {
     try {
@@ -236,6 +239,7 @@ function connect() {
       // P2.21: pass the already-available close through — transport
       // only, no calculation; Overlays uses it for premium/discount.
       Overlays.setStructure(diff[activeSymbol].structure, candle.c);
+      Panel.setStructure(diff[activeSymbol].structure);   // P3.19
     }
   };
 

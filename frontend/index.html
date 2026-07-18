@@ -50,13 +50,57 @@
     <span id="audit-tally">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
   </div>
 
-  <main id="chart-wrap">
-    <div id="chart"></div>
-    <div id="strip-wrap">
-      <span class="strip-label mono">5m context</span>
-      <div id="strip"></div>
-    </div>
-  </main>
+  <div id="workspace">
+    <main id="chart-wrap">
+      <div id="chart"></div>
+      <div id="strip-wrap">
+        <span class="strip-label mono">5m context</span>
+        <div id="strip"></div>
+      </div>
+    </main>
+
+    <!-- Quality panel (P3.19; §9 right rail) — pure render of the payload's
+         qualification / signals / recommendations. No engine math here. -->
+    <aside id="quality-panel" class="empty">
+      <section class="panel-section gauge-section">
+        <div class="gauge-wrap">
+          <svg class="gauge-svg" viewBox="0 0 120 120" aria-hidden="true">
+            <circle class="gauge-track" cx="60" cy="60" r="52" />
+            <circle id="gauge-arc" class="gauge-arc" cx="60" cy="60" r="52" />
+          </svg>
+          <div class="gauge-center">
+            <span id="gauge-score" class="mono">—</span>
+            <span class="gauge-scale">/100</span>
+          </div>
+        </div>
+        <div id="gauge-verdict" class="gauge-verdict">—</div>
+        <div class="gauge-meta">
+          <span id="gauge-integrity" class="gauge-integrity">—</span>
+          <span id="gauge-agreement" class="mono"></span>
+        </div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel-title">Hard gates</h2>
+        <div id="panel-gates"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel-title">Signal agreement</h2>
+        <div id="panel-components"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel-title">Trade plan</h2>
+        <div id="panel-plan"></div>
+      </section>
+
+      <section class="panel-section">
+        <h2 class="panel-title">Reason trace</h2>
+        <div id="panel-reasons"></div>
+      </section>
+    </aside>
+  </div>
 
   <footer class="statusbar mono">
     <span id="ws-target"></span>
@@ -64,6 +108,7 @@
   </footer>
 
   <script src="overlays.js"></script>
+  <script src="panel.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

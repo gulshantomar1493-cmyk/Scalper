@@ -22,7 +22,8 @@ def _read(name: str) -> str:
 
 
 def test_shell_files_exist():
-    for name in ("index.html", "styles.css", "app.js", "overlays.js"):
+    for name in ("index.html", "styles.css", "app.js", "overlays.js",
+                 "panel.js"):
         assert (FRONTEND / name).is_file(), name
 
 
@@ -273,3 +274,100 @@ def test_overlays_js_is_still_a_pure_consumer_p222():
                    "tolerance", "fetch(", "WebSocket"):
         assert banned not in js, banned
     assert "localStorage" not in js and "sessionStorage" not in js
+
+
+# ---------------------------------------------------------------- P3.19
+
+
+def test_index_wires_quality_panel_and_panel_js():
+    html = _read("index.html")
+    assert 'src="panel.js"' in html
+    assert html.index("panel.js") < html.index('src="app.js"')   # load order
+    assert 'id="quality-panel"' in html
+    assert 'id="workspace"' in html                              # §9 chart+panel row
+    for slot in ("gauge-arc", "gauge-score", "gauge-verdict",
+                 "gauge-integrity", "gauge-agreement", "panel-gates",
+                 "panel-components", "panel-plan", "panel-reasons"):
+        assert f'id="{slot}"' in html, slot
+
+
+def test_panel_js_is_pure_consumer():
+    js = _read("panel.js")
+    # same frozen no-engine-math contract as overlays.js
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert "localStorage" not in js and "sessionStorage" not in js
+    # renders backend values only, from the frozen payload keys
+    assert "structure.qualification" in js
+    assert "structure.recommendations" in js
+    assert "structure.signals" in js
+    # XSS-safe: backend strings go through textContent, never an innerHTML
+    # assignment (the word may appear in a comment; the sink must not)
+    assert ".innerHTML" not in js
+    assert "textContent" in js
+
+
+def test_panel_js_renders_gauge_gates_components_plan_reasons():
+    js = _read("panel.js")
+    assert "renderGauge" in js and "renderGates" in js
+    assert "renderComponents" in js and "renderPlan" in js
+    assert "renderReasons" in js
+    # the six gates and four weighted components, by their frozen names
+    assert '"G1", "G2", "G3", "G4", "G5", "G6"' in js
+    for key in ("structure", "liquidity", "volume", "momentum"):
+        assert f'key: "{key}"' in js
+    # the §6 frozen weights appear as display labels
+    for w in ('weight: "0.30"', 'weight: "0.25"', 'weight: "0.15"'):
+        assert w in js
+    # plan rail reads the §7 recommendation fields
+    for f in ("r.entry", "r.sl", "r.tp1", "r.tp2", "r.qty",
+              "r.net_rr_tp1", "r.guidance"):
+        assert f in js
+    # decision-support discipline: the plan is display-only
+    assert "manually on your exchange" in js
+
+
+def test_panel_js_handles_gate_fail_and_flagged():
+    js = _read("panel.js")
+    assert "g.passed" in js and "g.flagged" in js
+    assert '"prov"' in js                                # provisional flag chip
+    # verdict/integrity are backend-driven display states
+    assert "VERDICT_CLASS" in js
+    assert '"PASS"' in js                                # data-integrity badge
+    # a null score (gate fail) renders the em-dash, not a fabricated 0
+    assert 'typeof q.score === "number"' in js
+
+
+def test_app_js_dispatches_structure_to_panel():
+    js = _read("app.js")
+    assert "Panel.init()" in js
+    assert "Panel.setStructure" in js
+    # panel follows the same cache/dispatch as overlays; no new fetch/WS
+    assert js.count("Panel.setStructure") >= 2          # WS message + symbol switch
+
+
+def test_app_js_setdata_count_unchanged_by_panel():
+    """The panel adds no chart data paths — the P0.23/F2 setData budget
+    is exactly as before (bootstrap ×2 + replay-clear ×2)."""
+    js = _read("app.js")
+    assert js.count(".setData(") == 4
+    assert js.count("addSeries(") == 2
+
+
+def test_css_carries_quality_panel_tokens():
+    css = _read("styles.css")
+    assert "#quality-panel" in css
+    assert "--warn:" in css                              # DEGRADED / provisional
+    assert ".gauge-arc" in css and ".comp-fill" in css
+    # panel reuses the locked tokens (no new hard-coded surface colors)
+    assert "var(--accent)" in css and "var(--hairline)" in css
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_panel_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "panel.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
