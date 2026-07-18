@@ -351,6 +351,60 @@ body {
 .eval-outcome.tp { color: var(--up); }
 .eval-outcome.stop { color: var(--down); }
 .eval-r { margin-left: auto; }
+
+/* P4.7 manual quick-log form */
+.quicklog {
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--hairline);
+}
+.quicklog-head {
+  font-size: 10px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-dim);
+  margin-bottom: 8px;
+}
+.ql-row { display: flex; gap: 6px; margin-bottom: 6px; }
+.ql-toggle, .ql-result {
+  flex: 1;
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 5px 0;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ql-toggle.on { color: var(--accent); border-color: var(--accent); }
+.ql-result.on.r-win { color: var(--up); border-color: var(--up); }
+.ql-result.on.r-loss { color: var(--down); border-color: var(--down); }
+.ql-result.on.r-be { color: var(--text); border-color: var(--text); }
+.ql-field { margin-bottom: 6px; }
+.ql-input {
+  width: 100%;
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 11px;
+}
+.ql-input::placeholder { color: var(--text-dim); }
+.ql-foot { display: flex; align-items: center; gap: 10px; margin-top: 4px; }
+.ql-submit {
+  background: transparent;
+  color: var(--accent);
+  border: 1px solid var(--accent);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 5px 12px;
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+.ql-status { font-size: 11px; color: var(--text-dim); }
 .rail-row { display: flex; justify-content: space-between; padding: 2px 0; font-size: 12px; }
 .rail-label { color: var(--text-dim); }
 .rail-value { color: var(--text); }

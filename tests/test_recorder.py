@@ -193,6 +193,22 @@ def test_build_reason_text_is_deterministic_rule_trace():
     assert "Net RR" in a                            # §7 risk line
 
 
+async def test_recorder_writes_rec_id_back_onto_the_shared_dict(db_conn):
+    """P4.7: after insert, the DB row id is written onto the rec dict (the
+    same object the payload deque holds), so the next payload carries it
+    for the quick-log form. Replay/tests without a recorder leave it None."""
+    pipe = _pipeline()
+    signal = _signal()
+    qual = _qual()
+    plan, rec = pipe._admit(signal, qual)
+    assert rec["id"] is None                        # _admit seeds the key
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    await recorder.record("BTCUSDT", [(signal, qual, plan, rec)], None)
+    row_id = await db_conn.fetchval(
+        "SELECT id FROM recommendations ORDER BY id DESC LIMIT 1")
+    assert rec["id"] == row_id                      # written back onto rec
+
+
 async def test_recorder_seeds_journal_auto_context(db_conn):
     """P4.6: every admitted recommendation seeds a journal row with the §8
     rule-trace; A17 — no PNG dependency, psychology (rule_violations) P4.9;

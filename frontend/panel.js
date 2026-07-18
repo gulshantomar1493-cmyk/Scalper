@@ -42,7 +42,11 @@ const Panel = (function () {
   };
   const INVALID_AFTER_DEFAULT = 5;
 
-  function init() {
+  let onQuickLog = null;       // app.js-provided PATCH callback (P4.7)
+  let lastPlanKey = null;      // rec identity+status last fully rendered
+
+  function init(quickLogSubmit) {
+    onQuickLog = quickLogSubmit || null;   // keeps the fetch out of panel.js
     el = {
       panel: document.getElementById("quality-panel"),
       arc: document.getElementById("gauge-arc"),
@@ -184,13 +188,26 @@ const Panel = (function () {
   }
 
   function renderPlan(recommendations) {
-    clear(el.plan);
     if (!recommendations.length) {
+      lastPlanKey = null;
+      clear(el.plan);
       el.plan.appendChild(elem("div", "plan-empty",
         "No active plan — no recommendation at threshold."));
       return;
     }
     const r = recommendations[recommendations.length - 1];  // most recent
+    // Rebuild the card only when the recommendation identity or status
+    // changes — otherwise a live tick would wipe a half-filled quick-log
+    // form every bar. On an unchanged card, only the timer text refreshes.
+    const key = (r.id != null ? r.id : r.created_ts) + "|" + (r.status || "");
+    if (key === lastPlanKey) {
+      const t = el.plan.querySelector(".plan-timer");
+      const text = invalidationTimer(r, r.status || "active");
+      if (t && text) t.textContent = text;
+      return;
+    }
+    lastPlanKey = key;
+    clear(el.plan);
     const head = elem("div", "plan-head");
     head.appendChild(elem("span", "plan-strategy", r.strategy || "—"));
     head.appendChild(elem("span",
@@ -240,6 +257,95 @@ const Panel = (function () {
     }
     el.plan.appendChild(elem("div", "plan-disclaimer",
       "Display only — you place any order manually on your exchange."));
+
+    // P4.7 quick-log — only when the row id is known (live) and a submit
+    // callback is wired (app.js owns the network; panel.js never fetches)
+    if (r.id != null && onQuickLog) el.plan.appendChild(quickLogForm(r));
+  }
+
+  // The one-tap manual journal form (§8: Taken/Skipped, Win/Loss/BE,
+  // actual entry/exit, notes, tags). It PATCHes /journal/{id} via the
+  // app.js-provided callback; panel.js only builds inputs + reads them.
+  function quickLogForm(r) {
+    const form = elem("div", "quicklog");
+    form.appendChild(elem("div", "quicklog-head", "Quick log"));
+    const state = { taken: null, result: null };
+
+    const takenRow = elem("div", "ql-row");
+    const takenBtns = {};
+    for (const [label, val] of [["Taken", true], ["Skipped", false]]) {
+      const b = elem("button", "ql-toggle", label);
+      b.type = "button";
+      b.onclick = () => {
+        state.taken = val;
+        for (const k in takenBtns) takenBtns[k].classList.toggle(
+          "on", takenBtns[k] === b);
+        resultRow.style.display = val ? "flex" : "none";
+      };
+      takenBtns[label] = b;
+      takenRow.appendChild(b);
+    }
+    form.appendChild(takenRow);
+
+    const resultRow = elem("div", "ql-row");
+    resultRow.style.display = "none";
+    const resultBtns = {};
+    for (const val of ["win", "loss", "be"]) {
+      const b = elem("button", "ql-result r-" + val, val.toUpperCase());
+      b.type = "button";
+      b.onclick = () => {
+        state.result = val;
+        for (const k in resultBtns) resultBtns[k].classList.toggle(
+          "on", resultBtns[k] === b);
+      };
+      resultBtns[val] = b;
+      resultRow.appendChild(b);
+    }
+    form.appendChild(resultRow);
+
+    const entryIn = qlInput(form, "Actual entry", "number");
+    const exitIn = qlInput(form, "Actual exit", "number");
+    const notesIn = qlInput(form, "Notes", "text");
+    const tagsIn = qlInput(form, "Tags (comma-separated)", "text");
+
+    const submit = elem("button", "ql-submit", "Log outcome");
+    submit.type = "button";
+    const status = elem("span", "ql-status", "");
+    submit.onclick = async () => {
+      const fields = { taken: state.taken };
+      if (state.taken && state.result) fields.result = state.result;
+      if (entryIn.value !== "") fields.actual_entry = Number(entryIn.value);
+      if (exitIn.value !== "") fields.actual_exit = Number(exitIn.value);
+      if (notesIn.value !== "") fields.notes = notesIn.value;
+      if (tagsIn.value.trim() !== "") {
+        fields.tags = tagsIn.value.split(",").map((t) => t.trim())
+          .filter((t) => t);
+      }
+      status.textContent = "saving…";
+      try {
+        await onQuickLog(r.id, fields);
+        status.textContent = "logged ✓";
+      } catch (err) {
+        status.textContent = "error — retry";
+      }
+    };
+    const foot = elem("div", "ql-foot");
+    foot.appendChild(submit);
+    foot.appendChild(status);
+    form.appendChild(foot);
+    return form;
+  }
+
+  function qlInput(form, placeholder, type) {
+    const row = elem("div", "ql-field");
+    const input = document.createElement("input");
+    input.type = type;
+    input.placeholder = placeholder;
+    input.className = "ql-input mono";
+    if (type === "number") input.step = "any";
+    row.appendChild(input);
+    form.appendChild(row);
+    return input;
   }
 
   // Display-only countdown: candles remaining in the entry window. The

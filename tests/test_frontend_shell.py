@@ -341,7 +341,7 @@ def test_panel_js_handles_gate_fail_and_flagged():
 
 def test_app_js_dispatches_structure_to_panel():
     js = _read("app.js")
-    assert "Panel.init()" in js
+    assert "Panel.init(quickLogSubmit)" in js            # P4.7 callback wired
     assert "Panel.setStructure" in js
     # panel follows the same cache/dispatch as overlays; no new fetch/WS
     assert js.count("Panel.setStructure") >= 2          # WS message + symbol switch
@@ -414,3 +414,47 @@ def test_css_carries_recommendation_status_tokens():
     css = _read("styles.css")
     assert ".plan-status" in css and ".plan-timer" in css and ".plan-eval" in css
     assert ".st-active" in css and ".st-evaluated" in css
+
+
+# ---------------------------------------------------------------- P4.7
+
+
+def test_panel_js_renders_quicklog_form_pure():
+    js = _read("panel.js")
+    assert "function quickLogForm" in js
+    # §8 manual fields
+    assert '"Taken"' in js and '"Skipped"' in js
+    for val in ('"win"', '"loss"', '"be"'):
+        assert val in js
+    assert "Actual entry" in js and "Actual exit" in js
+    assert "Notes" in js and "Tags" in js
+    # submit routes through the app.js-provided callback (no fetch here)
+    assert "onQuickLog" in js
+    assert "onQuickLog(r.id" in js
+    # gated on a known row id (live-only) — replay has no id, no form
+    assert "r.id != null && onQuickLog" in js
+    # still a pure consumer: the network stays out of panel.js
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest"):
+        assert banned not in js, banned
+
+
+def test_panel_js_card_not_rebuilt_every_bar():
+    """The quick-log form must survive live ticks — the card rebuilds only
+    when the recommendation identity/status changes (lastPlanKey guard)."""
+    js = _read("panel.js")
+    assert "lastPlanKey" in js
+    assert "key === lastPlanKey" in js                  # skip full rebuild
+    assert ".plan-timer" in js                          # timer-only refresh
+
+
+def test_app_js_quicklog_submit_patches_journal():
+    js = _read("app.js")
+    assert "async function quickLogSubmit(recId, fields)" in js
+    assert "/journal/${recId}" in js
+    assert 'method: "PATCH"' in js
+
+
+def test_css_carries_quicklog_tokens():
+    css = _read("styles.css")
+    assert ".quicklog" in css and ".ql-toggle" in css and ".ql-result" in css
+    assert ".ql-submit" in css

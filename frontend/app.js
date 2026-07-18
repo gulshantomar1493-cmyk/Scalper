@@ -57,7 +57,7 @@ function makeChart(el) {
 const mainChart = makeChart(document.getElementById("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
 Overlays.init(mainChart, mainSeries);            // P1.19 overlays + P1.20 audit
-Panel.init();                                    // P3.19 quality panel
+Panel.init(quickLogSubmit);                      // P3.19 panel + P4.7 quick-log
 const lastStructure = {};                        // latest payload per symbol
 
 const stripChart = makeChart(document.getElementById("strip"));
@@ -160,6 +160,15 @@ async function replayCall(path, options) {
   const body = await resp.json().catch(() => ({}));
   if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
   return body;
+}
+
+/* P4.7: the manual quick-log PATCH. panel.js renders the form and calls
+ * this (the network stays in app.js so panel.js is a pure consumer). */
+async function quickLogSubmit(recId, fields) {
+  return replayCall(`/journal/${recId}`, {
+    method: "PATCH",
+    body: JSON.stringify(fields),
+  });
 }
 
 document.getElementById("replay-start").addEventListener("click", async () => {

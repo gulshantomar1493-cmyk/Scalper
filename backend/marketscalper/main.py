@@ -270,6 +270,7 @@ class _StructurePipeline:
                 or plan.status != "suggested" or not plan.rr_floor_ok):
             return plan, None                      # signal row only (D21.2)
         rec = {
+            "id": None,                            # P4.7: the recorder fills
             "strategy": signal.strategy, "direction": signal.direction,
             "created_ts": signal.created_ts.isoformat(),
             "entry": plan.entry, "sl": plan.sl,

@@ -125,6 +125,12 @@ class SignalRecorder:
                             net_rr_tp1=plan.net_rr_tp1,
                         )
                         self.recommendations_written += 1
+                        # P4.7: write the DB row id back onto the shared rec
+                        # dict so the NEXT payload carries it (the deque
+                        # holds this same object) — the quick-log form needs
+                        # it to target /journal/{id}. Live-only; replay never
+                        # sets it (no recorder), so the form is disabled there.
+                        rec["id"] = rec_id
                         # remember the row id for the P4.5 lifecycle writes,
                         # keyed by the UNIQUE rec identity (created_ts alone
                         # is not unique — S1/S2/S3 can admit on one bar)
