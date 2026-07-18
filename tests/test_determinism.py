@@ -118,12 +118,15 @@ def test_hash_is_sensitive_to_any_stream_difference():
     assert stream_hash(truncated) != stream_hash(base)
 
 
-# ------------------------------------------------- harness v1 (roadmap P1.21)
+# ------------------------- harness v2 (roadmap P1.21 -> P2.23: all objects)
 # Grown per Part D note 4: the object stream — every engine payload the
 # composition publishes (pivots+labels, trend, BOS/CHOCH, trendlines,
-# channels, liquidity pools/levels/sweeps) — must be byte-identical across a
-# double replay. The stream is the composition's own JSON payload,
-# canonicalized with sorted keys.
+# channels, liquidity pools/levels/sweeps/shifts, order blocks/breakers,
+# FVGs, confluence, qualification, volume) — must be byte-identical across
+# a double replay. The stream is the composition's own JSON payload,
+# canonicalized with sorted keys. Two datasets: V1 (session-crossing +
+# flip-tail) and V2 (the P2.24-A gate episodes, which fire the object
+# families V1 cannot: CHOCH, sweep+shift, breakers, channels).
 
 import json  # noqa: E402
 
@@ -178,12 +181,13 @@ V1_DATASET = [_v1_candle("BTCUSDT", m, 100.0) for m in range(V1_MINUTES)] + \
 V1_RANGE = (V1_M0, V1_M0 + timedelta(minutes=V1_MINUTES))
 
 
-async def _replay_object_stream_once(db_conn) -> list[str]:
+async def _replay_object_stream_once(db_conn, replay_range=None) -> list[str]:
     """Replay through the REAL composition pipelines; canonicalize every
     published structure payload (per symbol, per closed candle)."""
     from marketscalper.core.state import StateStore
     from marketscalper.main import _wire_structure_engines
 
+    start, end = replay_range or V1_RANGE
     bus = EventBus()
     store = StateStore(bus)
     _wire_structure_engines(bus, store, ["BTCUSDT", "ETHUSDT"])
@@ -197,7 +201,7 @@ async def _replay_object_stream_once(db_conn) -> list[str]:
 
     bus.subscribe(Candle, collect)
     feed = ReplayFeed(["BTCUSDT", "ETHUSDT"], bus, TxPool(db_conn),
-                      V1_RANGE[0], V1_RANGE[1], speed="max")
+                      start, end, speed="max")
     await feed.start()
     for _ in range(500):
         if feed._task is not None and feed._task.done():
@@ -234,6 +238,37 @@ async def test_v1_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"verdict": "NO_SIGNAL"' in joined       # G1 warming era...
     assert '"verdict": "BELOW_THRESHOLD"' in joined  # ...and scored era
     assert 'rules aligned"' in joined               # A14 display string
+    assert '"trendlines": [{' in joined             # kept lines in the hash
+    assert '"sweeps": [{' in joined                 # sweep events in the hash
+    h1 = hashlib.sha256(joined.encode()).hexdigest()
+    h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
+    assert h1 == h2                                 # §10, non-negotiable
+
+
+async def test_v2_object_stream_byte_identical_across_double_replay(db_conn):
+    """P2.23: the object families V1 cannot fire — CHOCH, sweep+shift,
+    breakers, channels — carried with real content in the hashed stream,
+    byte-identical across a double replay (the gate-episode dataset)."""
+    from gate_dataset import GATE_M0, gate_candles
+
+    v2 = (gate_candles(6, "BTCUSDT", 100.0) +
+          gate_candles(6, "ETHUSDT", 3500.0))
+    await db.insert_candles(
+        db_conn,
+        [(c.symbol, c.tf, c.ts, c.o, c.h, c.l, c.c, c.v, c.qv,
+          c.n_trades, c.taker_buy_v) for c in v2],
+    )
+    v2_range = (GATE_M0, GATE_M0 + timedelta(minutes=len(v2) // 2))
+    first = await _replay_object_stream_once(db_conn, v2_range)
+    second = await _replay_object_stream_once(db_conn, v2_range)
+    assert len(first) >= len(v2)                    # every close published
+    joined = "\n".join(first)
+    assert '"choch": [{' in joined                  # CHOCH events hashed
+    assert '"shifts": [{' in joined                 # sweep+shift hashed
+    assert '"breakers": [{' in joined               # breaker zones hashed
+    assert '"channels": [{' in joined               # channels hashed
+    assert '"trend": "BEARISH"' in joined           # full trend vocabulary...
+    assert '"trend": "BULLISH"' in joined
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable
