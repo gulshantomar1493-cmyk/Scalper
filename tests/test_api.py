@@ -21,7 +21,7 @@ from marketscalper.api.app import create_app
 from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.state import StateStore
-from marketscalper.providers.base import Trade
+from marketscalper.providers.base import Candle, Trade
 from marketscalper.providers.replay import ReplayFeed
 
 UTC = timezone.utc
@@ -275,6 +275,31 @@ async def test_replay_speeds_endpoint(db_conn):
         async with aiohttp.ClientSession() as s:
             async with s.get(f"http://{addr}/replay/speeds", headers=AUTH) as r:
                 assert await r.json() == {"speeds": [1, 10, 60, "max"]}
+    finally:
+        await _stop(server, task)
+
+
+async def test_ws_carries_structure_payload_verbatim():
+    """P1.19: engine-state dicts written via set_structure ride the same
+    WS diff, JSON-verbatim, next to the candle fields."""
+    bus, store, app = _pipeline()
+    server, task, addr = await _serve(app)
+    try:
+        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
+            payload = {"trend": "BULLISH", "pivots": [
+                {"ts": M0.isoformat(), "kind": "H", "price": 67230.0,
+                 "label": "HH"}], "trendlines": [], "channels": []}
+            store.set_structure("BTCUSDT", payload)        # composition order:
+            candle = Candle(symbol="BTCUSDT", tf="1m", ts=M0,  # before close
+                            o=67200.0, h=67230.0, l=67190.0, c=67215.0,
+                            v=2.0, qv=134430.0, n_trades=10, taker_buy_v=1.5)
+            await bus.publish(candle)
+            import json
+            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+        assert msg["candle"]["symbol"] == "BTCUSDT"
+        diff = msg["state_diff"]["BTCUSDT"]
+        assert diff["structure"] == payload                # verbatim JSON
+        assert diff["last_candle_1m"]["c"] == 67215.0      # candles unaffected
     finally:
         await _stop(server, task)
 

@@ -34,6 +34,10 @@ class SymbolState:
 
     last_candle_1m: Candle | None = None
     last_candle_5m: Candle | None = None
+    # P1.19: JSON-ready structure/trendline payload written by the engine
+    # composition (main.py) once per closed 1m candle. The store never
+    # inspects it — engines own the content, the store owns the diffing.
+    structure: dict | None = None
 
 
 class StateStore:
@@ -53,6 +57,13 @@ class StateStore:
         state = self._states.setdefault(candle.symbol, SymbolState())
         setattr(state, field, candle)
         self._pending.setdefault(candle.symbol, {})[field] = candle
+
+    def set_structure(self, symbol: str, payload: dict) -> None:
+        """Engine-state write path (P1.19): the composition publishes the
+        structure payload; it rides the existing diff mechanism unchanged."""
+        state = self._states.setdefault(symbol, SymbolState())
+        state.structure = payload
+        self._pending.setdefault(symbol, {})["structure"] = payload
 
     def snapshot(self, symbol: str) -> SymbolState | None:
         """Full current state for one symbol (a copy), or None if never seen."""

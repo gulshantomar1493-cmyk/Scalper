@@ -56,6 +56,8 @@ function makeChart(el) {
 
 const mainChart = makeChart(document.getElementById("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
+Overlays.init(mainChart, mainSeries);            // P1.19 overlays + P1.20 audit
+const lastStructure = {};                        // latest payload per symbol
 
 const stripChart = makeChart(document.getElementById("strip"));
 const stripSeries = stripChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
@@ -106,6 +108,7 @@ function setSymbol(symbol) {
     document.getElementById(`sym-${s}`).classList.toggle("active", s === symbol);
   }
   loadHistory(symbol);
+  Overlays.setStructure(lastStructure[symbol]);  // redraw from cached payload
 }
 
 for (const s of SYMBOLS) {
@@ -184,10 +187,18 @@ function connect() {
 
   ws.onmessage = (event) => {
     lastEvent.textContent = `last event: ${new Date().toISOString()}`;
-    const candle = JSON.parse(event.data).candle;
+    const msg = JSON.parse(event.data);
+    const diff = msg.state_diff || {};
+    for (const sym of Object.keys(diff)) {               // cache engine state
+      if (diff[sym].structure) lastStructure[sym] = diff[sym].structure;
+    }
+    const candle = msg.candle;
     if (candle.symbol !== activeSymbol) return;          // client-side filter only
     if (candle.tf === "1m") mainSeries.update(toBar(candle));   // diff-only (§9)
     else if (candle.tf === "5m") stripSeries.update(toBar(candle));
+    if (diff[activeSymbol] && diff[activeSymbol].structure) {
+      Overlays.setStructure(diff[activeSymbol].structure);
+    }
   };
 
   ws.onclose = () => {

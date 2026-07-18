@@ -96,6 +96,33 @@ async def test_unknown_tf_is_ignored(caplog):
     assert any("unknown tf" in r.message for r in caplog.records)
 
 
+# ------------------------------------------------- P1.19 structure payload
+
+
+async def test_set_structure_rides_snapshot_and_diff():
+    bus, store = _rig()
+    c = _candle()
+    await bus.publish(c)
+    payload = {"trend": "BULLISH", "pivots": [], "trendlines": []}
+    store.set_structure("BTCUSDT", payload)
+    assert store.snapshot("BTCUSDT").structure == payload
+    diff = store.diff()
+    assert diff == {"BTCUSDT": {"last_candle_1m": c, "structure": payload}}
+    assert store.diff() == {}                              # consumed
+
+
+async def test_set_structure_collapses_and_isolates_symbols():
+    bus, store = _rig()
+    store.set_structure("BTCUSDT", {"trend": None})
+    store.set_structure("BTCUSDT", {"trend": "RANGE"})     # collapses to latest
+    store.set_structure("ETHUSDT", {"trend": "BEARISH"})
+    diff = store.diff()
+    assert diff["BTCUSDT"] == {"structure": {"trend": "RANGE"}}
+    assert diff["ETHUSDT"] == {"structure": {"trend": "BEARISH"}}
+    assert store.snapshot("ETHUSDT").structure == {"trend": "BEARISH"}
+    assert store.snapshot("ETHUSDT").last_candle_1m is None  # candle-free write
+
+
 async def test_deterministic_same_sequence_same_diff_stream():
     seq = [
         _candle(ts=M0, o=100.0),

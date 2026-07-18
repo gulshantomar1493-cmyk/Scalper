@@ -22,7 +22,7 @@ def _read(name: str) -> str:
 
 
 def test_shell_files_exist():
-    for name in ("index.html", "styles.css", "app.js"):
+    for name in ("index.html", "styles.css", "app.js", "overlays.js"):
         assert (FRONTEND / name).is_file(), name
 
 
@@ -94,6 +94,48 @@ def test_app_js_live_chart_contract():
 def test_app_js_is_valid_javascript():
     result = subprocess.run(
         ["node", "--check", str(FRONTEND / "app.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------------ P1.19 overlays + P1.20 audit
+
+
+def test_index_wires_overlays_and_audit_controls():
+    html = _read("index.html")
+    assert 'src="overlays.js"' in html
+    assert html.index("overlays.js") < html.index('src="app.js"')  # load order
+    for control in ("audit-pick", "audit-accept", "audit-reject", "audit-tally"):
+        assert f'id="{control}"' in html                   # P1.20 tool
+    assert 'id="trend-state"' in html                      # engine trend readout
+
+
+def test_overlays_js_is_pure_consumer():
+    js = _read("overlays.js")
+    assert "attachPrimitive" in js                         # LWC v5 primitive API
+    assert "createSeriesMarkers" in js                     # LWC v5 markers API
+    assert "timeToCoordinate" in js and "priceToCoordinate" in js
+    # pure consumer: renders backend-projected endpoints, no engine math
+    for banned in ("Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", "fetch(", "WebSocket"):
+        assert banned not in js, banned
+    assert "Math.random" in js                             # audit pick (UI-only)
+    assert "localStorage" not in js and "sessionStorage" not in js
+
+
+def test_app_js_dispatches_structure_to_overlays():
+    js = _read("app.js")
+    assert "Overlays.init(mainChart, mainSeries)" in js
+    assert "Overlays.setStructure" in js
+    assert "lastStructure" in js                           # per-symbol cache only
+    assert "state_diff" in js
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_overlays_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "overlays.js")],
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr

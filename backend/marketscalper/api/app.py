@@ -61,8 +61,13 @@ def _candle_json(c: Candle) -> dict:
 
 
 def _diff_json(diff: dict) -> dict:
+    # Candle fields serialize through _candle_json; engine-state fields
+    # (P1.19: "structure") are already JSON-ready dicts and pass through.
     return {
-        symbol: {field: _candle_json(candle) for field, candle in fields.items()}
+        symbol: {
+            field: _candle_json(value) if isinstance(value, Candle) else value
+            for field, value in fields.items()
+        }
         for symbol, fields in diff.items()
     }
 

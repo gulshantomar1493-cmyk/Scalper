@@ -135,6 +135,14 @@ body {
 
 .replay-bar button { cursor: pointer; color: var(--accent); border-color: var(--accent); }
 .replay-bar input { color-scheme: dark; }
+.replay-bar button:disabled { opacity: 0.35; cursor: default; }
+
+/* P1.20 replay-audit tool (session-local tally) */
+.audit-label { margin-left: 24px; }
+#audit-tally { color: var(--accent); min-width: 72px; }
+
+/* P1.19 trend-state readout (pure engine output) */
+.trend { margin-right: 14px; color: #8B93A7; }
 
 /* symbol switcher (frozen v1 pair) */
 .switcher {

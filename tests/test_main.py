@@ -59,6 +59,48 @@ def test_refuses_unknown_feed_provider(tmp_path):
     assert r.returncode == 2
 
 
+# --------------------------------------------- P1.19 structure composition
+
+
+async def test_structure_pipeline_wiring_publishes_payload():
+    """_wire_structure_engines: frozen engines in the pinned cadence feed
+    the StateStore per closed 1m candle; 5m and foreign symbols ignored;
+    the payload is JSON-shaped and deterministic across identical runs."""
+    from datetime import datetime, timedelta, timezone
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper.providers.base import Candle
+
+    M0 = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
+
+    def candle(i, h, symbol="BTCUSDT", tf="1m"):
+        return Candle(symbol=symbol, tf=tf, ts=M0 + timedelta(minutes=i),
+                      o=float(h - 1), h=float(h), l=float(h - 1), c=float(h),
+                      v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+
+    async def run():
+        bus = EventBus()
+        store = StateStore(bus)
+        _wire_structure_engines(bus, store, ["BTCUSDT"])
+        # k=3 pivot scenario: H(15) at bar 3 confirms on bar 6's close
+        for i, h in enumerate([10, 11, 12, 15, 12, 11, 10]):
+            await bus.publish(candle(i, h))
+        await bus.publish(candle(7, 11, tf="5m"))          # ignored: 5m
+        await bus.publish(candle(7, 11, symbol="XRPUSDT"))  # ignored: unknown
+        return store.snapshot("BTCUSDT").structure
+
+    structure = await run()
+    assert structure["pivots"] == [
+        {"ts": (M0 + timedelta(minutes=3)).isoformat(), "kind": "H",
+         "price": 15.0, "label": None}]
+    assert structure["trend"] is None                      # chains unlabeled yet
+    assert structure["bos"] == [] and structure["choch"] == []
+    assert structure["trendlines"] == [] and structure["channels"] == []
+    assert await run() == structure                        # deterministic
+    assert "XRPUSDT" not in str(structure)
+
+
 # ------------------------------------------------------- full composition
 
 

@@ -28,7 +28,9 @@ import asyncio
 import logging
 import os
 import signal
+from collections import deque
 from datetime import datetime, timedelta, timezone
+from math import exp
 
 import uvicorn
 
@@ -40,6 +42,11 @@ from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.state import StateStore
+from marketscalper.engines.momentum import IncrementalATR
+from marketscalper.engines.structure import (BosDetector, ChochDetector,
+                                             PivotDetector, PivotLabeler,
+                                             TrendState)
+from marketscalper.engines.trendline import TrendlineBook, TrendlineDetector
 from marketscalper.logging_setup import setup_logging
 from marketscalper.providers.base import Candle
 from marketscalper.providers.binance import BinanceFeed, ClockOffsetSampler
@@ -48,6 +55,111 @@ from marketscalper.providers.replay import ReplayFeed
 log = logging.getLogger(__name__)
 
 _FEEDS = {"binance": BinanceFeed}  # provider selection map (Part D: plain config)
+
+
+class _StructurePipeline:
+    """One symbol's 1m analysis chain (P1.19 composition, frozen engines,
+    pinned cadence). Publishes a JSON-ready payload into the StateStore
+    after every closed 1m candle; the existing WS diff carries it (§9).
+    R1: no pool — engines persist nothing in Phase 1. 5m engine instances
+    arrive with their first consumer (P2, A8)."""
+
+    _PIVOTS_SHOWN = 30      # marker history depth in the payload
+    _EVENTS_SHOWN = 10      # BOS/CHOCH label history depth
+
+    def __init__(self, symbol: str, store: StateStore) -> None:
+        self._symbol = symbol
+        self._store = store
+        self._atr = IncrementalATR()
+        self._detector = PivotDetector(symbol, "1m")
+        self._labeler = PivotLabeler()
+        self._trend = TrendState()
+        self._bos = BosDetector(self._trend, self._atr)
+        self._choch = ChochDetector(self._trend)
+        self._tl_detector = TrendlineDetector(self._atr)
+        self._book = TrendlineBook(self._tl_detector, self._atr)
+        self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
+        self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
+        self._bar = -1          # positional axis, lockstep with the engines
+
+    def step(self, candle: Candle) -> None:
+        """The pinned per-closed-candle cadence, engines in §1 order."""
+        self._bar += 1
+        self._atr.update(candle)
+        self._tl_detector.update(candle)
+        for pivot in self._detector.update(candle):
+            labeled = self._labeler.label(pivot)
+            self._pivots.append(labeled)
+            self._trend.on_pivot(labeled)
+            self._bos.on_pivot(labeled)
+            self._choch.on_pivot(labeled)
+            self._tl_detector.on_pivot(labeled)
+        self._trend.update(candle)
+        bos_event = self._bos.update(candle)
+        if bos_event is not None:
+            self._bos_events.append(bos_event)
+            self._choch.on_bos(bos_event)
+        choch_event = self._choch.update(candle)
+        if choch_event is not None:
+            self._choch_events.append(choch_event)
+        self._book.refresh(candle)
+        self._store.set_structure(self._symbol, self._payload(candle))
+
+    def _payload(self, candle: Candle) -> dict:
+        """Everything the overlays draw — pre-serialized, no frontend math
+        beyond rendering (line endpoints are projected here)."""
+        cur = self._bar
+        lines = []
+        for line in self._book.active:
+            lines.append({
+                "side": line.side, "touches": line.touches,
+                "x1": line.a_pivot.ts.isoformat(), "y1": line.a_pivot.price,
+                "x2": candle.ts.isoformat(),
+                "y2": exp(line.intercept + line.slope * (cur - line.a_index)),
+            })
+        channels = []
+        for ch in self._book.channels():
+            start_index = max(ch.support.a_index, ch.resistance.a_index)
+            start_pivot = (ch.support.a_pivot
+                           if ch.support.a_index >= ch.resistance.a_index
+                           else ch.resistance.a_pivot)
+            channels.append({
+                "x1": start_pivot.ts.isoformat(),
+                "y1": exp(ch.mid_value(start_index)),
+                "x2": candle.ts.isoformat(),
+                "y2": exp(ch.mid_value(cur)),
+            })
+        return {
+            "trend": self._trend.state,
+            "pivots": [{"ts": p.ts.isoformat(), "kind": p.kind,
+                        "price": p.price, "label": p.label}
+                       for p in self._pivots],
+            "bos": [{"ts": e.ts.isoformat(), "direction": e.direction,
+                     "close": e.close, "displacement": e.displacement}
+                    for e in self._bos_events],
+            "choch": [{"ts": e.ts.isoformat(), "direction": e.direction,
+                       "close": e.close}
+                      for e in self._choch_events],
+            "trendlines": lines,
+            "channels": channels,
+        }
+
+
+def _wire_structure_engines(bus: EventBus, store: StateStore,
+                            symbols) -> None:
+    """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
+    Must be wired AFTER the StateStore and BEFORE create_app so the WS
+    broadcast's diff already contains the just-computed structure."""
+    pipelines = {symbol: _StructurePipeline(symbol, store)
+                 for symbol in symbols}
+
+    async def on_candle(candle: Candle) -> None:
+        pipeline = pipelines.get(candle.symbol)
+        if pipeline is not None and candle.tf == "1m":
+            pipeline.step(candle)
+
+    bus.subscribe(Candle, on_candle)
 
 
 def main() -> int:
@@ -97,6 +209,7 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
             reconciler.on_built(candle)
 
     bus.subscribe(Candle, to_built)
+    _wire_structure_engines(bus, store, config.symbols)    # P1.19
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
