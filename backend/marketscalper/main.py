@@ -50,6 +50,7 @@ from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
                                             RegimeClassifier)
 from marketscalper.engines.qualification import (QualificationEngine,
                                                  spread_pct_of)
+from marketscalper.engines.strategy import StrategyEngine
 from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
                                              TrendState)
@@ -103,9 +104,12 @@ class _StructurePipeline:
         self._fvg = FvgEngine(symbol, self._atr)
         self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
         self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
+        self._trend_5m = TrendState()                     # D20.2: S1/S2 context
         self._qual = QualificationEngine(symbol, self._atr, self._trend,
                                          self._momentum, self._regime)
+        self._strategy = StrategyEngine(symbol, self._atr)   # D20 (P3.12)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
+        self._signals: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._sweep_events: deque = deque(maxlen=self._EVENTS_SHOWN)
@@ -139,6 +143,7 @@ class _StructurePipeline:
             self._choch.on_pivot(labeled)
             self._tl_detector.on_pivot(labeled)
             self._liq.on_pivot(labeled)
+            self._strategy.on_pivot(labeled)       # D20.5: S2/S3 legs
         self._trend.update(candle)
         bos_event = self._bos.update(candle)
         if bos_event is not None:
@@ -167,12 +172,23 @@ class _StructurePipeline:
             gaps=self._fvg.gaps, lines=self._book.active,
             pools=self._liq.pools, key_levels=self._liq.key_levels,
             atr=self._atr.value, bar_index=self._bar)
-        qual = self._qual.update(                  # D16.5: last engine
+        qual = self._qual.update(                  # D16.5
             candle, bos_event=bos_event, choch_event=choch_event,
             tl_events=tl_events, liq_events=liq_events, zones=zones,
             spread_pct=self._spread_pct,
             clock=(self._clock_provider()
                    if self._clock_provider is not None else None))
+        for signal in self._strategy.evaluate(     # D20.5: last consumer
+                candle,
+                trend_5m=self._trend_5m.state, bos_event=bos_event,
+                choch_event=choch_event, tl_events=tl_events,
+                liq_events=liq_events, zones=zones,
+                blocks=self._ob.blocks, gaps=self._fvg.gaps,
+                pools=self._liq.pools, levels=self._liq.key_levels,
+                premium_discount=self._liq.premium_discount,
+                session_vwap=self._volume.session_vwap,
+                rvol=self._volume.rvol):
+            self._signals.append(signal)
         self._store.set_structure(self._symbol,
                                   self._payload(candle, zones, qual))
 
@@ -188,6 +204,9 @@ class _StructurePipeline:
             labeled = self._labeler_5m.label(pivot)
             self._liq.on_external_pivot(labeled)
             self._volume.on_anchor(labeled)        # D19.4 anchor intake
+            self._trend_5m.on_pivot(labeled)       # D20.2: 5m context
+            self._strategy.on_external_pivot(labeled)   # D20.2: S1 TP2
+        self._trend_5m.update(candle)              # D10 cadence, tf-generic
 
     def on_book_ticker(self, ticker: BookTicker) -> None:
         """Latest spread for the G2 gate (D16.2; live feeds only)."""
@@ -283,6 +302,13 @@ class _StructurePipeline:
                             "htf_magnet": z.htf_magnet,
                             "created_ts": z.created_ts.isoformat()}
                            for z in zones[:self._ZONES_SHOWN]],
+            "signals": [{"strategy": s.strategy, "direction": s.direction,
+                         "entry": s.entry, "sl": s.sl, "tp1": s.tp1,
+                         "tp2": s.tp2,
+                         "created_ts": s.created_ts.isoformat(),
+                         "invalid_after_bars": s.invalid_after_bars,
+                         "facts": list(s.facts)}
+                        for s in self._signals],
             "qualification": {
                 "gates": [{"name": g.name, "passed": g.passed,
                            "flagged": g.flagged, "detail": g.detail}

@@ -110,6 +110,7 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert isinstance(volume["delta"], float)
     assert volume["absorption"] is None and volume["exhaustion"] is None
     assert structure["confluence"] == []                   # ATR unwarm (D15)
+    assert structure["signals"] == []                      # Strategy (D20)
     qual = structure["qualification"]                      # D16: G1 warming
     assert qual["verdict"] == "NO_SIGNAL" and qual["score"] is None
     assert [g["name"] for g in qual["gates"]] == ["G1", "G2", "G3",

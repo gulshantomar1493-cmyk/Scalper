@@ -269,6 +269,48 @@ async def test_v2_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"channels": [{' in joined               # channels hashed
     assert '"trend": "BEARISH"' in joined           # full trend vocabulary...
     assert '"trend": "BULLISH"' in joined
+    # D20.2 reversal check at composition level: every gate episode pairs
+    # a LOW sweep with a DOWN (continuation) CHOCH — S1 must refuse all
+    # of them, and S2/S3 cannot fire unseeded (D20.6) -> no signals ever.
+    assert '"signals": [{' not in joined
+    h1 = hashlib.sha256(joined.encode()).hexdigest()
+    h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
+    assert h1 == h2                                 # §10, non-negotiable
+
+
+async def test_v3_signal_stream_byte_identical_across_double_replay(db_conn):
+    """P3.12-P3.16 (the P3.20 signals guard): the engineered S1 reversal
+    dataset fires strategy S1 through the complete composition chain via
+    the real DB replay path, with the signal content byte-identical
+    across a double replay. S2/S3 stay silent (rvol unseeded, D20.6)."""
+    from s1_dataset import S1_M0, S1_MINUTES, s1_candles
+
+    v3 = s1_candles()
+    await db.insert_candles(
+        db_conn,
+        [(c.symbol, c.tf, c.ts, c.o, c.h, c.l, c.c, c.v, c.qv,
+          c.n_trades, c.taker_buy_v) for c in v3],
+    )
+    v3_range = (S1_M0, S1_M0 + timedelta(minutes=S1_MINUTES))
+    first = await _replay_object_stream_once(db_conn, v3_range)
+    second = await _replay_object_stream_once(db_conn, v3_range)
+    assert len(first) >= len(v3)                    # every close published
+    joined = "\n".join(first)
+    assert '"signals": [{' in joined                # signal content hashed
+    assert '"strategy": "S1"' in joined
+    assert '"direction": "LONG"' in joined
+    assert 'swept ASIA_L (LOW)' in joined           # §8 fact trace hashed
+    assert '"strategy": "S2"' not in joined         # unseeded -> silent
+    assert '"strategy": "S3"' not in joined
+    # exactly one signal, with the D20.2 geometry invariants
+    final = json.loads(first[-1].split("|", 1)[1])
+    assert len(final["signals"]) == 1
+    sig = final["signals"][0]
+    assert sig["sl"] < 96.40                        # beyond the sweep wick
+    assert 97.0 < sig["entry"] < 97.90              # inside the entry zone
+    assert sig["tp1"] > 104.4                       # the EQH pool target
+    assert sig["tp1"] >= sig["entry"] + (sig["entry"] - sig["sl"])  # 1R
+    assert sig["invalid_after_bars"] == 5
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable
