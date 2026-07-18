@@ -23,11 +23,14 @@ recommendations):
    green reversal bar's delta does not align with the BEARISH trend, so
    the +30 delta item stays off — the recorded S1 consequence, D21.8).
 
-Empirically verified through the real composition (probe): the signal
-bar scores 79.0 {structure 80, liquidity 90, volume 70, momentum 70} ->
-TRADEABLE -> one S1 LONG recommendation (entry ~97.48, SL ~96.30,
-TP1 = the EQH pool ~104.53, net RR ~5.47). The whole construction is
-pure arithmetic (no RNG); replay ≡ replay is the property under test.
+Empirically verified through the real composition: the signal bar scores
+comfortably above the 75 TRADEABLE threshold {structure 80, liquidity 90,
+volume 70, momentum 70-100} -> one S1 LONG recommendation (entry ~97.48,
+SL ~96.30, TP1 = the EQH pool ~104.53, net RR ~5.47). The exact score
+(~79 single-symbol direct-drive, ~83.5 via the ReplayFeed/gate 5m-fold
+cadence) varies with the momentum-component timing but always clears the
+threshold; the tests assert the verdict/geometry invariants, not a pinned
+score. Pure arithmetic (no RNG); replay ≡ replay is the property tested.
 """
 
 from __future__ import annotations
