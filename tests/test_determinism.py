@@ -181,16 +181,23 @@ V1_DATASET = [_v1_candle("BTCUSDT", m, 100.0) for m in range(V1_MINUTES)] + \
 V1_RANGE = (V1_M0, V1_M0 + timedelta(minutes=V1_MINUTES))
 
 
-async def _replay_object_stream_once(db_conn, replay_range=None) -> list[str]:
+async def _replay_object_stream_once(db_conn, replay_range=None,
+                                     symbols=("BTCUSDT", "ETHUSDT"),
+                                     seed_candles=None) -> list[str]:
     """Replay through the REAL composition pipelines; canonicalize every
-    published structure payload (per symbol, per closed candle)."""
+    published structure payload (per symbol, per closed candle).
+
+    seed_candles (D19.2): the same RVOL seed the live composition / F2
+    replay apply — passed directly to the wiring (not the DB), so a
+    seeded stream (V4) can reach TRADEABLE and carry recommendations."""
     from marketscalper.core.state import StateStore
     from marketscalper.main import _wire_structure_engines
 
     start, end = replay_range or V1_RANGE
+    symbols = list(symbols)
     bus = EventBus()
     store = StateStore(bus)
-    _wire_structure_engines(bus, store, ["BTCUSDT", "ETHUSDT"])
+    _wire_structure_engines(bus, store, symbols, seed_candles=seed_candles)
     stream: list[str] = []
 
     async def collect(candle: Candle) -> None:      # subscribed AFTER engines
@@ -200,8 +207,7 @@ async def _replay_object_stream_once(db_conn, replay_range=None) -> list[str]:
                           json.dumps(state.structure, sort_keys=True))
 
     bus.subscribe(Candle, collect)
-    feed = ReplayFeed(["BTCUSDT", "ETHUSDT"], bus, TxPool(db_conn),
-                      start, end, speed="max")
+    feed = ReplayFeed(symbols, bus, TxPool(db_conn), start, end, speed="max")
     await feed.start()
     for _ in range(500):
         if feed._task is not None and feed._task.done():
@@ -325,6 +331,127 @@ async def test_v3_signal_stream_byte_identical_across_double_replay(db_conn):
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable
+
+
+async def test_v4_recommendation_stream_byte_identical_across_double_replay(
+        db_conn):
+    """P3.20: the recommendation-carrying stream. The seeded rec_dataset
+    reaches TRADEABLE and emits a real S1 recommendation through the
+    complete composition (qualification -> planner -> admission), with
+    the recommendation CONTENT byte-identical across a double replay —
+    no payload family is structurally-guarded-only anymore (P2.23)."""
+    from rec_dataset import REC_M0, REC_MINUTES, rec_candles, rec_seed
+
+    v4 = rec_candles("BTCUSDT")
+    await db.insert_candles(
+        db_conn,
+        [(c.symbol, c.tf, c.ts, c.o, c.h, c.l, c.c, c.v, c.qv,
+          c.n_trades, c.taker_buy_v) for c in v4],
+    )
+    v4_range = (REC_M0, REC_M0 + timedelta(minutes=REC_MINUTES))
+    seed = {"BTCUSDT": rec_seed("BTCUSDT")}
+    first = await _replay_object_stream_once(
+        db_conn, v4_range, symbols=("BTCUSDT",), seed_candles=seed)
+    second = await _replay_object_stream_once(
+        db_conn, v4_range, symbols=("BTCUSDT",), seed_candles=seed)
+    joined = "\n".join(first)
+    # non-empty recommendation content IS in the hashed stream
+    assert '"recommendations": [{' in joined
+    assert '"verdict": "TRADEABLE"' in joined
+    assert '"net_rr_tp1":' in joined
+    assert 'move SL to break-even' in joined         # §7 guidance text hashed
+    # the admitted recommendation's geometry (D21.2 + §7)
+    final = None
+    for line in first:
+        payload = json.loads(line.split("|", 1)[1])
+        if payload["recommendations"]:
+            final = payload["recommendations"][-1]
+    assert final is not None
+    assert final["strategy"] == "S1" and final["direction"] == "LONG"
+    assert final["tp1"] > 104.0                      # the EQH pool target
+    assert final["net_rr_tp1"] >= 1.0                # planner floor (D17)
+    assert final["sl"] < final["entry"] < final["tp1"]
+    assert len(final["guidance"]) == 4               # §7 management lines
+    h1 = hashlib.sha256(joined.encode()).hexdigest()
+    h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
+    assert h1 == h2                                  # §10, non-negotiable
+
+
+class _CapturingRecorder:
+    """A SignalRecorder-shaped stand-in that serializes the rows it would
+    persist (D21.1/D21.2 fields) into canonical strings instead of hitting
+    a database — so a double run's persisted output can be compared."""
+
+    def __init__(self):
+        self.rows: list[str] = []
+
+    async def record(self, symbol, records, payload):
+        snapshot = json.dumps(payload, sort_keys=True) if payload else None
+        for signal, qual, plan, rec in records:
+            self.rows.append(json.dumps({
+                "kind": "signal", "ts": signal.created_ts.isoformat(),
+                "symbol": symbol, "tf": "1m", "strategy": signal.strategy,
+                "direction": signal.direction, "score": qual.score,
+                "gates": {"verdict": qual.verdict,
+                          "integrity": qual.data_integrity},
+                "components": qual.components,
+                "snapshot_len": len(snapshot) if snapshot else 0,
+            }, sort_keys=True))
+            if rec is not None:
+                self.rows.append(json.dumps({
+                    "kind": "recommendation", "ts": signal.created_ts.isoformat(),
+                    "direction": signal.direction, "entry": plan.entry,
+                    "sl": plan.sl, "tp1": plan.tp1, "tp2": plan.tp2,
+                    "qty": plan.qty, "risk_amt": plan.risk_amt,
+                    "est_fees": plan.qty * plan.fee_per_unit,
+                    "net_rr_tp1": plan.net_rr_tp1,
+                }, sort_keys=True))
+
+
+async def _record_rows_once() -> str:
+    """Drive the seeded rec_dataset through the real composition with a
+    capturing recorder (the wiring's own on_candle hop persists) and
+    return the newline-joined serialized rows."""
+    from rec_dataset import rec_candles, rec_seed
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+
+    bus = EventBus()
+    store = StateStore(bus)
+    cap = _CapturingRecorder()
+    _wire_structure_engines(bus, store, ["BTCUSDT"], recorder=cap,
+                            seed_candles={"BTCUSDT": rec_seed()})
+    win = []
+    for candle in rec_candles("BTCUSDT"):
+        await bus.publish(candle)
+        win.append(candle)
+        if len(win) == 5:                            # feed the 5m context
+            w = win
+            await bus.publish(Candle(
+                symbol=w[0].symbol, tf="5m", ts=w[0].ts, o=w[0].o,
+                h=max(c.h for c in w), l=min(c.l for c in w), c=w[-1].c,
+                v=sum(c.v for c in w), qv=sum(c.qv for c in w),
+                n_trades=sum(c.n_trades for c in w),
+                taker_buy_v=sum(c.taker_buy_v for c in w)))
+            win = []
+    return "\n".join(cap.rows)
+
+
+async def test_persisted_signal_and_recommendation_rows_byte_identical():
+    """P3.20 / §10 ('byte-identical signals table'): the persisted rows
+    themselves — not just the payload — are deterministic. Two independent
+    composition passes over the seeded rec_dataset, each serializing every
+    (signal, recommendation) row from the SignalRecorder's own fields, must
+    be byte-identical. Proves the records the persistence path receives are
+    deterministic (the SignalRecorder's serialization itself is covered by
+    the test_recorder round-trips)."""
+    first = await _record_rows_once()
+    second = await _record_rows_once()
+    assert first, "expected at least one persisted row"
+    assert '"kind": "signal"' in first               # a real signal row
+    assert '"strategy": "S1"' in first
+    assert '"kind": "recommendation"' in first       # a real rec row
+    assert first == second                           # byte-identical rows
 
 
 def test_v1_canonicalization_is_sensitive():
