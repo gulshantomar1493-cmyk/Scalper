@@ -130,18 +130,44 @@ import json  # noqa: E402
 
 # Session-crossing window (LONDON 08:00 observed from its boundary,
 # completing at 13:00) so level promotion and session bookkeeping are part
-# of the hashed object stream.
+# of the hashed object stream. The tail (minutes 300+) walks the P1.11
+# flip-journey shape, empirically verified through the real pipelines to
+# fire a WEAK BOS (displacement False -> no OB: the qualification is in
+# the hash) and then a displacement BOS DOWN that creates an order block.
 V1_M0 = datetime(2026, 7, 14, 7, 30, tzinfo=UTC)
-V1_MINUTES = 360                                   # 07:30 -> 13:30 UTC
+V1_MINUTES = 335                                   # 07:30 -> 13:05 UTC
+
+_V1_SHAPE = [(10, 9), (11, 10), (12, 11), (15, 14), (12, 11), (11, 10),
+             (10, 9), (11, 10), (12, 11), (13, 12), (17, 16), (14, 13),
+             (13, 12), (12, 11), (13, 12), (14, 13), (15, 14), (18, 17),
+             (10, 9), (9, 8), (8, 7), (9, 8), (10, 9), (9, 8), (8, 7),
+             (7, 6), (6, 5)]
+
+
+def _v1_tail(offset: int) -> tuple:
+    """(o, h, l, c) relative to base for tail minute `offset`."""
+    if offset < len(_V1_SHAPE):
+        h, l = _V1_SHAPE[offset]
+        if offset == 17:                           # BOS-UP bar, fat body
+            return (13.2, h, 13.0, h)
+        if offset == 26:                           # displacement crash bar
+            return (6.0, 6.0, 0.8, 1.0)
+        return (l, h, l, h)                        # full-body bullish
+    return (1.0, 1.5, 0.5, 1.0)                    # benign pad past 13:00
 
 
 def _v1_candle(symbol: str, minute: int, base: float) -> Candle:
     """Oscillating dataset with a tie-breaking drift: pivots on both
-    chains, labels, trend states, pools and session levels all emit."""
-    o = base + ((minute * 7) % 13) - 6 + minute * 0.01
-    h = o + ((minute * 5) % 7) + 1
-    l = o - ((minute * 3) % 5) - 1
-    c = o + ((minute * 2) % 3) - 1
+    chains, labels, trend states, pools, session levels, BOS and order
+    blocks all emit."""
+    if minute < 300:
+        o = base + ((minute * 7) % 13) - 6 + minute * 0.01
+        h = o + ((minute * 5) % 7) + 1
+        l = o - ((minute * 3) % 5) - 1
+        c = o + ((minute * 2) % 3) - 1
+    else:
+        ro, rh, rl, rc = _v1_tail(minute - 300)
+        o, h, l, c = base + ro, base + rh, base + rl, base + rc
     ts = V1_M0 + timedelta(minutes=minute)
     return Candle(symbol=symbol, tf="1m", ts=ts, o=o, h=h, l=l, c=c,
                   v=1.0, qv=o, n_trades=2, taker_buy_v=0.5)
@@ -196,6 +222,9 @@ async def test_v1_object_stream_byte_identical_across_double_replay(db_conn):
     assert '"LONDON_H"' in joined                   # session level promoted
     assert '"pools": [{' in joined                  # liquidity pools emitted
     assert '"premium_discount": "' in joined        # 5m external range live
+    assert '"displacement": false' in joined        # weak BOS hashed...
+    assert '"displacement": true' in joined         # ...and a qualified one
+    assert '"blocks": [{' in joined                 # OB content in the hash
     h1 = hashlib.sha256(joined.encode()).hexdigest()
     h2 = hashlib.sha256("\n".join(second).encode()).hexdigest()
     assert h1 == h2                                 # §10, non-negotiable

@@ -43,6 +43,7 @@ from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.state import StateStore
 from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
+from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import IncrementalATR
 from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
@@ -80,6 +81,7 @@ class _StructurePipeline:
         self._tl_detector = TrendlineDetector(self._atr)
         self._book = TrendlineBook(self._tl_detector, self._atr)
         self._liq = LiquidityEngine(symbol, self._atr)
+        self._ob = OrderBlockEngine(symbol)
         self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
         self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
@@ -118,6 +120,7 @@ class _StructurePipeline:
         if bos_event is not None:
             self._bos_events.append(bos_event)
             self._choch.on_bos(bos_event)
+            self._ob.on_bos(bos_event)             # D13.5 cadence
         choch_event = self._choch.update(candle)
         if choch_event is not None:
             self._choch_events.append(choch_event)
@@ -129,6 +132,7 @@ class _StructurePipeline:
                 self._sweep_events.append(event)
             else:
                 self._shift_events.append(event)
+        self._ob.update(candle)                    # after liquidity (D13.5)
         self._store.set_structure(self._symbol, self._payload(candle))
 
     def step_5m(self, candle: Candle) -> None:
@@ -190,6 +194,16 @@ class _StructurePipeline:
                 "shifts": [{"sweep_ts": e.sweep.ts.isoformat(),
                             "ts": e.ts.isoformat()}
                            for e in self._shift_events],
+            },
+            "orderblocks": {
+                "blocks": [{"direction": b.direction, "lo": b.zone_lo,
+                            "hi": b.zone_hi, "status": b.status,
+                            "created_ts": b.created_ts.isoformat()}
+                           for b in self._ob.blocks],
+                "breakers": [{"direction": b.direction, "lo": b.zone_lo,
+                              "hi": b.zone_hi, "status": b.status,
+                              "created_ts": b.created_ts.isoformat()}
+                             for b in self._ob.breakers],
             },
         }
 

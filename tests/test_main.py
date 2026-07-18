@@ -102,8 +102,32 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert liquidity["premium_discount"] is None           # no 5m pivots yet
     assert set(liquidity["levels"]) <= {"PDH", "PDL", "PWH", "PWL"} | {
         f"{s}_{x}" for s in ("ASIA", "LONDON", "NY", "LATE") for x in "HL"}
+    assert structure["orderblocks"] == {"blocks": [], "breakers": []}
     assert await run() == structure                        # deterministic
     assert "XRPUSDT" not in str(structure)
+
+
+async def test_pipeline_projects_order_blocks_non_empty():
+    """Freeze-audit fix: the OB payload field mapping must be executed with
+    real content, not just the empty shape."""
+    from test_determinism import V1_DATASET
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])
+    for candle in V1_DATASET:
+        if candle.symbol == "BTCUSDT":
+            await bus.publish(candle)
+    ob = store.snapshot("BTCUSDT").structure["orderblocks"]
+    [block] = ob["blocks"]
+    assert block["direction"] == "BEAR"            # the displacement crash
+    assert block["status"] == "active"             # pad bars never touch it
+    assert block["lo"] < block["hi"]
+    assert block["created_ts"].endswith("+00:00")
+    assert ob["breakers"] == []
 
 
 async def test_pipeline_drops_out_of_order_candles():
