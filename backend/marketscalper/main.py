@@ -42,16 +42,20 @@ from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.state import StateStore
+from marketscalper.engines.confluence import confluence_zones
 from marketscalper.engines.fvg import FvgEngine
 from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.orderblock import OrderBlockEngine
-from marketscalper.engines.momentum import IncrementalATR
+from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
+                                            RegimeClassifier)
+from marketscalper.engines.qualification import (QualificationEngine,
+                                                 spread_pct_of)
 from marketscalper.engines.structure import (BosDetector, ChochDetector,
                                              PivotDetector, PivotLabeler,
                                              TrendState)
 from marketscalper.engines.trendline import TrendlineBook, TrendlineDetector
 from marketscalper.logging_setup import setup_logging
-from marketscalper.providers.base import Candle
+from marketscalper.providers.base import BookTicker, Candle
 from marketscalper.providers.binance import BinanceFeed, ClockOffsetSampler
 from marketscalper.providers.replay import ReplayFeed
 
@@ -69,11 +73,18 @@ class _StructurePipeline:
 
     _PIVOTS_SHOWN = 30      # marker history depth in the payload
     _EVENTS_SHOWN = 10      # BOS/CHOCH label history depth
+    _ZONES_SHOWN = 10       # confluence display cap (D15.3)
 
-    def __init__(self, symbol: str, store: StateStore) -> None:
+    def __init__(self, symbol: str, store: StateStore,
+                 clock_provider=None) -> None:
         self._symbol = symbol
         self._store = store
+        self._clock_provider = clock_provider      # D16.2 G1 (live only)
+        self._spread_pct = None                    # latest G2 input
         self._atr = IncrementalATR()
+        self._atr_5m = IncrementalATR()            # regime input (D16.5)
+        self._momentum = MomentumState(self._atr)
+        self._regime = RegimeClassifier(symbol, self._atr, self._atr_5m)
         self._detector = PivotDetector(symbol, "1m")
         self._labeler = PivotLabeler()
         self._trend = TrendState()
@@ -86,6 +97,8 @@ class _StructurePipeline:
         self._fvg = FvgEngine(symbol, self._atr)
         self._detector_5m = PivotDetector(symbol, "5m")   # first 5m consumer:
         self._labeler_5m = PivotLabeler()                 # A8 range (D12.6)
+        self._qual = QualificationEngine(symbol, self._atr, self._trend,
+                                         self._momentum, self._regime)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
         self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
@@ -108,6 +121,8 @@ class _StructurePipeline:
         self._last_ts = candle.ts
         self._bar += 1
         self._atr.update(candle)
+        self._momentum.update(candle)              # P1.2: ATR first
+        self._regime.update()                      # after both ATRs (D16.5)
         self._tl_detector.update(candle)
         for pivot in self._detector.update(candle):
             labeled = self._labeler.label(pivot)
@@ -126,17 +141,30 @@ class _StructurePipeline:
         choch_event = self._choch.update(candle)
         if choch_event is not None:
             self._choch_events.append(choch_event)
-        self._book.refresh(candle)
+        tl_events = self._book.refresh(candle)
         if choch_event is not None:                # D12.7: CHOCH before liq
             self._liq.on_choch(choch_event)
-        for event in self._liq.update(candle):
+        liq_events = self._liq.update(candle)
+        for event in liq_events:
             if isinstance(event, SweepEvent):
                 self._sweep_events.append(event)
             else:
                 self._shift_events.append(event)
         self._ob.update(candle)                    # after liquidity (D13.5)
         self._fvg.update(candle)                   # after order blocks (D14.3)
-        self._store.set_structure(self._symbol, self._payload(candle))
+        zones = confluence_zones(                  # D15.3: after fvg
+            blocks=self._ob.blocks, breakers=self._ob.breakers,
+            gaps=self._fvg.gaps, lines=self._book.active,
+            pools=self._liq.pools, key_levels=self._liq.key_levels,
+            atr=self._atr.value, bar_index=self._bar)
+        qual = self._qual.update(                  # D16.5: last engine
+            candle, bos_event=bos_event, choch_event=choch_event,
+            tl_events=tl_events, liq_events=liq_events, zones=zones,
+            spread_pct=self._spread_pct,
+            clock=(self._clock_provider()
+                   if self._clock_provider is not None else None))
+        self._store.set_structure(self._symbol,
+                                  self._payload(candle, zones, qual))
 
     def step_5m(self, candle: Candle) -> None:
         """5m closed candle: pivots feed the A8 external range (D12.6)."""
@@ -145,10 +173,15 @@ class _StructurePipeline:
                         "(last %s)", self._symbol, candle.ts, self._last_ts_5m)
             return
         self._last_ts_5m = candle.ts
+        self._atr_5m.update(candle)                # regime input (D16.5)
         for pivot in self._detector_5m.update(candle):
             self._liq.on_external_pivot(self._labeler_5m.label(pivot))
 
-    def _payload(self, candle: Candle) -> dict:
+    def on_book_ticker(self, ticker: BookTicker) -> None:
+        """Latest spread for the G2 gate (D16.2; live feeds only)."""
+        self._spread_pct = spread_pct_of(ticker.bid_px, ticker.ask_px)
+
+    def _payload(self, candle: Candle, zones, qual) -> dict:
         """Everything the overlays draw — pre-serialized, no frontend math
         beyond rendering (line endpoints are projected here)."""
         cur = self._bar
@@ -212,15 +245,34 @@ class _StructurePipeline:
                       "ce": g.ce, "status": g.status,
                       "created_ts": g.created_ts.isoformat()}
                      for g in self._fvg.gaps],
+            "confluence": [{"kind": z.kind, "direction": z.direction,
+                            "lo": z.lo, "hi": z.hi, "count": z.count,
+                            "members": list(z.members),
+                            "htf_magnet": z.htf_magnet,
+                            "created_ts": z.created_ts.isoformat()}
+                           for z in zones[:self._ZONES_SHOWN]],
+            "qualification": {
+                "gates": [{"name": g.name, "passed": g.passed,
+                           "flagged": g.flagged, "detail": g.detail}
+                          for g in qual.gates],
+                "data_integrity": qual.data_integrity,
+                "components": qual.components,
+                "score": qual.score,
+                "verdict": qual.verdict,
+                "agreement": qual.agreement,
+                "reasons": list(qual.reasons),
+            },
         }
 
 
 def _wire_structure_engines(bus: EventBus, store: StateStore,
-                            symbols) -> None:
+                            symbols, clock_provider=None) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
-    broadcast's diff already contains the just-computed structure."""
-    pipelines = {symbol: _StructurePipeline(symbol, store)
+    broadcast's diff already contains the just-computed structure.
+    clock_provider: live main() passes the D6 sampler surface for G1;
+    replay/tests leave it None (flagged pass, D16.2)."""
+    pipelines = {symbol: _StructurePipeline(symbol, store, clock_provider)
                  for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
@@ -232,7 +284,13 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
         elif candle.tf == "5m":
             pipeline.step_5m(candle)
 
+    async def on_book_ticker(ticker: BookTicker) -> None:
+        pipeline = pipelines.get(ticker.symbol)
+        if pipeline is not None:                   # G2 input (D16.2)
+            pipeline.on_book_ticker(ticker)
+
     bus.subscribe(Candle, on_candle)
+    bus.subscribe(BookTicker, on_book_ticker)
 
 
 def main() -> int:
@@ -282,11 +340,13 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int) -> No
             reconciler.on_built(candle)
 
     bus.subscribe(Candle, to_built)
-    _wire_structure_engines(bus, store, config.symbols)    # P1.19
+    sampler = ClockOffsetSampler()                 # before wiring: G1 input
+    _wire_structure_engines(
+        bus, store, config.symbols,
+        clock_provider=lambda: (sampler.offset_s, sampler.in_sync))
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
-    sampler = ClockOffsetSampler()
     app = create_app(bus, store, pool, token, replay_provider=ReplayFeed)
 
     await feed.start()

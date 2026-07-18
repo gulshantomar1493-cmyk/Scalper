@@ -104,6 +104,11 @@ async def test_structure_pipeline_wiring_publishes_payload():
         f"{s}_{x}" for s in ("ASIA", "LONDON", "NY", "LATE") for x in "HL"}
     assert structure["orderblocks"] == {"blocks": [], "breakers": []}
     assert structure["fvgs"] == []                         # FVG Engine (D14)
+    assert structure["confluence"] == []                   # ATR unwarm (D15)
+    qual = structure["qualification"]                      # D16: G1 warming
+    assert qual["verdict"] == "NO_SIGNAL" and qual["score"] is None
+    assert [g["name"] for g in qual["gates"]] == ["G1", "G2", "G3",
+                                                  "G4", "G5", "G6"]
     assert await run() == structure                        # deterministic
     assert "XRPUSDT" not in str(structure)
 
@@ -153,6 +158,66 @@ async def test_pipeline_projects_fvgs_non_empty():
         assert gap["ce"] == (gap["lo"] + gap["hi"]) / 2.0
         assert gap["status"] in ("active", "ce_tested")
         assert gap["created_ts"].endswith("+00:00")
+
+
+async def test_pipeline_projects_confluence_and_qualification_non_empty():
+    """The D15/D16 payload mappings must be executed with real content
+    (the OB/FVG-projection precedent); values empirically pinned on V1."""
+    from test_determinism import V1_DATASET
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])
+    for candle in V1_DATASET:
+        if candle.symbol == "BTCUSDT":
+            await bus.publish(candle)
+    structure = store.snapshot("BTCUSDT").structure
+    zones = structure["confluence"]
+    assert zones and zones[0]["count"] == 5                # V1 magnet stack
+    assert zones[0]["htf_magnet"] is True
+    assert zones[0]["members"][0] == zones[0]["kind"] == "FVG"
+    assert all(z["lo"] <= z["hi"] for z in zones)
+    qual = structure["qualification"]
+    assert qual["data_integrity"] == "PASS"
+    assert qual["score"] == 36.0                           # empirically pinned
+    assert qual["verdict"] == "BELOW_THRESHOLD"
+    assert qual["components"]["structure"] == 100.0        # flip-tail aligned
+    assert qual["components"]["volume"] == 0.0             # flagged (D16.3)
+    assert qual["agreement"].endswith("rules aligned")
+    assert all(g["passed"] for g in qual["gates"])
+    assert qual["gates"][0]["flagged"]                     # no sampler wired
+
+
+async def test_pipeline_g2_reads_bus_book_tickers():
+    """BookTicker subscription (D16.2): a wide live spread must reach the
+    G2 gate; a later unknown-symbol ticker must not overwrite it."""
+    from datetime import datetime, timedelta, timezone
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper.providers.base import BookTicker, Candle
+
+    m0 = datetime(2026, 7, 14, 19, 0, tzinfo=timezone.utc)
+
+    def candle(minute, price):
+        return Candle(symbol="BTCUSDT", tf="1m",
+                      ts=m0 + timedelta(minutes=minute),
+                      o=price, h=price + 1, l=price - 1, c=price,
+                      v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5)
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"])
+    await bus.publish(candle(0, 100.0))
+    await bus.publish(BookTicker("BTCUSDT", 100.0, 1.0, 100.2, 1.0, m0))
+    await bus.publish(BookTicker("XRPUSDT", 1.0, 1.0, 2.0, 1.0, m0))
+    await bus.publish(candle(1, 100.0))
+    g2 = store.snapshot("BTCUSDT").structure["qualification"]["gates"][1]
+    assert g2["passed"] is False and not g2["flagged"]     # ~0.2% >= 0.05%
+    assert g2["detail"].startswith("spread 0.19")
 
 
 async def test_pipeline_drops_out_of_order_candles():
