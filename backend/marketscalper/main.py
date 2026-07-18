@@ -49,8 +49,11 @@ from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
                                             RegimeClassifier)
+from marketscalper.analytics import compute_analytics
 from marketscalper.engines.lifecycle import RecommendationLifecycle
 from marketscalper.engines.psychology import PsychologyGuard
+from marketscalper.ops import (FEED_WATCHDOG_INTERVAL_S, feed_gap_alerts,
+                               format_daily_summary)
 from marketscalper.engines.qualification import (QualificationEngine,
                                                  spread_pct_of)
 from marketscalper.engines.risk import management_guidance, plan_trade
@@ -573,7 +576,9 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
 
     await feed.start()
     await sampler.start()
-    rollover = asyncio.create_task(_midnight_partitions(pool), name="partition-rollover")
+    rollover = asyncio.create_task(_daily_ops(pool), name="daily-ops")
+    watchdog = asyncio.create_task(                    # P4.13 feed-gap alert
+        _feed_gap_watchdog(store, config.symbols), name="feed-gap-watchdog")
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     # The composition root owns process lifecycle: route SIGTERM/SIGINT to a
@@ -591,14 +596,16 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
         await server.serve()                               # until SIGTERM/SIGINT
     finally:
         rollover.cancel()
-        await asyncio.gather(rollover, return_exceptions=True)
+        watchdog.cancel()
+        await asyncio.gather(rollover, watchdog, return_exceptions=True)
         await sampler.stop()
         await feed.stop()
         await pool.close()
 
 
-async def _midnight_partitions(pool) -> None:
-    """D2: re-ensure partitions just after each UTC midnight."""
+async def _daily_ops(pool) -> None:
+    """D2 partition re-ensure + P4.13 daily stats snapshot just after each
+    UTC midnight."""
     while True:
         now = datetime.now(tz=timezone.utc)
         next_midnight = (now + timedelta(days=1)).replace(
@@ -607,9 +614,28 @@ async def _midnight_partitions(pool) -> None:
         try:
             async with pool.acquire() as conn:
                 created = await db.ensure_partitions(conn)
+                analytics = await compute_analytics(conn)
             log.info("partitions ensured at UTC rollover (%d created)", created)
+            log.info(format_daily_summary(analytics))       # P4.13 snapshot
         except Exception as exc:                            # keep the loop alive
-            log.error("partition rollover failed: %s", exc)
+            log.error("daily ops failed: %s", exc)
+
+
+async def _feed_gap_watchdog(store, symbols) -> None:
+    """P4.13: alert when a symbol's closed 1m candle stream stalls (feed
+    outage / stale connection). Logs a structured ALERT; never mutates
+    state — the reconnect/backfill machinery (P0.10/P0.15) does the healing."""
+    while True:
+        await asyncio.sleep(FEED_WATCHDOG_INTERVAL_S)
+        now = datetime.now(tz=timezone.utc)
+        last_seen = {}
+        for symbol in symbols:
+            state = store.snapshot(symbol)
+            candle = state.last_candle_1m if state is not None else None
+            last_seen[symbol] = candle.ts if candle is not None else None
+        for symbol, gap in feed_gap_alerts(last_seen, now):
+            log.warning("ALERT feed gap: %s — no closed 1m candle for %.0fs",
+                        symbol, gap)
 
 
 if __name__ == "__main__":
