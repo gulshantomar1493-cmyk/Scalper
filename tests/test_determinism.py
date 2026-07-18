@@ -385,6 +385,16 @@ class _CapturingRecorder:
     def __init__(self):
         self.rows: list[str] = []
 
+    async def record_lifecycle(self, symbol, events):
+        for ev in events:
+            row = {"kind": "lifecycle", "ts": ev.ts.isoformat(),
+                   "rec_key": ev.rec_key, "status": ev.status,
+                   "reason": ev.reason}
+            if ev.outcome is not None:
+                row["outcome"] = ev.outcome.outcome
+                row["eval_r"] = ev.outcome.eval_r
+            self.rows.append(json.dumps(row, sort_keys=True))
+
     async def record(self, symbol, records, payload):
         snapshot = json.dumps(payload, sort_keys=True) if payload else None
         for signal, qual, plan, rec in records:

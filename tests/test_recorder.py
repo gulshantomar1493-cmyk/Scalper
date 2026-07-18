@@ -15,7 +15,10 @@ from conftest import TxPool
 from marketscalper.core.bus import EventBus
 from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
 from marketscalper.core.state import StateStore
+from marketscalper.engines.evaluator import Outcome
+from marketscalper.engines.lifecycle import LifecycleEvent
 from marketscalper.engines.qualification import QualificationResult
+from marketscalper.engines.risk import plan_trade
 from marketscalper.engines.strategy import Signal
 from marketscalper.main import DEFAULT_EQUITY_USD, _StructurePipeline
 
@@ -171,6 +174,125 @@ async def test_recorder_multi_record_one_bar(db_conn):
     strategies = await db_conn.fetch(
         "SELECT strategy FROM signals WHERE ts = $1 ORDER BY strategy", T0)
     assert [r["strategy"] for r in strategies] == ["S1", "S3"]
+
+
+async def test_record_lifecycle_persists_status_and_eval(db_conn):
+    """P4.5: a terminal lifecycle transition updates exactly the status +
+    eval_* columns on the recommendation row the recorder remembered."""
+    pipe = _pipeline()
+    signal = _signal()
+    qual = _qual()
+    plan, rec = pipe._admit(signal, qual)
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    await recorder.record("BTCUSDT", [(signal, qual, plan, rec)], None)
+    assert recorder.recommendations_written == 1
+
+    ev = LifecycleEvent(
+        rec_key=(signal.created_ts.isoformat(), signal.strategy),
+        direction="LONG", status="evaluated", reason="hypothetical tp1",
+        ts=T0, outcome=Outcome("tp1", 2.0, -0.3, 2.4, True, 1, 3))
+    await recorder.record_lifecycle("BTCUSDT", [ev])
+    assert recorder.lifecycle_written == 1
+    assert recorder.failures == 0
+
+    row = await db_conn.fetchrow(
+        "SELECT status, status_reason, eval_outcome, eval_r, eval_mae,"
+        " eval_mfe FROM recommendations ORDER BY id DESC LIMIT 1")
+    assert row["status"] == "evaluated"
+    assert row["status_reason"] == "hypothetical tp1"
+    assert row["eval_outcome"] == "tp1"
+    assert float(row["eval_r"]) == 2.0
+    assert float(row["eval_mae"]) == -0.3 and float(row["eval_mfe"]) == 2.4
+
+
+async def test_record_lifecycle_invalidated_status_only(db_conn):
+    """An 'invalidated' transition carries no Outcome -> status columns
+    update, eval_* stay NULL."""
+    pipe = _pipeline()
+    signal = _signal()
+    qual = _qual()
+    plan, rec = pipe._admit(signal, qual)
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    await recorder.record("BTCUSDT", [(signal, qual, plan, rec)], None)
+    ev = LifecycleEvent((signal.created_ts.isoformat(), signal.strategy),
+                        "LONG", "invalidated", "opposite-direction signal",
+                        T0, None)
+    await recorder.record_lifecycle("BTCUSDT", [ev])
+    row = await db_conn.fetchrow(
+        "SELECT status, status_reason, eval_outcome FROM recommendations"
+        " ORDER BY id DESC LIMIT 1")
+    assert row["status"] == "invalidated"
+    assert row["eval_outcome"] is None
+
+
+async def test_record_lifecycle_skips_unknown_recommendation(db_conn):
+    """A transition for a rec whose insert never happened (no remembered
+    id) is skipped, not an error."""
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    ev = LifecycleEvent(("2099-01-01T00:00:00+00:00", "S1"), "LONG",
+                        "expired", "horizon", T0, None)
+    await recorder.record_lifecycle("BTCUSDT", [ev])
+    assert recorder.lifecycle_written == 0 and recorder.failures == 0
+
+
+async def test_record_lifecycle_two_same_bar_recs_no_collision(db_conn):
+    """Regression (freeze-audit BLOCKER): two strategies admitting on ONE
+    bar share created_ts; the (created_ts, strategy) identity must keep
+    their rows and lifecycle updates distinct."""
+    ts = T0
+    s1 = Signal("S1", "LONG", 100.0, 99.0, 102.0, None, ts, ("f",))
+    s3 = Signal("S3", "LONG", 100.0, 99.0, 103.0, None, ts, ("f",))
+    q = _qual()
+    pipe = _pipeline()
+    _, rec1 = pipe._admit(s1, q)
+    _, rec3 = pipe._admit(s3, q)
+    assert rec1 is not None and rec3 is not None
+    recorder = SignalRecorder(TxPool(db_conn), "abc1234+strategy=1")
+    plan1 = plan_trade(direction="LONG", entry=100.0, sl=99.0, tp1=102.0,
+                       equity=10000.0)
+    plan3 = plan_trade(direction="LONG", entry=100.0, sl=99.0, tp1=103.0,
+                       equity=10000.0)
+    await recorder.record("BTCUSDT", [(s1, q, plan1, rec1),
+                                      (s3, q, plan3, rec3)], None)
+    assert recorder.recommendations_written == 2
+    # S1 evaluates tp1, S3 gets invalidated — distinct rows, distinct rows
+    ev1 = LifecycleEvent((ts.isoformat(), "S1"), "LONG", "evaluated",
+                         "hypothetical tp1", ts,
+                         Outcome("tp1", 2.0, 0.0, 2.0, True, 1, 2))
+    ev3 = LifecycleEvent((ts.isoformat(), "S3"), "LONG", "invalidated",
+                         "opposite-direction signal", ts, None)
+    await recorder.record_lifecycle("BTCUSDT", [ev1, ev3])
+    assert recorder.lifecycle_written == 2
+    rows = await db_conn.fetch(
+        "SELECT r.status, r.eval_outcome, s.strategy FROM recommendations r"
+        " JOIN signals s ON s.id = r.signal_id WHERE r.ts = $1"
+        " ORDER BY s.strategy", ts)
+    by_strat = {r["strategy"]: r for r in rows}
+    assert by_strat["S1"]["status"] == "evaluated"
+    assert by_strat["S1"]["eval_outcome"] == "tp1"
+    assert by_strat["S3"]["status"] == "invalidated"
+    assert by_strat["S3"]["eval_outcome"] is None      # not mis-attributed
+
+
+async def test_record_lifecycle_survives_mid_update_failure(db_conn):
+    """A DB error during a lifecycle update is caught (analysis continues);
+    the atomic status+eval transaction leaves no half-written row."""
+    class _FlakyPool:
+        def __init__(self, real):
+            self._real = real
+            self.calls = 0
+
+        def acquire(self):
+            self.calls += 1
+            raise RuntimeError("update failed")
+
+    recorder = SignalRecorder(_FlakyPool(db_conn), "abc1234+strategy=1")
+    recorder._rec_ids[("BTCUSDT", T0.isoformat(), "S1")] = 12345
+    ev = LifecycleEvent((T0.isoformat(), "S1"), "LONG", "evaluated",
+                        "hypothetical tp1", T0,
+                        Outcome("tp1", 2.0, 0.0, 2.0, True, 1, 2))
+    await recorder.record_lifecycle("BTCUSDT", [ev])
+    assert recorder.failures == 1 and recorder.lifecycle_written == 0
 
 
 async def test_recorder_signal_only_when_not_admitted(db_conn):

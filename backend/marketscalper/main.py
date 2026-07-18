@@ -49,6 +49,7 @@ from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
                                             RegimeClassifier)
+from marketscalper.engines.lifecycle import RecommendationLifecycle
 from marketscalper.engines.qualification import (QualificationEngine,
                                                  spread_pct_of)
 from marketscalper.engines.risk import management_guidance, plan_trade
@@ -118,11 +119,13 @@ class _StructurePipeline:
                                          self._momentum, self._regime,
                                          volume=self._volume)   # D21.3 seam
         self._strategy = StrategyEngine(symbol, self._atr)   # D20 (P3.12)
+        self._lifecycle = RecommendationLifecycle(symbol)    # D22 (P4.2)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
         self._signals: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._recommendations: deque = deque(maxlen=self._EVENTS_SHOWN)
-        self._records: list = []    # (signal, qual, plan, rec|None) —
-        self._last_payload = None   # drained every bar (D21.6)
+        self._records: list = []       # (signal, qual, plan, rec|None) —
+        self._lifecycle_events: list = []  # drained every bar (D21.6/P4.5)
+        self._last_payload = None
         self._bos_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._choch_events: deque = deque(maxlen=self._EVENTS_SHOWN)
         self._sweep_events: deque = deque(maxlen=self._EVENTS_SHOWN)
@@ -191,6 +194,8 @@ class _StructurePipeline:
             spread_pct=self._spread_pct,
             clock=(self._clock_provider()
                    if self._clock_provider is not None else None))
+        new_recs = []
+        bar_signals = []
         for signal in self._strategy.evaluate(     # D20.5: last consumer
                 candle,
                 trend_5m=self._trend_5m.state, bos_event=bos_event,
@@ -202,13 +207,48 @@ class _StructurePipeline:
                 session_vwap=self._volume.session_vwap,
                 rvol=self._volume.rvol):
             self._signals.append(signal)
+            bar_signals.append((signal.strategy, signal.direction))
             plan, rec = self._admit(signal, qual)  # D21.2 (§6→§7 flow)
             if rec is not None:
                 self._recommendations.append(rec)
+                new_recs.append(rec)
             self._records.append((signal, qual, plan, rec))
+        # P4.2 lifecycle: advance PRE-EXISTING recs (this candle appended)
+        # BEFORE registering the ones just created (their creation bar is
+        # this candle — never advanced on their own creation bar).
+        g1_ok = qual.gates[0].passed
+        events = self._lifecycle.update(candle, opposite_signals=bar_signals,
+                                        g1_ok=g1_ok)
+        for ev in events:
+            self._apply_lifecycle_event(ev)
+        self._lifecycle_events.extend(events)
+        for rec in new_recs:
+            rec["status"] = "active"               # D22.1 initial state
+            self._lifecycle.on_recommendation(rec, candle)
         payload = self._payload(candle, zones, qual)
         self._last_payload = payload               # D21.1 state_snapshot
         self._store.set_structure(self._symbol, payload)
+
+    def _apply_lifecycle_event(self, ev) -> None:
+        """Reflect a terminal transition on the payload's recommendation
+        (status + eval_*), so the UI sees the current lifecycle state
+        (P4.2). The deque is bounded — a rec pushed out is DB-only."""
+        for rec in self._recommendations:
+            if (rec["created_ts"], rec.get("strategy")) == ev.rec_key:
+                rec["status"] = ev.status
+                rec["status_reason"] = ev.reason
+                if ev.outcome is not None:
+                    rec["eval_outcome"] = ev.outcome.outcome
+                    rec["eval_r"] = ev.outcome.eval_r
+                    rec["eval_mae"] = ev.outcome.eval_mae
+                    rec["eval_mfe"] = ev.outcome.eval_mfe
+                break
+
+    def drain_lifecycle(self) -> list:
+        """This bar's lifecycle transitions for the recorder (P4.5);
+        empties the buffer."""
+        events, self._lifecycle_events = self._lifecycle_events, []
+        return events
 
     def snapshot_payload(self) -> dict | None:
         """The last published payload — the signal row's state_snapshot."""
@@ -234,6 +274,7 @@ class _StructurePipeline:
             "net_rr_tp1": plan.net_rr_tp1, "net_rr_tp2": plan.net_rr_tp2,
             "guidance": list(management_guidance(plan)),
             "score": qual.score, "verdict": qual.verdict,
+            "invalid_after_bars": signal.invalid_after_bars,   # D22.1a
         }
         return plan, rec
 
@@ -414,9 +455,12 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
         if candle.tf == "1m":
             pipeline.step(candle)
             records = pipeline.drain_records()     # always drained (bounded)
+            events = pipeline.drain_lifecycle()    # P4.5 status/eval writes
             if recorder is not None and records:
                 await recorder.record(candle.symbol, records,
                                       pipeline.snapshot_payload())
+            if recorder is not None and events:
+                await recorder.record_lifecycle(candle.symbol, events)
         elif candle.tf == "5m":
             pipeline.step_5m(candle)
 

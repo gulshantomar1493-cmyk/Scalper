@@ -134,6 +134,43 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert "XRPUSDT" not in str(structure)
 
 
+async def test_pipeline_recommendation_carries_lifecycle_status():
+    """P4.2: an admitted recommendation flows through the lifecycle wiring
+    with a 'status' in the payload (starts 'active'); the pipeline exposes
+    drain_lifecycle for the recorder."""
+    from rec_dataset import rec_candles, rec_seed
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _wire_structure_engines
+    from marketscalper.providers.base import Candle
+
+    def fold(w):
+        return Candle(symbol=w[0].symbol, tf="5m", ts=w[0].ts, o=w[0].o,
+                      h=max(c.h for c in w), l=min(c.l for c in w),
+                      c=w[-1].c, v=sum(c.v for c in w), qv=sum(c.qv for c in w),
+                      n_trades=sum(c.n_trades for c in w),
+                      taker_buy_v=sum(c.taker_buy_v for c in w))
+
+    bus = EventBus()
+    store = StateStore(bus)
+    _wire_structure_engines(bus, store, ["BTCUSDT"],
+                            seed_candles={"BTCUSDT": rec_seed("BTCUSDT")})
+    win = []
+    seen_active = False
+    for candle in rec_candles("BTCUSDT"):
+        await bus.publish(candle)
+        win.append(candle)
+        if len(win) == 5:
+            await bus.publish(fold(win))
+            win = []
+        recs = store.snapshot("BTCUSDT").structure["recommendations"]
+        for r in recs:
+            assert "status" in r                       # P4.2 wiring ran
+            if r["status"] == "active":
+                seen_active = True
+    assert seen_active                                 # a real rec was tracked
+
+
 async def test_pipeline_projects_order_blocks_non_empty():
     """Freeze-audit fix: the OB payload field mapping must be executed with
     real content, not just the empty shape."""

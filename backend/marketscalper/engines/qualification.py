@@ -282,7 +282,8 @@ class QualificationEngine:
             reasons.append("✓ validated-trendline interaction"
                            " (+20 structure)")
 
-        # Liquidity (3 evaluable items; R-distance flagged 0 until P3.17)
+        # Liquidity (3 evaluable items; R-distance flagged 0 — needs a
+        # per-signal plan, so it stays P5-era per D21.3, not bar-level)
         liquidity = 0.0
         if recent(self._last_pool_sweep_bar, W_SWEEP):
             liquidity += 40.0

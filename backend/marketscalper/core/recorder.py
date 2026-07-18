@@ -53,8 +53,10 @@ class SignalRecorder:
     def __init__(self, pool: asyncpg.Pool, stamp: str) -> None:
         self._pool = pool
         self._stamp = stamp
+        self._rec_ids: dict = {}       # (symbol, created_ts) -> row id (P4.5)
         self.signals_written = 0
         self.recommendations_written = 0
+        self.lifecycle_written = 0
         self.failures = 0
 
     async def record(self, symbol: str, records, payload) -> None:
@@ -90,7 +92,7 @@ class SignalRecorder:
                     )
                     self.signals_written += 1
                     if rec is not None:
-                        await db.insert_recommendation(
+                        rec_id = await db.insert_recommendation(
                             conn,
                             signal_id=signal_id, ts=signal.created_ts,
                             direction=signal.direction,
@@ -102,8 +104,49 @@ class SignalRecorder:
                             net_rr_tp1=plan.net_rr_tp1,
                         )
                         self.recommendations_written += 1
+                        # remember the row id for the P4.5 lifecycle writes,
+                        # keyed by the UNIQUE rec identity (created_ts alone
+                        # is not unique — S1/S2/S3 can admit on one bar)
+                        self._rec_ids[(symbol, signal.created_ts.isoformat(),
+                                       signal.strategy)] = rec_id
             except Exception:
                 self.failures += 1
                 log.exception("recorder: failed to persist %s %s signal "
                               "at %s (analysis continues)",
                               symbol, signal.strategy, signal.created_ts)
+
+    async def record_lifecycle(self, symbol: str, events) -> None:
+        """Persist a bar's lifecycle transitions (P4.5): the status columns
+        always, and the eval_* columns for evaluated/expired. Same error
+        doctrine — a DB failure never stops the analysis chain. A rec whose
+        insert failed (no id) is skipped; a terminal transition frees its
+        id (each rec transitions exactly once, D22.1)."""
+        for ev in events:
+            # rec_key = (created_ts, strategy) — unique per symbol (D20.1)
+            key = (symbol, ev.rec_key[0], ev.rec_key[1])
+            rec_id = self._rec_ids.get(key)
+            if rec_id is None:
+                continue                       # signal insert failed earlier
+            try:
+                async with self._pool.acquire() as conn:
+                    # status + eval in one transaction so an evaluated row
+                    # never lands with NULL eval_* (the invariant holds)
+                    async with conn.transaction():
+                        await db.update_recommendation_status(
+                            conn, rec_id, status=ev.status, status_ts=ev.ts,
+                            status_reason=ev.reason)
+                        if ev.outcome is not None:
+                            await db.update_recommendation_eval(
+                                conn, rec_id,
+                                eval_outcome=ev.outcome.outcome,
+                                eval_r=ev.outcome.eval_r,
+                                eval_mae=ev.outcome.eval_mae,
+                                eval_mfe=ev.outcome.eval_mfe)
+                    self.lifecycle_written += 1
+                # each recommendation transitions once -> free the id
+                self._rec_ids.pop(key, None)
+            except Exception:
+                self.failures += 1
+                log.exception("recorder: failed to persist %s lifecycle "
+                              "%s at %s (analysis continues)",
+                              symbol, ev.status, ev.ts)
