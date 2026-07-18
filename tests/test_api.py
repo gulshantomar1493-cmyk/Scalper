@@ -288,6 +288,9 @@ async def _seed_evaluated_rec(db_conn, strategy, outcome, eval_r, result,
         db_conn, signal_id=sig_id, ts=ts, direction="LONG", entry_px=100.0,
         sl=99.0, tp1=102.0, tp2=None, suggested_qty=1.0, risk_amt=50.0,
         est_fees=0.1, net_rr_tp1=1.7)
+    await db.update_recommendation_status(
+        db_conn, rec_id, status="evaluated", status_ts=ts,
+        status_reason="hypothetical " + outcome)   # consistent w/ the lifecycle
     await db.update_recommendation_eval(
         db_conn, rec_id, eval_outcome=outcome, eval_r=eval_r,
         eval_mae=-0.4, eval_mfe=2.2)
@@ -344,6 +347,31 @@ async def test_analytics_mae_endpoint(db_conn):
         assert body["S1"]["n_evaluated"] == 2 and body["S1"]["n_winners"] == 1
         assert len(body["S1"]["mae_histogram"]) == 4
         assert body["S1"]["sl_preserve_90"] is not None
+    finally:
+        await _stop(server, task)
+
+
+async def test_campaign_audit_and_expectancy_endpoints(db_conn):
+    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/campaign/audit") as r:
+                assert r.status == 401                     # Bearer required
+            async with s.get(f"http://{addr}/campaign/audit",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                audit = await r.json()
+            assert audit["clean"] is True and audit["n_recommendations"] == 1
+            async with s.get(f"http://{addr}/campaign/expectancy",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                rep = await r.json()
+            assert rep["trusted_threshold"] == 200
+            # 1 rec is far below the 200 threshold -> not eligible
+            assert rep["strategies"]["S1"]["sample_sufficient"] is False
+            assert rep["any_trusted_eligible"] is False
     finally:
         await _stop(server, task)
 

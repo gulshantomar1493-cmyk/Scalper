@@ -56,6 +56,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from marketscalper import db
 from marketscalper.analytics import (compute_analytics,
                                      compute_mae_distribution, journal_list)
+from marketscalper.campaign import (data_quality_audit, expectancy_report)
 from marketscalper.core.bus import EventBus
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
@@ -310,6 +311,20 @@ def create_app(
         evaluator data. Read-only."""
         async with pool.acquire() as conn:
             return await compute_mae_distribution(conn)
+
+    @app.get("/campaign/audit", dependencies=[Depends(require_token)])
+    async def campaign_audit() -> dict:
+        """P5.5: data-quality audit over the persisted tables. Read-only."""
+        async with pool.acquire() as conn:
+            return await data_quality_audit(conn)
+
+    @app.get("/campaign/expectancy", dependencies=[Depends(require_token)])
+    async def campaign_expectancy() -> dict:
+        """P5.7: fees-included expectancy report per strategy (the P5.8
+        TRUSTED gate's number). Read-only."""
+        async with pool.acquire() as conn:
+            analytics = await compute_analytics(conn)
+        return expectancy_report(analytics)
 
     @app.get("/journal", dependencies=[Depends(require_token)])
     async def journal_list_endpoint(limit: int = 100) -> list:
