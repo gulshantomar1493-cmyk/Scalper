@@ -16,8 +16,11 @@ stream only — 5m pivots serve A8 external structure elsewhere):
             candidates need >= 3 touches.
     Score   touches*2 + span_bars/20 - bars_since_last_touch/100 (D11.8).
 
-Dedup/cap (Step 3), break episodes (Step 4), lifecycle/channels (Step 5)
-and persistence are the later trendline tasks — not here.
+P1.15 adds the kept-line set on top: greedy dedup + the 3+3 cap
+(TrendlineBook), the active/archived lifecycle (staleness + eviction,
+both terminal) and the persistence capability (line_to_row; R1: no
+wiring in Phase 1). Break episodes ('broken', Step 4) and channels
+(Step 5) are P1.16/P1.17.
 
 Cadence per closed 1m candle (established engine order): ATR update ->
 pivot detection/labeling -> on_pivot fan-out -> update(candle).
@@ -47,6 +50,10 @@ MIN_TOUCHES = 3
 SCORE_TOUCH_WEIGHT = 2.0
 SCORE_SPAN_DIVISOR = 20.0
 SCORE_AGE_DIVISOR = 100.0
+DEDUP_SLOPE_REL = 0.10                 # near-parallel slope threshold
+DEDUP_INTERCEPT_ATR_RATIO = 0.3        # current-bar log-value threshold
+CAP_PER_SIDE = 3                       # kept lines: 3 support + 3 resistance
+ARCHIVE_AGE_BARS = 300                 # bars since last touch -> archived
 
 
 @dataclass(frozen=True)
@@ -174,3 +181,168 @@ class TrendlineDetector:
                  - (cur - last_touch) / SCORE_AGE_DIVISOR)
         return TrendlineCandidate(side, a_idx, b_idx, a_pivot, b_pivot,
                                   slope, intercept, touches, last_touch, score)
+
+
+@dataclass
+class KeptTrendline:
+    """One line in the kept set (roadmap P1.15; D11 Step 3 + lifecycle).
+
+    Statuses: 'active' -> 'archived' (300-bar staleness or cap/dedup
+    eviction; terminal) — 'broken' exists in the D11 vocabulary but its
+    trigger is the P1.16 break episode, not implemented here. Once kept, a
+    line lives by lifecycle: the book maintains its touches/age itself,
+    independent of the detector's 12-pivot candidate window (D11 edge case).
+    """
+
+    side: str
+    a_index: int
+    b_index: int
+    a_pivot: Pivot
+    b_pivot: Pivot
+    slope: float
+    intercept: float
+    touches: int
+    last_touch_index: int
+    accepted_index: int
+    accepted_ts: object            # datetime — acceptance bar identity
+    status: str = "active"
+
+
+def line_to_row(line: KeptTrendline) -> dict:
+    """KeptTrendline -> keyword arguments of db.insert_level (P0.7), per
+    D11.1/A4. Channels are never persisted (D11.10) — no channel type
+    exists in this engine, and the levels.kind vocabulary has no CHANNEL."""
+    return {
+        "symbol": line.a_pivot.symbol, "tf": line.a_pivot.tf,
+        "kind": "TRENDLINE", "p1": line.a_pivot.price,
+        "p2": line.b_pivot.price, "t1": line.a_pivot.ts,
+        "t2": line.b_pivot.ts, "slope": line.slope,
+        "created_ts": line.accepted_ts,
+    }
+
+
+class TrendlineBook:
+    """The kept-line set: dedup, 3+3 cap, and lifecycle (roadmap P1.15;
+    D11 Steps 3 + 5's archive rules).
+
+    Cadence per closed 1m candle (after atr.update and detector.update):
+    refresh(candle) — updates kept-line touches per D11.7, archives stale
+    lines (>= 300 bars since last touch), then re-selects the kept set:
+    kept lines (re-scored from their own maintained state) compete with
+    fresh detector candidates; greedy best-first dedup (near-parallel iff
+    slope delta < 10% relative AND current-bar log values differ by less
+    than 0.3*ATR/close), cap 3 per side; ordering key: score desc, newer
+    b, newer a, side. Any previously kept line that loses selection is
+    archived. Archive is TERMINAL: an archived geometry key can never be
+    re-accepted. Persistence stays capability-only per R1 (line_to_row +
+    the existing P0.7 helpers; no pool anywhere in Phase 1).
+    """
+
+    __slots__ = ("_atr", "_detector", "_active", "_archived_keys", "_cur")
+
+    def __init__(self, detector: TrendlineDetector, atr: IncrementalATR) -> None:
+        self._detector = detector
+        self._atr = atr
+        self._active: list[KeptTrendline] = []
+        self._archived_keys: set[tuple] = set()
+        self._cur = -1
+
+    @property
+    def active(self) -> list[KeptTrendline]:
+        """Kept lines in selection order (score desc at last refresh)."""
+        return list(self._active)
+
+    @property
+    def archived_keys(self) -> frozenset:
+        """(side, a_index, b_index) of every archived line — terminal."""
+        return frozenset(self._archived_keys)
+
+    def refresh(self, candle: Candle) -> None:
+        """Fold one closed candle into the kept set."""
+        self._cur += 1
+        cur = self._cur
+        atr = self._atr.value
+
+        # 1. kept-line touch maintenance (D11.7, same rule as the detector)
+        if atr is not None:
+            log_close = log(candle.c)
+            tol = TOUCH_TOLERANCE_ATR_RATIO * atr / candle.c
+            for line in self._active:
+                y = line.intercept + line.slope * (cur - line.a_index)
+                support = line.side == "support"
+                if (log_close < y) if support else (log_close > y):
+                    continue                       # close crossed: no touch
+                extreme = candle.l if support else candle.h
+                if abs(log(extreme) - y) <= tol:
+                    line.touches += 1
+                    line.last_touch_index = cur
+
+        # 2. staleness archive (terminal)
+        survivors = []
+        for line in self._active:
+            if cur - line.last_touch_index >= ARCHIVE_AGE_BARS:
+                self._archive(line)
+            else:
+                survivors.append(line)
+        self._active = survivors
+
+        # 3. re-selection (dedup + cap); engine inactive while ATR unwarm
+        if atr is None:
+            return
+        kept_keys = {(l.side, l.a_index, l.b_index) for l in self._active}
+        entries = []
+        for line in self._active:
+            score = (SCORE_TOUCH_WEIGHT * line.touches
+                     + (line.b_index - line.a_index) / SCORE_SPAN_DIVISOR
+                     - (cur - line.last_touch_index) / SCORE_AGE_DIVISOR)
+            entries.append((score, line.b_index, line.a_index, line.side,
+                            line, None))
+        for cand in self._detector.candidates():
+            key = (cand.side, cand.a_index, cand.b_index)
+            if key in kept_keys or key in self._archived_keys:
+                continue
+            entries.append((cand.score, cand.b_index, cand.a_index,
+                            cand.side, None, cand))
+        entries.sort(key=lambda e: (-e[0], -e[1], -e[2], e[3]))
+
+        chosen: dict[str, list] = {"support": [], "resistance": []}
+        geoms: dict[str, list] = {"support": [], "resistance": []}
+        for score, _b, _a, side, line, cand in entries:
+            bucket = chosen[side]
+            if len(bucket) == CAP_PER_SIDE:
+                continue
+            slope = line.slope if line is not None else cand.slope
+            a_index = line.a_index if line is not None else cand.a_index
+            intercept = line.intercept if line is not None else cand.intercept
+            y = intercept + slope * (cur - a_index)
+            if any(abs(slope - s2) < DEDUP_SLOPE_REL * max(abs(slope), abs(s2))
+                   and abs(y - y2) < DEDUP_INTERCEPT_ATR_RATIO * atr / candle.c
+                   for s2, y2 in geoms[side]):
+                continue                           # clustered: best already in
+            bucket.append((line, cand))
+            geoms[side].append((slope, y))
+
+        new_active = []
+        selected_lines = {id(line) for side_bucket in chosen.values()
+                          for line, _c in side_bucket if line is not None}
+        for line in self._active:                  # evictions are terminal
+            if id(line) not in selected_lines:
+                self._archive(line)
+        for side in ("support", "resistance"):
+            for line, cand in chosen[side]:
+                if line is None:
+                    line = KeptTrendline(
+                        cand.side, cand.a_index, cand.b_index, cand.a_pivot,
+                        cand.b_pivot, cand.slope, cand.intercept,
+                        cand.touches, cand.last_touch_index, cur, candle.ts)
+                new_active.append(line)
+        new_active.sort(key=lambda l: (
+            -(SCORE_TOUCH_WEIGHT * l.touches
+              + (l.b_index - l.a_index) / SCORE_SPAN_DIVISOR
+              - (cur - l.last_touch_index) / SCORE_AGE_DIVISOR),
+            -l.b_index, -l.a_index, l.side))
+        self._active = new_active
+
+    def _archive(self, line: KeptTrendline) -> None:
+        line.status = "archived"
+        self._archived_keys.add((line.side, line.a_index, line.b_index))
