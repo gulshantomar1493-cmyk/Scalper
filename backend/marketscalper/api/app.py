@@ -54,7 +54,8 @@ from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db
-from marketscalper.analytics import compute_analytics, journal_list
+from marketscalper.analytics import (compute_analytics,
+                                     compute_mae_distribution, journal_list)
 from marketscalper.core.bus import EventBus
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
@@ -302,6 +303,13 @@ def create_app(
         strategy / per session. Read-only over the persisted rows."""
         async with pool.acquire() as conn:
             return await compute_analytics(conn)
+
+    @app.get("/analytics/mae", dependencies=[Depends(require_token)])
+    async def analytics_mae() -> dict:
+        """P5.2: per-strategy MAE distribution + SL-tuning summary over the
+        evaluator data. Read-only."""
+        async with pool.acquire() as conn:
+            return await compute_mae_distribution(conn)
 
     @app.get("/journal", dependencies=[Depends(require_token)])
     async def journal_list_endpoint(limit: int = 100) -> list:

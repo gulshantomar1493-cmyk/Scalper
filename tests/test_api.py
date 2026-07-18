@@ -327,6 +327,27 @@ async def test_analytics_endpoint_roundtrip(db_conn):
         await _stop(server, task)
 
 
+async def test_analytics_mae_endpoint(db_conn):
+    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
+    await _seed_evaluated_rec(db_conn, "S1", "sl", -1.0, "loss", -1.0, hour=10)
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/analytics/mae") as r:
+                assert r.status == 401                     # Bearer required
+            async with s.get(f"http://{addr}/analytics/mae",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+        assert "S1" in body
+        assert body["S1"]["n_evaluated"] == 2 and body["S1"]["n_winners"] == 1
+        assert len(body["S1"]["mae_histogram"]) == 4
+        assert body["S1"]["sl_preserve_90"] is not None
+    finally:
+        await _stop(server, task)
+
+
 async def test_journal_list_endpoint(db_conn):
     await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
     await _seed_evaluated_rec(db_conn, "S2", "sl", -1.0, "loss", -1.0, hour=15)

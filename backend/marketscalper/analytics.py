@@ -105,6 +105,75 @@ def aggregate(rows: list) -> dict:
     }
 
 
+# P5.2 — MAE-distribution buckets (R units, adverse = negative). Each is
+# an inclusive-low, exclusive-high [lo, hi) band; the last catches the tail.
+MAE_BUCKETS = ((0.0, -0.5), (-0.5, -1.0), (-1.0, -1.5), (-1.5, None))
+
+
+def _mae_histogram(maes: list) -> list:
+    """Counts of MAE values (≤ 0, in R) per band — deterministic order."""
+    counts = [0] * len(MAE_BUCKETS)
+    for v in maes:
+        for i, (lo, hi) in enumerate(MAE_BUCKETS):
+            if v <= lo and (hi is None or v > hi):
+                counts[i] += 1
+                break
+    return [{"band": (f"<={lo:.1f}R" if hi is None
+                      else f"{lo:.1f}..{hi:.1f}R"),
+             "count": counts[i]} for i, (lo, hi) in enumerate(MAE_BUCKETS)]
+
+
+def _sorted_winner_maes(rows: list) -> list:
+    winners = [r for r in rows
+               if r["eval_outcome"] in _HYP_WIN and r["eval_mae"] is not None]
+    return sorted(r["eval_mae"] for r in winners)      # ascending (worst first)
+
+
+def _preserve_stop(winner_maes: list, keep: float):
+    """The tightest SL (in R) that would still have preserved `keep`
+    fraction of the winners — the P5.2 SL-tuning signal. Winner MAEs are
+    negative; the value below which only (1-keep) of winners fall."""
+    if not winner_maes:
+        return None
+    idx = int((1.0 - keep) * len(winner_maes))         # index into ascending
+    idx = max(0, min(idx, len(winner_maes) - 1))
+    return winner_maes[idx]
+
+
+def mae_distribution(rows: list) -> dict:
+    """P5.2: per-strategy MAE/MFE distribution over EVALUATED trades plus
+    the SL-tuning summary (the worst/median winner MAE and the stop levels
+    that would have preserved 90% / 75% of winners). Pure. Rows are the
+    analytics row dicts."""
+    by_strategy: dict = {}
+    for r in rows:
+        by_strategy.setdefault(r["strategy"], []).append(r)
+    out: dict = {}
+    for strat in sorted(by_strategy):
+        rs = by_strategy[strat]
+        evaluated = [r for r in rs if r["eval_outcome"] in _HYP_TERMINAL
+                     and r["eval_mae"] is not None]
+        winner_maes = _sorted_winner_maes(rs)
+        out[strat] = {
+            "n_evaluated": len(evaluated),
+            "n_winners": len(winner_maes),
+            "mae_histogram": _mae_histogram([r["eval_mae"] for r in evaluated]),
+            "avg_mfe": _mean([r["eval_mfe"] for r in evaluated
+                              if r["eval_mfe"] is not None]),
+            "winner_mae_worst": winner_maes[0] if winner_maes else None,
+            "winner_mae_median": (winner_maes[len(winner_maes) // 2]
+                                  if winner_maes else None),
+            "sl_preserve_90": _preserve_stop(winner_maes, 0.90),
+            "sl_preserve_75": _preserve_stop(winner_maes, 0.75),
+        }
+    return out
+
+
+async def compute_mae_distribution(conn) -> dict:
+    """Fetch + MAE distribution (P5.2). Read-only."""
+    return mae_distribution(await _analytics_rows(conn))
+
+
 def _f(v):
     return None if v is None else float(v)
 
@@ -136,14 +205,18 @@ async def journal_list(conn, limit: int = 100) -> list:
     } for r in rows]
 
 
-async def compute_analytics(conn) -> dict:
-    """Fetch + aggregate (the thin DB layer). Read-only."""
+async def _analytics_rows(conn) -> list:
+    """The shared thin fetch + Decimal->float map for the read-model."""
     rows = await conn.fetch(ANALYTICS_SQL)
-    mapped = [{
+    return [{
         "strategy": r["strategy"], "ts": r["ts"],
         "eval_outcome": r["eval_outcome"], "eval_r": _f(r["eval_r"]),
         "eval_mae": _f(r["eval_mae"]), "eval_mfe": _f(r["eval_mfe"]),
         "status": r["status"], "taken": r["taken"], "result": r["result"],
         "actual_r": _f(r["actual_r"]),
     } for r in rows]
-    return aggregate(mapped)
+
+
+async def compute_analytics(conn) -> dict:
+    """Fetch + aggregate (the thin DB layer). Read-only."""
+    return aggregate(await _analytics_rows(conn))
