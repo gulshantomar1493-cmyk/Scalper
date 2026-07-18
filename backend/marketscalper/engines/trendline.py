@@ -54,6 +54,12 @@ DEDUP_SLOPE_REL = 0.10                 # near-parallel slope threshold
 DEDUP_INTERCEPT_ATR_RATIO = 0.3        # current-bar log-value threshold
 CAP_PER_SIDE = 3                       # kept lines: 3 support + 3 resistance
 ARCHIVE_AGE_BARS = 300                 # bars since last touch -> archived
+BREAK_BODY_ATR_RATIO = 0.8             # BREAK quality: body > 0.8*ATR strict
+FAKE_BREAK_WINDOW = 3                  # re-entry candles after a close-through
+# FLAGGED PLACEHOLDER (roadmap P1.16 / D11.9): the RVOL >= 1.5 condition of
+# a qualifying BREAK evaluates True until P2.2 swaps in the real RVOL and
+# re-runs determinism. Do not add volume logic here.
+RVOL_PLACEHOLDER_PASSES = True
 
 
 @dataclass(frozen=True)
@@ -206,6 +212,39 @@ class KeptTrendline:
     accepted_index: int
     accepted_ts: object            # datetime — acceptance bar identity
     status: str = "active"
+    watch_remaining: int | None = None   # open break watch (D11.9), else None
+    watch_qualified: bool = False        # breaking candle met body+RVOL rule
+
+
+@dataclass(frozen=True)
+class TrendlineEvent:
+    """One frozen trendline event (D11.9): TOUCH | BREAK | FAKE_BREAK."""
+
+    kind: str
+    side: str
+    a_index: int
+    b_index: int
+    bar_index: int
+    ts: object                     # emitting candle identity (datetime)
+    close: float
+
+
+@dataclass
+class FlipCandidate:
+    """Role-flip candidate (D11.10): the broken line's geometry re-registered
+    on the opposite side. Direction-exempt; inherits NOTHING — touches
+    restart at 0 from the break bar and it must earn >= 3 to be kept."""
+
+    side: str                      # the flipped side
+    a_index: int
+    b_index: int
+    a_pivot: Pivot
+    b_pivot: Pivot
+    slope: float
+    intercept: float
+    created_index: int
+    touches: int = 0
+    last_touch_index: int = -1
 
 
 def line_to_row(line: KeptTrendline) -> dict:
@@ -238,13 +277,16 @@ class TrendlineBook:
     the existing P0.7 helpers; no pool anywhere in Phase 1).
     """
 
-    __slots__ = ("_atr", "_detector", "_active", "_archived_keys", "_cur")
+    __slots__ = ("_atr", "_detector", "_active", "_archived_keys",
+                 "_broken_keys", "_flips", "_cur")
 
     def __init__(self, detector: TrendlineDetector, atr: IncrementalATR) -> None:
         self._detector = detector
         self._atr = atr
         self._active: list[KeptTrendline] = []
         self._archived_keys: set[tuple] = set()
+        self._broken_keys: set[tuple] = set()
+        self._flips: list[FlipCandidate] = []
         self._cur = -1
 
     @property
@@ -257,27 +299,86 @@ class TrendlineBook:
         """(side, a_index, b_index) of every archived line — terminal."""
         return frozenset(self._archived_keys)
 
-    def refresh(self, candle: Candle) -> None:
-        """Fold one closed candle into the kept set."""
+    @property
+    def broken_keys(self) -> frozenset:
+        """(side, a_index, b_index) of every broken line — terminal."""
+        return frozenset(self._broken_keys)
+
+    @property
+    def flip_candidates(self) -> list[FlipCandidate]:
+        """Role-flip candidates still earning their >= 3 touches."""
+        return list(self._flips)
+
+    def refresh(self, candle: Candle) -> list[TrendlineEvent]:
+        """Fold one closed candle in; returns this bar's events, in the
+        deterministic per-line iteration order (the stored selection order).
+        At most one event per line per bar — no duplicates by construction."""
         self._cur += 1
         cur = self._cur
         atr = self._atr.value
+        events: list[TrendlineEvent] = []
 
-        # 1. kept-line touch maintenance (D11.7, same rule as the detector)
         if atr is not None:
             log_close = log(candle.c)
             tol = TOUCH_TOLERANCE_ATR_RATIO * atr / candle.c
+
+            # 1. break episodes + touch maintenance (D11.9/D11.7), per line
             for line in self._active:
-                y = line.intercept + line.slope * (cur - line.a_index)
                 support = line.side == "support"
-                if (log_close < y) if support else (log_close > y):
-                    continue                       # close crossed: no touch
+                y = line.intercept + line.slope * (cur - line.a_index)
+                beyond = (log_close < y) if support else (log_close > y)
+                if line.watch_remaining is not None:      # open watch
+                    if not beyond:                        # re-entry: trap
+                        line.watch_remaining = None
+                        line.watch_qualified = False
+                        events.append(self._event("FAKE_BREAK", line, cur, candle))
+                        continue                          # touches resume next bar
+                    line.watch_remaining -= 1
+                    if line.watch_remaining == 0:         # confirmed break
+                        line.status = "broken"
+                        if line.watch_qualified:
+                            events.append(self._event("BREAK", line, cur, candle))
+                    continue
+                if beyond:                                # open a new watch
+                    line.watch_remaining = FAKE_BREAK_WINDOW
+                    body = abs(candle.c - candle.o)
+                    line.watch_qualified = (
+                        body > BREAK_BODY_ATR_RATIO * atr
+                        and RVOL_PLACEHOLDER_PASSES)
+                    continue
                 extreme = candle.l if support else candle.h
                 if abs(log(extreme) - y) <= tol:
                     line.touches += 1
                     line.last_touch_index = cur
+                    events.append(self._event("TOUCH", line, cur, candle))
 
-        # 2. staleness archive (terminal)
+            # 2. remove broken lines (terminal) + create their role flips
+            survivors = []
+            for line in self._active:
+                if line.status == "broken":
+                    self._broken_keys.add(
+                        (line.side, line.a_index, line.b_index))
+                    flip_side = ("resistance" if line.side == "support"
+                                 else "support")
+                    self._flips.append(FlipCandidate(
+                        flip_side, line.a_index, line.b_index, line.a_pivot,
+                        line.b_pivot, line.slope, line.intercept, cur))
+                else:
+                    survivors.append(line)
+            self._active = survivors
+
+            # 3. flip candidates earn touches (incl. their creation bar)
+            for flip in self._flips:
+                support = flip.side == "support"
+                y = flip.intercept + flip.slope * (cur - flip.a_index)
+                if (log_close < y) if support else (log_close > y):
+                    continue
+                extreme = candle.l if support else candle.h
+                if abs(log(extreme) - y) <= tol:
+                    flip.touches += 1
+                    flip.last_touch_index = cur
+
+        # 4. staleness archive (terminal)
         survivors = []
         for line in self._active:
             if cur - line.last_touch_index >= ARCHIVE_AGE_BARS:
@@ -286,62 +387,91 @@ class TrendlineBook:
                 survivors.append(line)
         self._active = survivors
 
-        # 3. re-selection (dedup + cap); engine inactive while ATR unwarm
+        # 5. re-selection (dedup + cap); engine inactive while ATR unwarm
         if atr is None:
-            return
+            return events
         kept_keys = {(l.side, l.a_index, l.b_index) for l in self._active}
         entries = []
         for line in self._active:
-            score = (SCORE_TOUCH_WEIGHT * line.touches
-                     + (line.b_index - line.a_index) / SCORE_SPAN_DIVISOR
-                     - (cur - line.last_touch_index) / SCORE_AGE_DIVISOR)
-            entries.append((score, line.b_index, line.a_index, line.side,
-                            line, None))
+            entries.append((self._line_score(line, cur), line.b_index,
+                            line.a_index, line.side, line, None))
         for cand in self._detector.candidates():
             key = (cand.side, cand.a_index, cand.b_index)
-            if key in kept_keys or key in self._archived_keys:
+            if (key in kept_keys or key in self._archived_keys
+                    or key in self._broken_keys):
                 continue
             entries.append((cand.score, cand.b_index, cand.a_index,
                             cand.side, None, cand))
+        for flip in self._flips:                   # eligible flips compete
+            if flip.touches < MIN_TOUCHES:
+                continue
+            key = (flip.side, flip.a_index, flip.b_index)
+            if (key in kept_keys or key in self._archived_keys
+                    or key in self._broken_keys):
+                continue
+            score = (SCORE_TOUCH_WEIGHT * flip.touches
+                     + (flip.b_index - flip.a_index) / SCORE_SPAN_DIVISOR
+                     - (cur - flip.last_touch_index) / SCORE_AGE_DIVISOR)
+            entries.append((score, flip.b_index, flip.a_index, flip.side,
+                            None, flip))
         entries.sort(key=lambda e: (-e[0], -e[1], -e[2], e[3]))
 
         chosen: dict[str, list] = {"support": [], "resistance": []}
         geoms: dict[str, list] = {"support": [], "resistance": []}
-        for score, _b, _a, side, line, cand in entries:
+        for score, _b, _a, side, line, other in entries:
             bucket = chosen[side]
             if len(bucket) == CAP_PER_SIDE:
                 continue
-            slope = line.slope if line is not None else cand.slope
-            a_index = line.a_index if line is not None else cand.a_index
-            intercept = line.intercept if line is not None else cand.intercept
+            slope = line.slope if line is not None else other.slope
+            a_index = line.a_index if line is not None else other.a_index
+            intercept = (line.intercept if line is not None
+                         else other.intercept)
             y = intercept + slope * (cur - a_index)
             if any(abs(slope - s2) < DEDUP_SLOPE_REL * max(abs(slope), abs(s2))
                    and abs(y - y2) < DEDUP_INTERCEPT_ATR_RATIO * atr / candle.c
                    for s2, y2 in geoms[side]):
                 continue                           # clustered: best already in
-            bucket.append((line, cand))
+            bucket.append((line, other))
             geoms[side].append((slope, y))
 
         new_active = []
         selected_lines = {id(line) for side_bucket in chosen.values()
-                          for line, _c in side_bucket if line is not None}
+                          for line, _o in side_bucket if line is not None}
         for line in self._active:                  # evictions are terminal
             if id(line) not in selected_lines:
                 self._archive(line)
         for side in ("support", "resistance"):
-            for line, cand in chosen[side]:
+            for line, other in chosen[side]:
                 if line is None:
-                    line = KeptTrendline(
-                        cand.side, cand.a_index, cand.b_index, cand.a_pivot,
-                        cand.b_pivot, cand.slope, cand.intercept,
-                        cand.touches, cand.last_touch_index, cur, candle.ts)
+                    if isinstance(other, FlipCandidate):
+                        self._flips.remove(other)  # promoted: no inheritance
+                        line = KeptTrendline(
+                            other.side, other.a_index, other.b_index,
+                            other.a_pivot, other.b_pivot, other.slope,
+                            other.intercept, other.touches,
+                            other.last_touch_index, cur, candle.ts)
+                    else:
+                        line = KeptTrendline(
+                            other.side, other.a_index, other.b_index,
+                            other.a_pivot, other.b_pivot, other.slope,
+                            other.intercept, other.touches,
+                            other.last_touch_index, cur, candle.ts)
                 new_active.append(line)
-        new_active.sort(key=lambda l: (
-            -(SCORE_TOUCH_WEIGHT * l.touches
-              + (l.b_index - l.a_index) / SCORE_SPAN_DIVISOR
-              - (cur - l.last_touch_index) / SCORE_AGE_DIVISOR),
-            -l.b_index, -l.a_index, l.side))
+        new_active.sort(key=lambda l: (-self._line_score(l, cur),
+                                       -l.b_index, -l.a_index, l.side))
         self._active = new_active
+        return events
+
+    def _line_score(self, line: KeptTrendline, cur: int) -> float:
+        return (SCORE_TOUCH_WEIGHT * line.touches
+                + (line.b_index - line.a_index) / SCORE_SPAN_DIVISOR
+                - (cur - line.last_touch_index) / SCORE_AGE_DIVISOR)
+
+    @staticmethod
+    def _event(kind: str, line: KeptTrendline, cur: int,
+               candle: Candle) -> TrendlineEvent:
+        return TrendlineEvent(kind, line.side, line.a_index, line.b_index,
+                              cur, candle.ts, candle.c)
 
     def _archive(self, line: KeptTrendline) -> None:
         line.status = "archived"

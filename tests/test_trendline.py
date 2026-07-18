@@ -24,6 +24,7 @@ from marketscalper.engines.trendline import (
     CAP_PER_SIDE,
     MIN_TOUCHES,
     N_PIVOTS,
+    RVOL_PLACEHOLDER_PASSES,
     TrendlineBook,
     TrendlineCandidate,
     TrendlineDetector,
@@ -327,11 +328,19 @@ def test_archive_after_300_bars_inactivity_is_terminal():
     _book_feed(atr, det, book, candles, pivots.items())
     assert len(book.active) == 3
     last_touches = {_key(l): l.last_touch_index for l in book.active}
-    # flat bars far BELOW every line: no touches, no crossings that matter
-    flat = [_candle(30 + i, 50.0) for i in range(ARCHIVE_AGE_BARS + 5)]
-    _book_feed(atr, det, book, flat)
+    # price climbing ABOVE every line faster than the lines rise (8%/bar vs
+    # the steepest diagonal's ~7%/bar): valid side, always out of tolerance
+    # — no touches and no close-throughs, so staleness is the only path
+    riser = []
+    level = 600.0
+    for i in range(ARCHIVE_AGE_BARS + 5):
+        riser.append(_candle(30 + i, level, h=level * 1.01,
+                             c=level * 1.005, o=level * 1.002))
+        level *= 1.08
+    _book_feed(atr, det, book, riser)
     assert book.active == []                           # all stale-archived
     assert set(last_touches) <= book.archived_keys
+    assert book.broken_keys == frozenset()             # nothing ever broke
     # terminal: detector still offers the same keys, book never re-accepts
     assert det.candidates() != []
     assert book.active == []
@@ -345,6 +354,161 @@ def test_ordering_stability_and_deterministic_replay():
         return ([(_key(l), l.touches, l.last_touch_index, l.status)
                  for l in book.active], book.archived_keys)
     assert run() == run()
+
+
+# ============================================ break episodes + role flip
+# Kept line (support, 3, 9): y(t) = 100 * 1.1^((t-3)/6); hand values:
+# y13=117.216 y14=119.093 y15=121.000 y16=122.937 y17=124.893 y18=126.905
+# y19=128.940 y20=131.003 y21=133.100 y22=135.231. All TR/tolerance margins
+# hand-verified with the period-1 ATR.
+
+
+def _kept_book():
+    """Book with the single kept support line (3,9): touches 4, last 12."""
+    atr, det, book = _book_rig()
+    _book_feed(atr, det, book, [_candle(i, l) for i, l in enumerate(_LOWS[:13])],
+               {6: [_pivot("L", 100, 3)], 12: [_pivot("L", 110, 9)]}.items())
+    [line] = book.active
+    assert line.touches == 4 and line.watch_remaining is None
+    return atr, det, book
+
+
+def _bars(atr, det, book, specs, start):
+    """Feed (l, h, o, c) specs from bar `start`; returns events per bar."""
+    out = []
+    for j, (l, h, o, c) in enumerate(specs):
+        candle = _candle(start + j, l, h=h, c=c, o=o)
+        atr.update(candle)
+        det.update(candle)
+        out.append(book.refresh(candle))
+    return out
+
+_QUAL_BREAKER = (114.5, 121.5, 121, 115)   # body 6 > 0.8*TR(7) = 5.6
+_BELOW = [(113, 117, 116, 115), (114, 118, 117, 116), (115, 119, 118, 117)]
+
+
+def test_break_watch_opens_on_strict_close_through():
+    atr, det, book = _kept_book()
+    [events] = _bars(atr, det, book, [_QUAL_BREAKER], 13)
+    assert events == []                            # opening a watch: no event
+    [line] = book.active                           # line stays ACTIVE
+    assert line.status == "active" and line.watch_remaining == 3
+    assert line.watch_qualified is True            # body 6 > 5.6 & RVOL True
+    assert line.touches == 4                       # no touch on the through-bar
+
+
+def test_fake_break_reentry_keeps_line_and_resumes_touches():
+    atr, det, book = _kept_book()
+    events = _bars(atr, det, book, [
+        _QUAL_BREAKER,
+        (118, 122, 119, 121),                      # close 121 >= y14: re-entry
+        (121, 125, 122, 124),                      # low on y15=121: touch
+    ], 13)
+    assert [[e.kind for e in bar] for bar in events] == [[], ["FAKE_BREAK"], ["TOUCH"]]
+    [line] = book.active
+    assert line.status == "active" and line.watch_remaining is None
+    assert line.touches == 5 and line.last_touch_index == 15
+    assert book.broken_keys == frozenset()
+
+
+def test_confirmed_qualified_break_emits_event_and_breaks_line():
+    atr, det, book = _kept_book()
+    [line] = book.active
+    events = _bars(atr, det, book, [_QUAL_BREAKER] + _BELOW, 13)
+    assert [[e.kind for e in bar] for bar in events] == [[], [], [], ["BREAK"]]
+    [ev] = events[3]
+    assert (ev.side, ev.a_index, ev.b_index, ev.bar_index) == ("support", 3, 9, 16)
+    assert book.active == [] and line.status == "broken"
+    assert book.broken_keys == frozenset({("support", 3, 9)})
+    assert line.touches == 4                       # frozen during the watch
+    [flip] = book.flip_candidates                  # role flip registered
+    assert flip.side == "resistance" and flip.touches == 0
+
+
+def test_unqualified_break_is_silent_and_body_boundary_is_strict():
+    atr, det, book = _kept_book()
+    # body 4 == 0.8 * TR(5) exactly -> NOT qualified (strict >)
+    events = _bars(atr, det, book, [(114, 119, 119, 115)] + _BELOW, 13)
+    assert [e.kind for bar in events for e in bar] == []   # zero events ever
+    assert book.active == []                       # ...but the line still broke
+    assert book.broken_keys == frozenset({("support", 3, 9)})
+
+
+def test_rvol_placeholder_is_flagged_true():
+    assert RVOL_PLACEHOLDER_PASSES is True         # until P2.2 swaps real RVOL
+
+
+def test_multiple_simultaneous_watches_resolve_independently():
+    # Mirrored support+resistance rig: their lines CROSS (support above
+    # resistance from bar ~13), so one close can be beyond both at once.
+    spec = [(112, 118), (112, 118), (112, 118), (100, 130), (112, 118),
+            (112, 118), (105, 125), (112, 118), (112, 118), (110, 120),
+            (112, 118), (112, 118), (112, 118)]
+    candles = [_candle(i, l, h=h, c=115, o=114) for i, (l, h) in enumerate(spec)]
+    atr, det, book = _book_rig()
+    _book_feed(atr, det, book, candles,
+               {6: [_pivot("L", 100, 3), _pivot("H", 130, 3)],
+                12: [_pivot("L", 110, 9), _pivot("H", 120, 9)]}.items())
+    events = _bars(atr, det, book, [
+        (114, 121, 121, 115),   # beyond BOTH: two watches, body 6 qualifies
+        (118, 122, 119, 120),   # support re-enters (FAKE); resistance stays out
+        (119, 123, 120, 122),   # resistance still beyond
+        (120, 124, 121, 123),   # resistance watch expires -> BREAK
+    ], 13)
+    assert [[(e.kind, e.side) for e in bar] for bar in events] == [
+        [], [("FAKE_BREAK", "support")], [], [("BREAK", "resistance")]]
+    assert [_key(l) for l in book.active] == [("support", 3, 9)]
+    assert book.broken_keys == frozenset({("resistance", 3, 9)})
+    [flip] = book.flip_candidates
+    assert flip.side == "support" and flip.slope < 0   # direction-EXEMPT flip
+
+
+def test_role_flip_restarts_touches_and_earns_keep_independently():
+    atr, det, book = _kept_book()
+    _bars(atr, det, book, [_QUAL_BREAKER] + _BELOW, 13)      # broken @16
+    events = _bars(atr, det, book, [
+        (121, 125, 123, 122),                      # flip high on y17: touch 1
+        (123, 127, 125, 124),                      # touch 2
+        (125, 129, 127, 126),                      # touch 3 -> promoted
+    ], 17)
+    assert [e.kind for bar in events for e in bar] == []   # earning is silent
+    [line] = book.active
+    assert _key(line) == ("resistance", 3, 9)
+    assert line.status == "active" and line.touches == 3   # NO inheritance
+    assert line.slope > 0                          # ascending resistance:
+    assert book.flip_candidates == []              # direction-exempt path
+    # the original support key stays terminally broken (never re-accepted)
+    assert ("support", 3, 9) in book.broken_keys
+    assert det.candidates() != []                  # detector still offers it
+
+
+def test_full_lifecycle_and_replay_determinism():
+    def run():
+        atr, det, book = _kept_book()
+        log = []
+        log += _bars(atr, det, book, [_QUAL_BREAKER], 13)          # WATCH
+        log += _bars(atr, det, book, [(118, 122, 119, 121)], 14)   # FAKE->ACTIVE
+        log += _bars(atr, det, book, [(121, 125, 122, 124)], 15)   # TOUCH
+        # second cross, weak body (4 <= 0.8*TR(9)=7.2): silent break path
+        log += _bars(atr, det, book, [(115, 120, 120, 116)], 16)   # WATCH
+        log += _bars(atr, det, book, [(114, 118, 117, 116),
+                                      (115, 119, 118, 117),
+                                      (116, 120, 119, 118)], 17)   # BROKEN @19
+        log += _bars(atr, det, book, [(127, 131, 129, 128),
+                                      (129, 133, 131, 130),
+                                      (131, 135, 133, 132)], 20)   # flip earns
+        snapshot = [(_key(l), l.status, l.touches, l.watch_remaining)
+                    for l in book.active]
+        return ([[(e.kind, e.side, e.bar_index) for e in bar] for bar in log],
+                snapshot, book.broken_keys, book.archived_keys)
+
+    events, snapshot, broken, archived = run()
+    flat = [e for bar in events for e in bar]
+    assert flat == [("FAKE_BREAK", "support", 14), ("TOUCH", "support", 15)]
+    assert len(flat) == len(set(flat))             # no duplicate events
+    assert snapshot == [(("resistance", 3, 9), "active", 3, None)]
+    assert broken == frozenset({("support", 3, 9)})
+    assert run() == (events, snapshot, broken, archived)   # replay-identical
 
 
 async def test_persistence_capability_lines_only(db_conn):
