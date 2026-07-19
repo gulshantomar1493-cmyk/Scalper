@@ -10,11 +10,17 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Deploy to VPS
+      - name: Deploy to VPS (as deploy-ms — never root)
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
+          # Deploy user is PINNED to deploy-ms, which owns the repo/.git/venv.
+          # git + pip run as deploy-ms; only `systemctl restart marketscalper`
+          # uses sudo (NOPASSWD, scoped to that one unit). Root never runs git
+          # here (root's git safe.directory for /opt/marketscalper was removed).
+          # VPS_SSH_KEY must be deploy-ms's deploy key (its public half is in
+          # deploy-ms's authorized_keys).
+          username: deploy-ms
           key: ${{ secrets.VPS_SSH_KEY }}
           script: |
             /usr/local/bin/marketscalper-deploy
