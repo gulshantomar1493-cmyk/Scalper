@@ -1,42 +1,172 @@
 <!DOCTYPE html>
-<!-- MarketScalper — frontend shell (roadmap P0.22; Architecture §9).
-     Standalone static files: no build system, no framework, no bundler.
-     Open as: index.html?api=127.0.0.1:8000&token=YOUR_TOKEN
-     (?api defaults to the serving host; token can also be entered at load.) -->
+<!-- MarketScalper — frontend shell (roadmap P0.22; §9). Standalone static files.
+     Phase 2 Step 1: application shell (grouped sidebar + hash router + pages +
+     beginner-mode toggle). The Live page keeps the existing content unchanged
+     (migrated to the approved v3 layout in Step 2).
+     Open as: index.html?api=127.0.0.1:8000&token=YOUR_TOKEN -->
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MarketScalper</title>
-  <!-- Set the saved theme before first paint (no flash). Default = light cream. -->
-  <script>try{if(localStorage.getItem("ms_theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
+  <!-- Set saved theme + beginner-mode before first paint (no flash). -->
+  <script>try{var r=document.documentElement;if(localStorage.getItem("ms_theme")==="dark")r.setAttribute("data-theme","dark");r.setAttribute("data-beginner",localStorage.getItem("ms_beginner")==="off"?"off":"on");}catch(e){}</script>
   <link rel="stylesheet" href="styles.css" />
   <!-- TradingView Lightweight Charts v5 — pinned version (Apache-2.0, §2 locked) -->
   <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      MarketScalper
-      <span class="brand-sub">deterministic analysis &middot; decision support &middot; no execution</span>
+  <!-- ===================== SIDEBAR (grouped nav) ===================== -->
+  <nav id="sidebar">
+    <div class="sb-brand">
+      <span class="sb-logo">📈</span>
+      <div><b>MarketScalper</b><small>decision support</small></div>
     </div>
-    <div class="switcher mono">
-      <button id="sym-BTCUSDT" type="button" title="Bitcoin (BTCUSDT) ka chart dekho">BTCUSDT</button>
-      <button id="sym-ETHUSDT" type="button" title="Ethereum (ETHUSDT) ka chart dekho">ETHUSDT</button>
+    <div class="sb-group">Trading</div>
+    <button class="sb-nav" type="button" data-nav="live" title="Live analysis">
+      <svg viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>Live</button>
+    <button class="sb-nav" type="button" data-nav="replay" title="Practice historical trades">
+      <svg viewBox="0 0 24 24"><path d="M7 5l11 7-11 7z"/></svg>Replay</button>
+    <div class="sb-group">Analytics</div>
+    <button class="sb-nav" type="button" data-nav="review" title="How the recommendations would have performed">
+      <svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 13l2 2 4-4"/></svg>Trade Review</button>
+    <button class="sb-nav" type="button" data-nav="journal" title="Your logged trades, notes and lessons">
+      <svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h5"/></svg>Journal</button>
+    <button class="sb-nav" type="button" data-nav="analytics" title="Performance dashboard">
+      <svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analytics</button>
+    <div class="sb-group">Account</div>
+    <button class="sb-nav" type="button" data-nav="settings" title="Theme, token, symbols, preferences">
+      <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2"/><path d="M12 3v3M12 18v3M4.9 4.9l2.1 2.1M17 17l2.1 2.1M19.1 4.9L17 7M7 17l-2.1 2.1"/></svg>Settings</button>
+    <div class="sb-spacer"></div>
+    <div class="sb-beginner">
+      <div class="sb-beginner-t">Beginner Mode<small>helper text on/off</small></div>
+      <button id="beginner-toggle" class="sb-switch" type="button" role="switch" aria-checked="true" title="Show helper text under each section"></button>
     </div>
-    <div class="conn">
-      <button id="theme-toggle" type="button" class="chrome-btn" title="Light cream / Dark theme badlo">🌙 Dark</button>
-      <button id="tools-toggle" type="button" class="chrome-btn" title="Replay + advanced tools kholo / band karo (home saaf rehta hai)">▾ Replay &amp; Tools</button>
-      <button id="help-open" type="button" class="help-open-btn" title="Poora guide — tool kaise use karein (Hinglish)">❓ Madad</button>
-      <button id="dash-open" type="button" class="dash-open-btn" title="Analytics + Journal kholo">Dashboard</button>
-      <span id="trend-state" class="mono trend" title="Abhi ka market trend: BULLISH / BEARISH / RANGE">trend: —</span>
-      <span id="conn-dot" class="dot"></span>
-      <span id="conn-text" class="mono" title="Server se connection status">CONNECTING</span>
-    </div>
-  </header>
+    <button id="sidebar-help" class="sb-help" type="button">Need help? <small>Open Madad guide</small></button>
+  </nav>
 
-  <!-- Analytics dashboard + journal tab (P4.12; §11). Overlay, hidden
-       until the header button opens it; app.js fetches, dashboard.js draws. -->
+  <!-- ===================== PAGES (router) ===================== -->
+  <div id="main">
+    <div id="pages">
+      <!-- LIVE PAGE — existing content, unchanged (Step 2 migrates the layout) -->
+      <section class="page active" data-page="live">
+        <header class="topbar">
+          <div class="brand">
+            MarketScalper
+            <span class="brand-sub">deterministic analysis &middot; decision support &middot; no execution</span>
+          </div>
+          <div class="switcher mono">
+            <button id="sym-BTCUSDT" type="button" title="Bitcoin (BTCUSDT) ka chart dekho">BTCUSDT</button>
+            <button id="sym-ETHUSDT" type="button" title="Ethereum (ETHUSDT) ka chart dekho">ETHUSDT</button>
+          </div>
+          <div class="conn">
+            <button id="theme-toggle" type="button" class="chrome-btn" title="Light cream / Dark theme badlo">🌙 Dark</button>
+            <button id="tools-toggle" type="button" class="chrome-btn" title="Replay + advanced tools kholo / band karo (home saaf rehta hai)">▾ Replay &amp; Tools</button>
+            <button id="help-open" type="button" class="help-open-btn" title="Poora guide — tool kaise use karein (Hinglish)">❓ Madad</button>
+            <button id="dash-open" type="button" class="dash-open-btn" title="Analytics + Journal kholo">Dashboard</button>
+            <span id="trend-state" class="mono trend" title="Abhi ka market trend: BULLISH / BEARISH / RANGE">trend: —</span>
+            <span id="conn-dot" class="dot"></span>
+            <span id="conn-text" class="mono" title="Server se connection status">CONNECTING</span>
+          </div>
+        </header>
+
+        <!-- Replay + advanced tools drawer (Step 3 moves these to the Replay page). -->
+        <div id="tools-drawer">
+          <p class="tools-hint">▶️ <b>Replay</b> = purane data ko chala ke analysis dekho. Speed <b>×60</b> = dekhne ke liye best. Dense data: <b>April 2026</b> (jaise 20-04-2026 · From 08:00 · To 13:00).</p>
+          <div class="replay-bar mono">
+            <span class="strip-label-inline" title="Purane data ko chala ke analysis dekho (live ka wait kiye bina)">REPLAY</span>
+            <input id="replay-from" type="datetime-local" title="Replay kis date-time se shuru ho (dense data: April 2026)" />
+            <input id="replay-to" type="datetime-local" title="Replay kis date-time tak chale" />
+            <select id="replay-speed" title="Speed: ×60 dekhne ke liye best (1 candle/sec); max sirf fast processing (itna tez ki dikhta nahi)">
+              <option value="1">×1</option>
+              <option value="10">×10</option>
+              <option value="60" selected>×60</option>
+              <option value="max">max</option>
+            </select>
+            <button id="replay-start" type="button" title="Replay shuru karo — engine ka analysis live banta dekho">Start</button>
+            <button id="replay-stop" type="button" title="Replay band karo">Stop</button>
+          </div>
+          <details class="tools-advanced mono">
+            <summary title="Advanced — sirf review/learning ke liye, trade se koi lena-dena nahi">⚙ Advanced — engine ke detect kiye structures verify karo (audit / learning tool)</summary>
+            <div class="replay-bar mono">
+              <span class="strip-label-inline audit-label" title="Detected structures ko khud verify karne ka learning tool">AUDIT</span>
+              <button id="audit-pick" type="button" title="Ek random trendline pe chart jump karega — sahi hai ya nahi verify karo">Random line</button>
+              <button id="audit-pick-sweep" type="button" title="Ek random liquidity sweep pe jump karke verify karo">Random Sweep</button>
+              <button id="audit-pick-ob" type="button" title="Ek random order block (zone) pe jump karke verify karo">Random OB</button>
+              <button id="audit-accept" type="button" disabled title="Ye structure sahi mark karo (tally +1)">Accept</button>
+              <button id="audit-reject" type="button" disabled title="Ye structure galat mark karo">Reject</button>
+              <span id="audit-tally" title="Tally: TrendLine / SWeeP / Order Block — accepted/total (rejected)">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
+            </div>
+          </details>
+        </div>
+
+        <div id="workspace">
+          <main id="chart-wrap">
+            <div id="chart"></div>
+            <div id="strip-wrap">
+              <span class="strip-label mono">5m context</span>
+              <div id="strip"></div>
+            </div>
+          </main>
+
+          <!-- Quality panel (P3.19; §9 right rail) — pure render of the payload. -->
+          <aside id="quality-panel" class="empty">
+            <section class="panel-section gauge-section" title="Setup ki strength /100 + verdict (NO_SIGNAL / BELOW_THRESHOLD / TRADEABLE ≥75 / A+ ≥85)">
+              <div class="gauge-wrap">
+                <svg class="gauge-svg" viewBox="0 0 120 120" aria-hidden="true">
+                  <circle class="gauge-track" cx="60" cy="60" r="52" />
+                  <circle id="gauge-arc" class="gauge-arc" cx="60" cy="60" r="52" />
+                </svg>
+                <div class="gauge-center">
+                  <span id="gauge-score" class="mono">—</span>
+                  <span class="gauge-scale">/100</span>
+                </div>
+              </div>
+              <div id="gauge-verdict" class="gauge-verdict">—</div>
+              <div class="gauge-meta">
+                <span id="gauge-integrity" class="gauge-integrity">—</span>
+                <span id="gauge-agreement" class="mono"></span>
+              </div>
+            </section>
+
+            <section class="panel-section">
+              <h2 class="panel-title" title="6 zaroori shartein (G1–G6). Koi ek bhi ✗ fail → seedha NO SIGNAL. 'prov' = placeholder gate">Hard gates</h2>
+              <div id="panel-gates"></div>
+            </section>
+
+            <section class="panel-section">
+              <h2 class="panel-title" title="4 engines milke score banate hain: Structure 30% + Liquidity 30% + Volume 25% + Momentum 15%">Signal agreement</h2>
+              <div id="panel-components"></div>
+            </section>
+
+            <section class="panel-section">
+              <h2 class="panel-title" title="Entry / Stop-loss / TP1 / TP2 / quantity ka SUGGESTION — sirf jab TRADEABLE ho. Execute tum khud karte ho">Trade plan</h2>
+              <div id="panel-plan"></div>
+            </section>
+
+            <section class="panel-section">
+              <h2 class="panel-title" title="Kyun signal bana ya nahi bana — rule by rule (✓ / ✗)">Reason trace</h2>
+              <div id="panel-reasons"></div>
+            </section>
+          </aside>
+        </div>
+
+        <footer class="statusbar mono">
+          <span id="ws-target"></span>
+          <span id="last-event">last event: —</span>
+        </footer>
+      </section>
+
+      <!-- STUB PAGES (filled in later steps; empty for Step 1) -->
+      <section class="page" data-page="replay"><div class="page-stub"><b>Replay</b><span>Practice historical trades — moving here in Step 3.</span></div></section>
+      <section class="page" data-page="review"><div class="page-stub"><b>Trade Review</b><span>Display-only performance — Step 4.</span></div></section>
+      <section class="page" data-page="journal"><div class="page-stub"><b>Journal</b><span>Trades, notes, mistakes, lessons — Step 5.</span></div></section>
+      <section class="page" data-page="analytics"><div class="page-stub"><b>Analytics</b><span>Win rate · PnL · expectancy — Step 6.</span></div></section>
+      <section class="page" data-page="settings"><div class="page-stub"><b>Settings</b><span>Theme · token · symbols · preferences — Step 7.</span></div></section>
+    </div>
+  </div>
+
+  <!-- ===================== GLOBAL OVERLAYS (fixed; page-independent) ===================== -->
   <div id="dashboard">
     <div class="dash-panel">
       <div class="dash-bar">
@@ -51,7 +181,6 @@
     </div>
   </div>
 
-  <!-- In-app Hinglish help/guide (static text; help.js only toggles it). -->
   <div id="help" class="help-overlay">
     <div class="help-panel">
       <div class="help-head">
@@ -168,96 +297,9 @@
     </div>
   </div>
 
-  <!-- Replay + advanced tools live in a drawer, CLOSED by default, so the home
-       screen stays a clean live view. The header "Replay & Tools" button opens it. -->
-  <div id="tools-drawer">
-    <p class="tools-hint">▶️ <b>Replay</b> = purane data ko chala ke analysis dekho. Speed <b>×60</b> = dekhne ke liye best. Dense data: <b>April 2026</b> (jaise 20-04-2026 · From 08:00 · To 13:00).</p>
-    <div class="replay-bar mono">
-      <span class="strip-label-inline" title="Purane data ko chala ke analysis dekho (live ka wait kiye bina)">REPLAY</span>
-      <input id="replay-from" type="datetime-local" title="Replay kis date-time se shuru ho (dense data: April 2026)" />
-      <input id="replay-to" type="datetime-local" title="Replay kis date-time tak chale" />
-      <select id="replay-speed" title="Speed: ×60 dekhne ke liye best (1 candle/sec); max sirf fast processing (itna tez ki dikhta nahi)">
-        <option value="1">×1</option>
-        <option value="10">×10</option>
-        <option value="60" selected>×60</option>
-        <option value="max">max</option>
-      </select>
-      <button id="replay-start" type="button" title="Replay shuru karo — engine ka analysis live banta dekho">Start</button>
-      <button id="replay-stop" type="button" title="Replay band karo">Stop</button>
-    </div>
-    <details class="tools-advanced mono">
-      <summary title="Advanced — sirf review/learning ke liye, trade se koi lena-dena nahi">⚙ Advanced — engine ke detect kiye structures verify karo (audit / learning tool)</summary>
-      <div class="replay-bar mono">
-        <span class="strip-label-inline audit-label" title="Detected structures ko khud verify karne ka learning tool">AUDIT</span>
-        <button id="audit-pick" type="button" title="Ek random trendline pe chart jump karega — sahi hai ya nahi verify karo">Random line</button>
-        <button id="audit-pick-sweep" type="button" title="Ek random liquidity sweep pe jump karke verify karo">Random Sweep</button>
-        <button id="audit-pick-ob" type="button" title="Ek random order block (zone) pe jump karke verify karo">Random OB</button>
-        <button id="audit-accept" type="button" disabled title="Ye structure sahi mark karo (tally +1)">Accept</button>
-        <button id="audit-reject" type="button" disabled title="Ye structure galat mark karo">Reject</button>
-        <span id="audit-tally" title="Tally: TrendLine / SWeeP / Order Block — accepted/total (rejected)">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
-      </div>
-    </details>
-  </div>
-
-  <div id="workspace">
-    <main id="chart-wrap">
-      <div id="chart"></div>
-      <div id="strip-wrap">
-        <span class="strip-label mono">5m context</span>
-        <div id="strip"></div>
-      </div>
-    </main>
-
-    <!-- Quality panel (P3.19; §9 right rail) — pure render of the payload's
-         qualification / signals / recommendations. No engine math here. -->
-    <aside id="quality-panel" class="empty">
-      <section class="panel-section gauge-section" title="Setup ki strength /100 + verdict (NO_SIGNAL / BELOW_THRESHOLD / TRADEABLE ≥75 / A+ ≥85)">
-        <div class="gauge-wrap">
-          <svg class="gauge-svg" viewBox="0 0 120 120" aria-hidden="true">
-            <circle class="gauge-track" cx="60" cy="60" r="52" />
-            <circle id="gauge-arc" class="gauge-arc" cx="60" cy="60" r="52" />
-          </svg>
-          <div class="gauge-center">
-            <span id="gauge-score" class="mono">—</span>
-            <span class="gauge-scale">/100</span>
-          </div>
-        </div>
-        <div id="gauge-verdict" class="gauge-verdict">—</div>
-        <div class="gauge-meta">
-          <span id="gauge-integrity" class="gauge-integrity">—</span>
-          <span id="gauge-agreement" class="mono"></span>
-        </div>
-      </section>
-
-      <section class="panel-section">
-        <h2 class="panel-title" title="6 zaroori shartein (G1–G6). Koi ek bhi ✗ fail → seedha NO SIGNAL. 'prov' = placeholder gate">Hard gates</h2>
-        <div id="panel-gates"></div>
-      </section>
-
-      <section class="panel-section">
-        <h2 class="panel-title" title="4 engines milke score banate hain: Structure 30% + Liquidity 30% + Volume 25% + Momentum 15%">Signal agreement</h2>
-        <div id="panel-components"></div>
-      </section>
-
-      <section class="panel-section">
-        <h2 class="panel-title" title="Entry / Stop-loss / TP1 / TP2 / quantity ka SUGGESTION — sirf jab TRADEABLE ho. Execute tum khud karte ho">Trade plan</h2>
-        <div id="panel-plan"></div>
-      </section>
-
-      <section class="panel-section">
-        <h2 class="panel-title" title="Kyun signal bana ya nahi bana — rule by rule (✓ / ✗)">Reason trace</h2>
-        <div id="panel-reasons"></div>
-      </section>
-    </aside>
-  </div>
-
-  <footer class="statusbar mono">
-    <span id="ws-target"></span>
-    <span id="last-event">last event: —</span>
-  </footer>
-
   <script src="help.js"></script>
   <script src="ui.js"></script>
+  <script src="shell.js"></script>
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
   <script src="dashboard.js"></script>

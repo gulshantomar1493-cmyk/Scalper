@@ -625,3 +625,66 @@ def test_ui_js_is_valid_javascript():
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------- Phase 2 Step 1: application shell
+
+
+def test_shell_js_exists_and_wired():
+    assert (FRONTEND / "shell.js").is_file()
+    html = _read("index.html")
+    assert 'src="shell.js"' in html
+    # shell must load before app.js (routing set up before the chart bootstraps)
+    assert html.index("shell.js") < html.index('src="app.js"')
+
+
+def test_sidebar_has_six_grouped_nav_items():
+    html = _read("index.html")
+    assert 'id="sidebar"' in html
+    for grp in ("Trading", "Analytics", "Account"):
+        assert f'sb-group">{grp}' in html, grp
+    for nav in ("live", "replay", "review", "journal", "analytics", "settings"):
+        assert f'data-nav="{nav}"' in html, nav
+    # honest naming — never "Paper Trading"
+    assert "Trade Review" in html and "Paper Trading" not in html
+
+
+def test_router_has_six_pages_live_default_active():
+    html = _read("index.html")
+    for pg in ("live", "replay", "review", "journal", "analytics", "settings"):
+        assert f'data-page="{pg}"' in html, pg
+    # the live page is active by default
+    i = html.index('data-page="live"')
+    assert 'class="page active"' in html[i - 60:i]
+
+
+def test_beginner_toggle_present_and_preapplied():
+    html = _read("index.html")
+    assert 'id="beginner-toggle"' in html
+    assert 'data-beginner' in html                        # head script applies it pre-paint
+    assert 'localStorage.getItem("ms_beginner")' in html
+
+
+def test_live_page_content_preserved():
+    # Step 1 does NOT migrate Live — every existing element must still be present
+    html = _read("index.html")
+    for el in ('id="chart"', 'id="strip"', 'id="quality-panel"', 'id="sym-BTCUSDT"',
+               'id="replay-start"', 'id="audit-pick"', 'id="conn-text"', 'id="last-event"'):
+        assert el in html, el
+    # global overlays still exist
+    assert 'id="dashboard"' in html and 'id="help"' in html
+
+
+def test_shell_js_is_navigation_only_no_data():
+    js = _read("shell.js")
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "Math.log", "Math.exp",
+                   "slope", "intercept", "ATR", "tolerance", ".reduce(", "aggregate"):
+        assert banned not in js, banned
+    assert 'data-page' in js and "ms_page" in js          # it is the router
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_shell_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "shell.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr

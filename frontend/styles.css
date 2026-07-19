@@ -57,9 +57,64 @@ html, body {
   font-variant-numeric: tabular-nums;   /* tabular mono for every number (§9) */
 }
 
+/* Phase 2 Step 1: app shell = sidebar | pages (grid). The active .page fills
+   the right column; the Live page keeps its own internal column layout. */
 body {
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-columns: 208px 1fr;
+  overflow: hidden;
+}
+#main { min-width: 0; min-height: 0; display: flex; overflow: hidden; }
+#pages { flex: 1; min-width: 0; min-height: 0; display: flex; }
+.page { display: none; flex: 1; min-width: 0; min-height: 0; flex-direction: column; overflow: hidden; }
+.page.active { display: flex; }
+.page-stub {
+  flex: 1; display: flex; flex-direction: column; align-items: center;
+  justify-content: center; gap: 6px; color: var(--text-dim);
+}
+.page-stub b { color: var(--text); font-size: 17px; font-weight: 600; }
+.page-stub span { font-size: 13px; }
+
+/* ---------- sidebar (grouped nav) ---------- */
+#sidebar {
+  background: var(--surface-raised);
+  border-right: 1px solid var(--hairline);
+  display: flex; flex-direction: column;
+  padding: 13px 11px 11px; min-height: 0; overflow-y: auto;
+}
+.sb-brand { display: flex; align-items: center; gap: 9px; padding: 3px 8px 12px; }
+.sb-logo { font-size: 17px; line-height: 1; }
+.sb-brand b { font-weight: 650; font-size: 13.5px; letter-spacing: .2px; }
+.sb-brand small { display: block; font-weight: 400; font-size: 10px; color: var(--text-dim); }
+.sb-group {
+  font-size: 9.5px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--text-dim); padding: 11px 10px 5px; font-weight: 600;
+}
+.sb-nav {
+  display: flex; align-items: center; gap: 11px; width: 100%;
+  padding: 8px 10px; border: 0; border-radius: 9px; background: transparent;
+  color: var(--text-dim); cursor: pointer; font: inherit; font-size: 12.5px;
+  font-weight: 500; text-align: left;
+}
+.sb-nav svg { width: 16px; height: 16px; stroke: currentColor; fill: none; stroke-width: 1.6; flex: none; }
+.sb-nav:hover { background: var(--subtle); color: var(--text); }
+.sb-nav.on { background: var(--sel, rgba(34,211,238,.13)); color: var(--accent); font-weight: 600; }
+.sb-spacer { flex: 1; }
+.sb-beginner { display: flex; align-items: center; gap: 9px; padding: 9px 10px; border: 1px solid var(--hairline); border-radius: 9px; margin-bottom: 8px; }
+.sb-beginner-t { font-size: 11.5px; font-weight: 600; }
+.sb-beginner-t small { display: block; color: var(--text-dim); font-size: 9.5px; font-weight: 400; }
+.sb-switch { margin-left: auto; width: 30px; height: 17px; border-radius: 10px; background: var(--hairline); border: 0; position: relative; flex: none; cursor: pointer; transition: background .15s; }
+.sb-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 13px; height: 13px; border-radius: 50%; background: var(--text-dim); transition: transform .15s, background .15s; }
+.sb-switch.on { background: var(--accent); }
+.sb-switch.on::after { transform: translateX(13px); background: #04141a; }
+.sb-help { display: block; width: 100%; text-align: left; padding: 9px 10px; border: 0; border-radius: 9px; background: var(--subtle); color: var(--text); cursor: pointer; font: inherit; font-size: 11.5px; font-weight: 600; }
+.sb-help small { display: block; color: var(--text-dim); font-size: 9.5px; font-weight: 400; }
+/* beginner mode: helper text is hidden when off (opt-in per element, Step 2+) */
+:root[data-beginner="off"] [data-beginner-text] { display: none; }
+@media (max-width: 1040px) {
+  body { grid-template-columns: 60px 1fr; }
+  .sb-group, .sb-brand small, .sb-beginner, .sb-help { display: none; }
+  .sb-nav { justify-content: center; gap: 0; font-size: 0; }  /* icon-only (SVG size is explicit) */
 }
 
 .topbar {
