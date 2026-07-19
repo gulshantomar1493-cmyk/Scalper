@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" width="192" height="192">
+  <rect width="192" height="192" rx="40" fill="#0A0F1E"/>
+  <!-- bullish candle -->
+  <rect x="58" y="40" width="8" height="112" rx="2" fill="#22C55E"/>
+  <rect x="46" y="66" width="32" height="52" rx="4" fill="#22C55E"/>
+  <!-- bearish candle -->
+  <rect x="126" y="44" width="8" height="108" rx="2" fill="#EF4444"/>
+  <rect x="114" y="78" width="32" height="52" rx="4" fill="#EF4444"/>
+  <!-- accent baseline -->
+  <rect x="34" y="156" width="124" height="4" rx="2" fill="#22D3EE"/>
+</svg>

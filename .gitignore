@@ -11,6 +11,10 @@ venv/
 backend/config.yaml
 .env
 
+# Runtime settings — holds the Telegram bot token (secret), written by the UI
+backend/runtime_settings.json
+backend/runtime_settings.json.tmp
+
 # Runtime artifacts
 logs/
 *.log

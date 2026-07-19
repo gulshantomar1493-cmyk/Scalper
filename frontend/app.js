@@ -517,5 +517,71 @@ setInterval(function () {
   if (opsData) Ops.renderPill($("ops-pill"), opsData, Ops.ACTIVITIES[opsActIdx % Ops.ACTIVITIES.length]);
 }, 3000);
 
+/* --------------------------------- notifications + Telegram settings (6/7/8) */
+Notify.registerSW();                                   // PWA / installable
+let notifPrefs = { desktop: true, telegram: true, trade_alerts: true, system_alerts: true, push: false };
+
+function setSwitch(id, on) { const b = $(id); if (b) b.classList.toggle("on", !!on); }
+function paintNotifUI() {
+  setSwitch("ntf-desktop", notifPrefs.desktop);
+  setSwitch("ntf-telegram", notifPrefs.telegram);
+  setSwitch("ntf-trade", notifPrefs.trade_alerts);
+  setSwitch("ntf-system", notifPrefs.system_alerts);
+  const perm = $("ntf-perm"); if (perm) perm.textContent = Notify.permission();
+  Notify.setPrefs(notifPrefs);                         // apply toggles to the notifier
+}
+async function saveNotif() {
+  try {
+    const r = await api("/settings/notifications", { method: "PUT", body: JSON.stringify(notifPrefs) });
+    notifPrefs = Object.assign(notifPrefs, r.notifications || {});
+  } catch (e) { /* keep local prefs on failure */ }
+  paintNotifUI();
+}
+function bindSwitch(id, key) {
+  const b = $(id); if (!b) return;
+  b.addEventListener("click", () => { notifPrefs[key] = !notifPrefs[key]; saveNotif(); });
+}
+bindSwitch("ntf-desktop", "desktop"); bindSwitch("ntf-telegram", "telegram");
+bindSwitch("ntf-trade", "trade_alerts"); bindSwitch("ntf-system", "system_alerts");
+if ($("ntf-enable")) $("ntf-enable").addEventListener("click", () => Notify.request().then(paintNotifUI));
+
+function paintTgStatus(tg) {
+  const st = $("tg-status"); if (!st) return;
+  if (tg && tg.verified) st.textContent = "connected"
+    + (tg.bot_username ? " · @" + tg.bot_username : "") + (tg.chat_id ? " · chat " + tg.chat_id : "");
+  else if (tg && tg.has_token) st.textContent = "token saved — not verified";
+  else st.textContent = "not configured";
+}
+function tgMsg(text, ok) {
+  const m = $("tg-msg"); if (m) { m.textContent = text || ""; m.className = "tg-msg" + (ok === true ? " ok" : ok === false ? " bad" : ""); }
+}
+if ($("tg-verify")) $("tg-verify").addEventListener("click", async () => {
+  const t = $("tg-token"), token = (t && t.value || "").trim();
+  if (!token) { tgMsg("Paste your bot token first.", false); return; }
+  tgMsg("Verifying…");
+  try {
+    const r = await api("/settings/telegram/verify", { method: "POST", body: JSON.stringify({ token }) });
+    if (r.ok) { paintTgStatus(r); tgMsg("Connected — check Telegram for a confirmation message.", true); if (t) t.value = ""; }
+    else tgMsg(r.error || "Verification failed.", false);
+  } catch (e) { tgMsg(e.message, false); }
+});
+if ($("tg-test")) $("tg-test").addEventListener("click", async () => {
+  tgMsg("Sending…");
+  try { const r = await api("/settings/telegram/test", { method: "POST", body: "{}" }); tgMsg(r.ok ? "Test sent — check Telegram." : "Send failed.", r.ok); }
+  catch (e) { tgMsg(e.message, false); }
+});
+if ($("tg-clear")) $("tg-clear").addEventListener("click", async () => {
+  try { const r = await api("/settings/telegram", { method: "DELETE" }); paintTgStatus(r); tgMsg("Removed.", true); }
+  catch (e) { tgMsg(e.message, false); }
+});
+(async function loadSettings() {
+  try {
+    const s = await api("/settings");
+    notifPrefs = Object.assign(notifPrefs, s.notifications || {});
+    paintTgStatus(s.telegram);
+  } catch (e) { /* settings unavailable — keep defaults */ }
+  paintNotifUI();
+})();
+
 applyAnalysisMode();   // set the initial rail mode before the first payload
 connect();

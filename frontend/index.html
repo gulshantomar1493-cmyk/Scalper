@@ -8,6 +8,10 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MarketScalper</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icon.svg" />
+  <link rel="apple-touch-icon" href="icon.svg" />
+  <meta name="theme-color" content="#0A0F1E" />
   <script>try{var r=document.documentElement;if(localStorage.getItem("ms_theme")==="dark")r.setAttribute("data-theme","dark");r.setAttribute("data-beginner",localStorage.getItem("ms_beginner")==="off"?"off":"on");}catch(e){}</script>
   <link rel="stylesheet" href="styles.css" />
   <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -206,6 +210,32 @@
             <div class="set-row"><div><b>API host</b><small>backend</small></div><span class="mono" id="set-api">—</span></div>
             <div class="set-row"><div><b>Token</b><small>in memory only — never stored</small></div><span class="mono" id="set-token">—</span></div>
           </div>
+          <div class="set-card">
+            <div class="set-cardhead"><b>Notifications</b><small data-beginner-text>alerts when a setup appears or the feed drops</small></div>
+            <div class="set-row"><div><b>Desktop notifications</b><small>browser pop-ups — work when the tab is in the background</small></div>
+              <button id="ntf-desktop" class="sb-switch" type="button" role="switch"></button></div>
+            <div class="set-row"><div><b>Telegram alerts</b><small>sent even when the app is closed</small></div>
+              <button id="ntf-telegram" class="sb-switch" type="button" role="switch"></button></div>
+            <div class="set-row"><div><b>Trade alerts</b><small>new trade setups &amp; high-conviction</small></div>
+              <button id="ntf-trade" class="sb-switch" type="button" role="switch"></button></div>
+            <div class="set-row"><div><b>System alerts</b><small>feed up/down &amp; critical errors</small></div>
+              <button id="ntf-system" class="sb-switch" type="button" role="switch"></button></div>
+            <div class="set-row"><div><b>Browser permission</b><small id="ntf-perm" class="mono">—</small></div>
+              <button id="ntf-enable" class="chrome-btn" type="button">Enable</button></div>
+          </div>
+          <div class="set-card">
+            <div class="set-cardhead"><b>Telegram</b><small data-beginner-text>get alerts on your phone — works even when the app is closed</small></div>
+            <ol class="tg-steps">
+              <li>In Telegram, message <b>@BotFather</b> → send <code>/newbot</code> → copy the <b>bot token</b>.</li>
+              <li>Open your new bot and send it any message (e.g. “hi”).</li>
+              <li>Paste the token below and click <b>Verify</b> — your chat is detected automatically (no chat ID to type).</li>
+            </ol>
+            <div class="set-row tg-row"><input id="tg-token" class="set-input" type="password" placeholder="Bot token — 123456:ABC-DEF…" autocomplete="off" />
+              <button id="tg-verify" class="chrome-btn" type="button">Verify</button></div>
+            <div class="set-row"><div><b>Status</b></div><span class="mono" id="tg-status">not configured</span></div>
+            <div class="set-row"><span id="tg-msg" class="tg-msg"></span>
+              <span class="tg-actions"><button id="tg-test" class="chrome-btn" type="button">Send test</button><button id="tg-clear" class="chrome-btn" type="button">Remove</button></span></div>
+          </div>
           <div class="set-card set-note" data-beginner-text>MarketScalper is decision-support only — it never places or executes trades.</div>
         </div>
       </section>
@@ -247,6 +277,7 @@
   <script src="panel.js"></script>
   <script src="dashboard.js"></script>
   <script src="ops.js"></script>
+  <script src="notify.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

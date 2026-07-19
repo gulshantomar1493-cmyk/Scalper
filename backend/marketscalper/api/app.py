@@ -56,7 +56,7 @@ from fastapi import (Body, Depends, FastAPI, Header, HTTPException, Query,
                      WebSocket)
 from fastapi.middleware.cors import CORSMiddleware
 
-from marketscalper import db
+from marketscalper import db, telegram
 from marketscalper.analytics import (compute_analytics,
                                      compute_mae_distribution, journal_list)
 from marketscalper.campaign import (data_quality_audit, expectancy_report)
@@ -120,6 +120,7 @@ def create_app(
     feed_status=None,
     started_at=None,
     ops_symbols=None,
+    settings=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -286,6 +287,61 @@ def create_app(
             "backfill": {"active": backfill_active},
             "uptime_s": uptime_s,
         }
+
+    # -------------------------------------- settings + notifications (items 7/8)
+    # Owner-configurable at runtime (Telegram + notification toggles), persisted
+    # by the injected SettingsStore. Live only — replay/tests pass settings=None
+    # and these answer 503. The bot token is write-only via verify; GET never
+    # returns it.
+    def _require_settings() -> None:
+        if settings is None:
+            raise HTTPException(status_code=503, detail="settings not configured")
+
+    @app.get("/settings", dependencies=[Depends(require_token)])
+    async def get_settings() -> dict:
+        _require_settings()
+        return {"notifications": settings.notifications(),
+                "telegram": settings.telegram_public()}
+
+    @app.put("/settings/notifications", dependencies=[Depends(require_token)])
+    async def put_notifications(payload: dict = Body(...)) -> dict:
+        _require_settings()
+        return {"notifications": settings.set_notifications(payload or {})}
+
+    @app.post("/settings/telegram/verify", dependencies=[Depends(require_token)])
+    async def telegram_verify(payload: dict = Body(...)) -> dict:
+        _require_settings()
+        token = (payload.get("token") or "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="token required")
+        result = await telegram.verify_and_detect(token)
+        if not result.get("ok"):
+            return {"ok": False, "error": result.get("error", "verification failed"),
+                    "bot_username": result.get("bot_username", "")}
+        settings.set_telegram(token=token, chat_id=result["chat_id"],
+                              bot_username=result["bot_username"], verified=True)
+        await telegram.send_message(
+            token, result["chat_id"],
+            "✅ <b>MarketScalper connected</b> — you'll receive trade & system "
+            "alerts here.")
+        return {"ok": True, **settings.telegram_public()}
+
+    @app.post("/settings/telegram/test", dependencies=[Depends(require_token)])
+    async def telegram_test() -> dict:
+        _require_settings()
+        tg = settings.telegram()
+        if not (tg.get("token") and tg.get("chat_id")):
+            raise HTTPException(status_code=400, detail="telegram not configured")
+        ok = await telegram.send_message(
+            tg["token"], tg["chat_id"],
+            "🔔 <b>Test alert</b> from MarketScalper — notifications are working.")
+        return {"ok": ok}
+
+    @app.delete("/settings/telegram", dependencies=[Depends(require_token)])
+    async def telegram_clear() -> dict:
+        _require_settings()
+        settings.clear_telegram()
+        return {"ok": True, **settings.telegram_public()}
 
     @app.get("/candles", dependencies=[Depends(require_token)])
     async def candles(symbol: str, tf: str, start: datetime, end: datetime) -> list[dict]:

@@ -804,6 +804,38 @@ def test_ops_js_is_valid_javascript():
     assert result.returncode == 0, result.stderr
 
 
+def test_notifications_pwa_and_settings_wired():
+    """Desktop + PWA notifications (item 6), notification toggles (item 8), and
+    the Telegram settings flow with auto chat-id detection (item 7)."""
+    nj = _read("notify.js")
+    assert "window.Notify" in nj
+    assert "Notification" in nj and "requestPermission" in nj
+    assert "serviceWorker" in nj and "sw.js" in nj       # PWA / installable
+    assert "fetch(" not in nj                             # app.js owns the network
+    for f in ("notify.js", "sw.js", "manifest.webmanifest", "icon.svg"):
+        assert (FRONTEND / f).is_file(), f
+    html = _read("index.html")
+    assert 'rel="manifest"' in html and "manifest.webmanifest" in html
+    assert 'src="notify.js"' in html
+    # notification toggles (item 8) + telegram flow (item 7)
+    for id_ in ("ntf-desktop", "ntf-telegram", "ntf-trade", "ntf-system",
+                "tg-token", "tg-verify", "tg-status", "tg-test"):
+        assert f'id="{id_}"' in html, id_
+    assert 'id="tg-chat' not in html                     # NO manual chat-id entry
+    assert "detected automatically" in html              # auto chat-id (item 7)
+    app = _read("app.js")
+    assert "/settings/telegram/verify" in app and "/settings/notifications" in app
+    assert "Notify.registerSW" in app and "Notify.setPrefs" in app
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_notify_and_sw_valid_javascript():
+    for f in ("notify.js", "sw.js"):
+        r = subprocess.run(["node", "--check", str(FRONTEND / f)],
+                           capture_output=True, text=True)
+        assert r.returncode == 0, (f, r.stderr)
+
+
 def test_app_js_uses_chart_service_and_gates_higher_tfs():
     js = _read("app.js")
     assert "/api/chart?" in js and "timeframe" in js       # backend ChartService

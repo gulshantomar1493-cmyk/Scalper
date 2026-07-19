@@ -1,0 +1,13 @@
+{
+  "name": "MarketScalper",
+  "short_name": "Scalper",
+  "description": "Deterministic market analysis & decision-support terminal (BTC/ETH).",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#0A0F1E",
+  "theme_color": "#0A0F1E",
+  "icons": [
+    { "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }
+  ]
+}

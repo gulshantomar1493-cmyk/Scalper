@@ -957,3 +957,14 @@ body {
 .act-setup .act-msg { color:var(--accent); font-weight:600; }
 .act-down .act-msg { color:var(--down); }
 .act-up .act-msg { color:var(--up); }
+
+/* ==================== notifications + telegram settings (pre-prod) ==================== */
+.tg-steps { margin:2px 0 12px; padding-left:20px; font-size:12px; color:var(--text-dim); line-height:1.75; }
+.tg-steps b { color:var(--text); }
+.tg-steps code { background:var(--surface-raised); padding:1px 5px; border-radius:4px; font-family:ui-monospace,"JetBrains Mono",Consolas,monospace; }
+.tg-row { gap:8px; }
+.set-input { flex:1; min-width:0; padding:8px 10px; border:1px solid var(--hairline); border-radius:8px; background:var(--surface-raised); color:var(--text); font:inherit; font-size:12px; }
+.set-input:focus { outline:none; border-color:var(--accent); }
+.tg-msg { font-size:12px; color:var(--text-dim); flex:1; }
+.tg-msg.ok { color:var(--up); } .tg-msg.bad { color:var(--down); }
+.tg-actions { display:flex; gap:8px; margin-left:auto; }

@@ -145,6 +145,50 @@ async def test_ops_endpoint(db_conn):
         await _stop(server, task)
 
 
+async def test_settings_and_telegram_endpoints(monkeypatch, tmp_path):
+    # Notification prefs + Telegram verify/clear (items 7/8). No DB needed — the
+    # settings routes never touch the pool; Telegram is monkeypatched (no net).
+    from marketscalper.settings_store import SettingsStore
+
+    async def fake_verify(token):
+        return {"ok": True, "bot_username": "bot", "chat_id": "42"}
+
+    async def fake_send(token, chat_id, text):
+        return True
+
+    monkeypatch.setattr("marketscalper.telegram.verify_and_detect", fake_verify)
+    monkeypatch.setattr("marketscalper.telegram.send_message", fake_send)
+    settings = SettingsStore(path=tmp_path / "s.json")
+    bus = EventBus()
+    store = StateStore(bus)
+    app = create_app(bus, store, None, TOKEN, settings=settings)
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/settings") as r:
+                assert r.status == 401                     # auth required
+            async with s.get(f"http://{addr}/settings", headers=AUTH) as r:
+                d = await r.json()
+                assert d["telegram"]["has_token"] is False
+                assert "token" not in d["telegram"]        # never exposed
+            async with s.put(f"http://{addr}/settings/notifications",
+                             headers=AUTH, json={"desktop": False}) as r:
+                assert (await r.json())["notifications"]["desktop"] is False
+            async with s.post(f"http://{addr}/settings/telegram/verify",
+                              headers=AUTH, json={"token": "T:OK"}) as r:
+                d = await r.json()
+                assert d["ok"] is True and d["chat_id"] == "42"
+                assert "token" not in d
+            async with s.get(f"http://{addr}/settings", headers=AUTH) as r:
+                d = await r.json()
+                assert d["telegram"]["verified"] is True
+                assert d["telegram"]["has_token"] is True and "token" not in d["telegram"]
+            async with s.delete(f"http://{addr}/settings/telegram", headers=AUTH) as r:
+                assert (await r.json())["has_token"] is False
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_requires_bearer_token():
     _, _, app = _pipeline()
     server, task, addr = await _serve(app)

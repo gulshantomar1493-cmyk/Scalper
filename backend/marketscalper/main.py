@@ -54,6 +54,8 @@ from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
 from marketscalper.analytics import compute_analytics
 from marketscalper.engines.lifecycle import RecommendationLifecycle
 from marketscalper.engines.psychology import PsychologyGuard
+from marketscalper.settings_store import SettingsStore
+from marketscalper.alerts import Alerter
 from marketscalper.ops import (FEED_WATCHDOG_INTERVAL_S, feed_gap_alerts,
                                format_daily_summary)
 from marketscalper.engines.qualification import (QualificationEngine,
@@ -448,7 +450,7 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
                             seed_candles=None, recorder=None,
                             equity=DEFAULT_EQUITY_USD,
                             psych_guard=None, regime_cfg=None,
-                            shift_accel_atr_ratio=0.1) -> None:
+                            shift_accel_atr_ratio=0.1, alerter=None) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
@@ -481,6 +483,10 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
                                       pipeline.snapshot_payload())
             if recorder is not None and events:
                 await recorder.record_lifecycle(candle.symbol, events)
+            if alerter is not None and records:        # items 6/7: notify on
+                for _sig, _qual, _plan, rec in records:  # admitted setups (live)
+                    if rec is not None:
+                        alerter.trade_setup(candle.symbol, rec)
         elif candle.tf == "5m":
             pipeline.step_5m(candle)
 
@@ -573,6 +579,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      symbol, len(rows), seed_start, seed_end)
     recorder = SignalRecorder(pool, engine_version_stamp())   # D21.6 (live)
     psych_guard = PsychologyGuard()                # D23 (P4.9), live-only
+    settings = SettingsStore()                     # items 7/8 (live-only)
+    alerter = Alerter(settings)                    # items 6/7 (Telegram, live-only)
     # D9 config-plumbing: bridge the validated config layer to the engine's
     # RegimeConfig once, then apply it to BOTH the live pipelines and the
     # replay wiring so an in-app replay reproduces live under calibration.
@@ -586,7 +594,7 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
         clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
         seed_candles=seed_candles, recorder=recorder, equity=equity,
         psych_guard=psych_guard, regime_cfg=regime_cfg,
-        shift_accel_atr_ratio=shift_accel)
+        shift_accel_atr_ratio=shift_accel, alerter=alerter)
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
@@ -601,13 +609,16 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      psych_guard=psych_guard,                 # D23.5 (P4.9)
                      chart_service=chart_service,             # D26 (Phase 1)
                      feed_status=lambda: feed.connected,      # GET /ops (items 3/5/9)
-                     started_at=started_at, ops_symbols=config.symbols)
+                     started_at=started_at, ops_symbols=config.symbols,
+                     settings=settings)                       # items 7/8 (live)
 
     await feed.start()
     await sampler.start()
     rollover = asyncio.create_task(_daily_ops(pool), name="daily-ops")
     watchdog = asyncio.create_task(                    # P4.13 feed-gap alert
         _feed_gap_watchdog(store, config.symbols), name="feed-gap-watchdog")
+    feed_alerts = asyncio.create_task(                 # items 6/7 feed up/down
+        _feed_alert_watcher(feed, alerter), name="feed-alerts")
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     # The composition root owns process lifecycle: route SIGTERM/SIGINT to a
@@ -626,7 +637,9 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     finally:
         rollover.cancel()
         watchdog.cancel()
-        await asyncio.gather(rollover, watchdog, return_exceptions=True)
+        feed_alerts.cancel()
+        await asyncio.gather(rollover, watchdog, feed_alerts,
+                             return_exceptions=True)
         await sampler.stop()
         await feed.stop()
         await pool.close()
@@ -665,6 +678,22 @@ async def _feed_gap_watchdog(store, symbols) -> None:
         for symbol, gap in feed_gap_alerts(last_seen, now):
             log.warning("ALERT feed gap: %s — no closed 1m candle for %.0fs",
                         symbol, gap)
+
+
+async def _feed_alert_watcher(feed, alerter) -> None:
+    """Items 6/7: notify (Telegram) when the Binance feed transitions down/up —
+    works even with no browser open. Polls the feed's connected flag; the
+    initial state is seeded so a startup connect never fires a spurious alert."""
+    prev = None
+    while True:
+        await asyncio.sleep(15)
+        try:
+            now_connected = bool(feed.connected)
+        except Exception:
+            continue
+        if prev is not None and now_connected != prev:
+            (alerter.feed_up if now_connected else alerter.feed_down)()
+        prev = now_connected
 
 
 if __name__ == "__main__":
