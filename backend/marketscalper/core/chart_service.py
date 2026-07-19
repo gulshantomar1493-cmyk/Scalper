@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 
 from marketscalper import db
 from marketscalper.bootstrap import candle_to_row   # Candle -> row tuple (reused)
+from marketscalper.core import indicators as ind    # display-only MA/RSI
 
 log = logging.getLogger(__name__)
 
@@ -95,10 +96,12 @@ class ChartService:
         self._provider = provider
 
     async def get_chart(self, symbol: str, tf: str, start: datetime,
-                        end: datetime) -> dict:
-        """Return {candles, metadata, overlays} for [start, end). Raises
-        ValueError on an unknown tf or a non-positive range (the endpoint maps
-        that to HTTP 400)."""
+                        end: datetime, *, ema=None, sma=None, rsi=None) -> dict:
+        """Return {candles, metadata, overlays, indicators} for [start, end).
+        `ema` (list of periods), `sma` (period), `rsi` (period) request the
+        display-only indicators — computed here (single source of truth), never
+        in the browser. Raises ValueError on an unknown tf / non-positive range
+        (the endpoint maps that to HTTP 400)."""
         if tf not in TIMEFRAMES:
             raise ValueError(f"unknown timeframe {tf!r}")
         if not (start < end):
@@ -135,7 +138,29 @@ class ChartService:
             # recompute historical overlays, so this REST field is null. Per the
             # contract only 1m/5m could ever carry overlays; 15m+ never do.
             "overlays": None,
+            # Display-only indicators (item 2) — computed here, rendered by the
+            # frontend. None when none were requested. Isolated from the engine.
+            "indicators": self._indicators(candles, ema, sma, rsi),
         }
+
+    def _indicators(self, candles, ema_lens, sma_len, rsi_len) -> dict | None:
+        if not (ema_lens or sma_len or rsi_len) or not candles:
+            return None
+        closes = [c["c"] for c in candles]
+        times = [int(datetime.fromisoformat(c["ts"]).timestamp()) for c in candles]
+
+        def points(values):
+            return [{"time": t, "value": v}
+                    for t, v in zip(times, values) if v is not None]
+
+        out: dict = {}
+        if ema_lens:
+            out["ema"] = {str(p): points(ind.ema(closes, p)) for p in ema_lens}
+        if sma_len:
+            out["sma"] = {str(sma_len): points(ind.sma(closes, sma_len))}
+        if rsi_len:
+            out["rsi"] = {str(rsi_len): points(ind.rsi(closes, rsi_len))}
+        return out
 
     # ------------------------------------------------------------- helpers
 

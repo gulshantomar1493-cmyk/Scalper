@@ -42,7 +42,7 @@ from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.chart_service import ChartService
-from marketscalper.core.live_bar import LiveBarTracker
+from marketscalper.core.live_bar import LiveBarTracker, LiveIndicatorTracker
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
 from marketscalper.core.state import StateStore
@@ -585,6 +585,11 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     psych_guard = PsychologyGuard()                # D23 (P4.9), live-only
     settings = SettingsStore()                     # items 7/8 (live-only)
     alerter = Alerter(settings)                    # items 6/7 (Telegram, live-only)
+    # Display-only interim indicators for the live forming stream (chart UX):
+    # backend computes, frontend renders. Seeded from the same 20-day history,
+    # advances on closed 1m candles. Live-only; no engine subscribes to it.
+    live_indicators = LiveIndicatorTracker(bus, config.symbols,
+                                           seed_candles=seed_candles)
     # D9 config-plumbing: bridge the validated config layer to the engine's
     # RegimeConfig once, then apply it to BOTH the live pipelines and the
     # replay wiring so an in-app replay reproduces live under calibration.
@@ -614,7 +619,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      chart_service=chart_service,             # D26 (Phase 1)
                      feed_status=lambda: feed.connected,      # GET /ops (items 3/5/9)
                      started_at=started_at, ops_symbols=config.symbols,
-                     settings=settings)                       # items 7/8 (live)
+                     settings=settings,                       # items 7/8 (live)
+                     live_indicators=live_indicators)         # chart UX (live)
 
     await feed.start()
     await sampler.start()

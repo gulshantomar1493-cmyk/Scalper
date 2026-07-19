@@ -893,8 +893,9 @@ async def test_api_chart_aggregation_roundtrip(db_conn):
                 body = await r.json()
     finally:
         await _stop(server, task)
-    assert set(body) == {"candles", "metadata", "overlays"}
+    assert set(body) == {"candles", "metadata", "overlays", "indicators"}
     assert body["overlays"] is None                        # engine-isolated
+    assert body["indicators"] is None                      # none requested
     assert body["metadata"]["timeframe"] == "15m"
     assert body["metadata"]["aggregated"] is True
     assert len(body["candles"]) == 2                       # 2 x 15m in 30m
@@ -902,6 +903,32 @@ async def test_api_chart_aggregation_roundtrip(db_conn):
     # _seed_candles: o=100+i, h=102+i, l=99+i, c=101+i
     assert (b0["o"], b0["h"], b0["l"], b0["c"]) == (100.0, 116.0, 99.0, 115.0)
     assert b0["n"] == 15 and b0["complete"] is True
+
+
+async def test_api_chart_returns_display_indicators(db_conn):
+    # Item 2: backend computes EMA/SMA/RSI (single source of truth); the
+    # frontend only renders. Overlays stay null (engine isolation intact).
+    await _seed_candles(db_conn, n=30)
+    server, task, addr = await _serve(_chart_app(db_conn))
+    params = {"symbol": "BTCUSDT", "timeframe": "1m",
+              "from": M0.isoformat(),
+              "to": (M0 + timedelta(minutes=30)).isoformat(),
+              "ema": "5,10", "sma": "8", "rsi": "5"}
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/chart", params=params,
+                             headers=AUTH) as r:
+                assert r.status == 200
+                d = await r.json()
+                assert d["overlays"] is None
+                ind = d["indicators"]
+                assert set(ind.keys()) == {"ema", "sma", "rsi"}
+                assert set(ind["ema"].keys()) == {"5", "10"}
+                pt = ind["ema"]["5"][0]
+                assert "time" in pt and "value" in pt      # {time,value} points
+                assert ind["sma"]["8"] and ind["rsi"]["5"]
+    finally:
+        await _stop(server, task)
 
 
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):

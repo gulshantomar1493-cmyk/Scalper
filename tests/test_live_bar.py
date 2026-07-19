@@ -10,8 +10,14 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 
 from marketscalper.core.bus import EventBus
-from marketscalper.core.live_bar import FormingBar, LiveBarTracker
-from marketscalper.providers.base import Trade
+from marketscalper.core.live_bar import (FormingBar, LiveBarTracker,
+                                         LiveIndicatorTracker)
+from marketscalper.providers.base import Candle, Trade
+
+
+def _candle(price, ts):
+    return Candle(symbol="BTCUSDT", tf="1m", ts=ts, o=price, h=price, l=price,
+                  c=price, v=1.0, qv=float(price), n_trades=1, taker_buy_v=0.5)
 
 UTC = timezone.utc
 M0 = datetime(2026, 7, 14, 19, 0, tzinfo=UTC)
@@ -77,3 +83,47 @@ async def test_throttle_but_new_bucket_always_fires():
     assert len(seen) == 1
     await bus.publish(_trade(200, M0 + timedelta(minutes=1)))   # new bucket -> fires
     assert len(seen) == 2 and seen[-1].o == 200
+
+
+# ---- live indicator tracker (chart UX item 2, live forming stream) ----
+
+
+async def test_live_indicators_seeded_interim_has_all():
+    bus = EventBus()
+    seed = {"BTCUSDT": [_candle(float(x), M0) for x in range(1, 260)]}   # 259 closes
+    t = LiveIndicatorTracker(bus, ["BTCUSDT"], seed_candles=seed)
+    out = t.interim("BTCUSDT", 300.0)
+    assert out is not None
+    for k in ("ema20", "ema50", "ema200", "rsi"):
+        assert k in out
+    assert 0.0 <= out["rsi"] <= 100.0
+
+
+async def test_live_indicators_advance_on_closed_1m_candle():
+    bus = EventBus()
+    seed = {"BTCUSDT": [_candle(float(x), M0) for x in range(1, 260)]}
+    t = LiveIndicatorTracker(bus, ["BTCUSDT"], seed_candles=seed)
+    before = t.interim("BTCUSDT", 300.0)["ema20"]
+    await bus.publish(_candle(1000.0, M0 + timedelta(minutes=1)))       # closed 1m
+    after = t.interim("BTCUSDT", 300.0)["ema20"]
+    assert after != before                                             # state advanced
+
+
+async def test_live_indicators_ignore_5m_candles():
+    bus = EventBus()
+    seed = {"BTCUSDT": [_candle(float(x), M0) for x in range(1, 260)]}
+    t = LiveIndicatorTracker(bus, ["BTCUSDT"], seed_candles=seed)
+    before = t.interim("BTCUSDT", 300.0)["ema20"]
+    c5 = Candle(symbol="BTCUSDT", tf="5m", ts=M0 + timedelta(minutes=5),
+                o=9, h=9, l=9, c=9, v=1.0, qv=9.0, n_trades=1, taker_buy_v=0.5)
+    await bus.publish(c5)                                              # 5m must be ignored
+    assert t.interim("BTCUSDT", 300.0)["ema20"] == before
+
+
+async def test_live_indicators_peek_does_not_mutate_state():
+    bus = EventBus()
+    seed = {"BTCUSDT": [_candle(float(x), M0) for x in range(1, 260)]}
+    t = LiveIndicatorTracker(bus, ["BTCUSDT"], seed_candles=seed)
+    a = t.interim("BTCUSDT", 300.0)["ema20"]
+    t.interim("BTCUSDT", 9999.0)                                       # a wild peek
+    assert t.interim("BTCUSDT", 300.0)["ema20"] == a                   # unchanged

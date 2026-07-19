@@ -24,8 +24,9 @@ import logging
 from dataclasses import dataclass
 from datetime import datetime, timezone
 
+from marketscalper.core import indicators as ind
 from marketscalper.core.bus import EventBus
-from marketscalper.providers.base import Trade
+from marketscalper.providers.base import Candle, Trade
 
 log = logging.getLogger(__name__)
 
@@ -101,3 +102,60 @@ class LiveBarTracker:
         if new_bucket or (now - self._last_pub.get(trade.symbol, 0.0)) >= self._min:
             self._last_pub[trade.symbol] = now
             await self._bus.publish(cur.to_event(trade.symbol))
+
+
+class LiveIndicatorTracker:
+    """Display-only interim indicator values for the live forming stream
+    (chart UX item 2; owner rule: backend computes, frontend renders).
+
+    Maintains the DEFAULT indicators' incremental state per symbol on the 1m
+    stream — EMA 20/50/200 + RSI 14 — seeded from history at composition and
+    advanced on each CLOSED 1m candle. `interim(symbol, forming_close)` projects
+    them onto the current forming close so the forming message can carry them.
+    Live-only and NON-mutating for the engine: no engine subscribes to this, it
+    publishes nothing, and it only reads the closed candles the engines produce.
+    The defaults match the frontend's default indicator set; a user length
+    change reflows the HISTORICAL line via /api/chart (the live last point uses
+    these defaults — a single-user cosmetic detail on the final bar only)."""
+
+    _EMA = (20, 50, 200)
+    _RSI = 14
+
+    def __init__(self, bus: EventBus, symbols, seed_candles=None) -> None:
+        self._st: dict[str, dict] = {}
+        for sym in symbols:
+            st = {"ema": {p: ind.EmaState(p) for p in self._EMA},
+                  "rsi": ind.RsiState(self._RSI)}
+            closes = [c.c for c in (seed_candles or {}).get(sym, [])]
+            if closes:
+                for p in self._EMA:
+                    st["ema"][p].seed(closes)
+                st["rsi"].seed(closes)
+            self._st[sym] = st
+        bus.subscribe(Candle, self._on_candle)
+
+    async def _on_candle(self, candle: Candle) -> None:
+        if candle.tf != "1m":
+            return
+        st = self._st.get(candle.symbol)
+        if st is None:
+            return
+        for p in self._EMA:
+            st["ema"][p].update(candle.c)
+        st["rsi"].update(candle.c)
+
+    def interim(self, symbol: str, forming_close: float):
+        """Indicator values as if the forming close were the next close — for
+        the live stream. Returns a dict (only warm indicators) or None."""
+        st = self._st.get(symbol)
+        if st is None:
+            return None
+        out: dict = {}
+        for p in self._EMA:
+            v = st["ema"][p].peek(forming_close)
+            if v is not None:
+                out[f"ema{p}"] = v
+        r = st["rsi"].peek(forming_close)
+        if r is not None:
+            out["rsi"] = r
+        return out or None

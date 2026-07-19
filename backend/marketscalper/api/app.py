@@ -122,6 +122,7 @@ def create_app(
     started_at=None,
     ops_symbols=None,
     settings=None,
+    live_indicators=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -370,12 +371,25 @@ def create_app(
         timeframe: str,
         start: datetime = Query(alias="from"),
         end: datetime = Query(alias="to"),
+        ema: str | None = None,       # comma-separated EMA periods, e.g. "20,50,200"
+        sma: int | None = None,       # SMA period
+        rsi: int | None = None,       # RSI period
     ) -> dict:
         if chart_service is None:
             raise HTTPException(status_code=503,
                                 detail="chart service not configured")
+
+        def _period(v):               # sane display-indicator bounds
+            return v if v is not None and 1 <= v <= 1000 else None
+
+        ema_lens = None
+        if ema:
+            ema_lens = [int(x) for x in ema.split(",")
+                        if x.strip().isdigit() and 1 <= int(x) <= 1000][:6]
         try:
-            return await chart_service.get_chart(symbol, timeframe, start, end)
+            return await chart_service.get_chart(
+                symbol, timeframe, start, end,
+                ema=ema_lens or None, sma=_period(sma), rsi=_period(rsi))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
@@ -674,12 +688,17 @@ def create_app(
 
     def _push_forming(fb: FormingBar) -> None:
         """Fan a display-only forming-bar payload to every client (no
-        state_diff, no network send in the subscriber — F4)."""
+        state_diff, no network send in the subscriber — F4). The interim
+        indicator values (backend-computed) ride along so the frontend never
+        extends an indicator itself (owner rule)."""
         if not clients:
             return
+        indicators = (live_indicators.interim(fb.symbol, fb.c)
+                      if live_indicators is not None else None)
         payload = {"forming": {
             "symbol": fb.symbol, "ts": fb.ts.isoformat(),
-            "o": fb.o, "h": fb.h, "l": fb.l, "c": fb.c, "v": fb.v}}
+            "o": fb.o, "h": fb.h, "l": fb.l, "c": fb.c, "v": fb.v,
+            "indicators": indicators}}
         for websocket, queue in list(clients.items()):
             try:
                 queue.put_nowait(payload)
