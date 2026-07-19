@@ -386,7 +386,12 @@ def test_panel_js_renders_reco_plan_context_cards():
 def test_panel_js_handles_gate_fail_and_flagged():
     js = _read("panel.js")
     assert "g.passed" in js and "g.flagged" in js
-    assert '"prov"' in js                                # provisional flag chip
+    # gates render as plain-English labels (not cryptic G1/G2) with a reason + tooltip
+    assert "GATE_INFO" in js
+    for label in ('"Data"', '"Spread"', '"Session"', '"News"', '"Risk"', '"Reward"'):
+        assert label in js, label
+    assert "Safety checks" in js                         # user-facing header
+    assert "wg-prov" in js                               # provisional badge
     # verdict/integrity are backend-driven display states
     assert "VERDICT_CLASS" in js
     assert '"PASS"' in js                                # data-integrity badge

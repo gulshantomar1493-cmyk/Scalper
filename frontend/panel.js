@@ -22,6 +22,15 @@ const Panel = (function () {
     { key: "momentum", label: "Momentum", weight: "0.15" },
   ];
   const GATE_NAMES = ["G1", "G2", "G3", "G4", "G5", "G6"];
+  // Plain-English meaning of each hard gate (all must pass or there's no trade).
+  const GATE_INFO = {
+    G1: { label: "Data", desc: "Live, gap-free candles — recent data, clock in sync." },
+    G2: { label: "Spread", desc: "Bid/ask spread tight enough to trade (under 0.05%)." },
+    G3: { label: "Session", desc: "Active trading hours — the quiet late session is skipped." },
+    G4: { label: "News", desc: "No high-impact news blackout in effect." },
+    G5: { label: "Risk", desc: "Risk budget OK — no revenge / over-trading block." },
+    G6: { label: "Reward", desc: "Reward-to-risk meets the minimum floor." },
+  };
   const VERDICT_CLASS = {
     A_PLUS: "v-aplus", TRADEABLE: "v-tradeable",
     BELOW_THRESHOLD: "v-below", NO_SIGNAL: "v-none",
@@ -179,12 +188,18 @@ const Panel = (function () {
     const byName = {};
     for (const g of (q.gates || [])) byName[g.name] = g;
     const gates = elem("div", "why-gates");
+    gates.appendChild(elem("div", "why-gates-h", "Safety checks — all must pass"));
     for (const name of GATE_NAMES) {
       const g = byName[name];
-      const chip = elem("span", "why-gate " + (g && g.passed ? "pass" : "fail"),
-        name + (g && g.passed ? " ✓" : " ✗"));
-      if (g && g.flagged) chip.classList.add("prov");
-      gates.appendChild(chip);
+      const info = GATE_INFO[name];
+      const pass = !!(g && g.passed);
+      const row = elem("div", "why-gate " + (pass ? "pass" : "fail"));
+      row.appendChild(elem("span", "wg-icon", pass ? "✓" : "✗"));
+      row.appendChild(elem("span", "wg-label", info.label));
+      if (g && g.detail && (!pass || g.flagged)) row.appendChild(elem("span", "wg-detail", g.detail));
+      if (g && g.flagged) row.appendChild(elem("span", "wg-prov", "not enforced yet"));
+      row.title = name + " — " + info.desc + (g && g.detail ? " (" + g.detail + ")" : "");
+      gates.appendChild(row);
     }
     el.recoWhy.appendChild(gates);
     if (signals.length) {

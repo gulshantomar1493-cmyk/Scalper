@@ -1036,3 +1036,13 @@ body {
 .chart-toolbar { flex:none; position:relative; z-index:8; }
 .chart-legend { position:absolute; top:6px; left:10px; z-index:6; }
 .crosshair-box { top:24px; }
+
+/* ==================== readable gate rows (Why? section) ==================== */
+.why-gates-h { font-size:9.5px; letter-spacing:.06em; text-transform:uppercase; color:var(--text-dim); margin:2px 0 5px; }
+.why-gate { display:flex !important; align-items:center; gap:7px; padding:3px 0 !important; font-size:11.5px; background:none !important; border:0 !important; border-radius:0 !important; }
+.why-gate .wg-icon { font-weight:700; width:12px; flex:none; }
+.why-gate.pass .wg-icon { color:var(--up); }
+.why-gate.fail .wg-icon { color:var(--down); }
+.why-gate .wg-label { color:var(--text); font-weight:600; min-width:52px; flex:none; }
+.why-gate .wg-detail { color:var(--text-dim); font-size:10.5px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.why-gate .wg-prov { margin-left:auto; font-size:8.5px; padding:1px 5px; border-radius:4px; background:color-mix(in srgb, var(--warn) 18%, transparent); color:var(--warn); white-space:nowrap; flex:none; }
