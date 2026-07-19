@@ -385,8 +385,8 @@ def test_panel_js_renders_reco_plan_context_cards():
     assert "renderReco" in js and "renderWhy" in js
     assert "renderComponents" in js and "renderPlan" in js
     assert "setContextMode" in js                        # 15m+ context-only
-    # the six gates and four weighted components, by their frozen names
-    assert '"G1", "G2", "G3", "G4", "G5", "G6"' in js
+    # the five gates and four weighted components, by their frozen names
+    assert '"G1", "G2", "G4", "G5", "G6"' in js         # G3 removed at D29
     for key in ("structure", "liquidity", "volume", "momentum"):
         assert f'key: "{key}"' in js
     for w in ('weight: "0.30"', 'weight: "0.25"', 'weight: "0.15"'):
@@ -403,7 +403,7 @@ def test_panel_js_handles_gate_fail_and_flagged():
     assert "g.passed" in js and "g.flagged" in js
     # gates render as plain-English labels (not cryptic G1/G2) with a reason + tooltip
     assert "GATE_INFO" in js
-    for label in ('"Data"', '"Spread"', '"Session"', '"News"', '"Risk"', '"Reward"'):
+    for label in ('"Data"', '"Spread"', '"News"', '"Risk"', '"Reward"'):  # "Session" (G3) removed D29
         assert label in js, label
     assert "Safety checks" in js                         # user-facing header
     # Hinglish explanations + a full (non-truncated) reason line per gate

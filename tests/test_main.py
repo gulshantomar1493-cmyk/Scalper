@@ -138,7 +138,7 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert structure["recommendations"] == []              # D21.7 (P3.18)
     qual = structure["qualification"]                      # D16: G1 warming
     assert qual["verdict"] == "NO_SIGNAL" and qual["score"] is None
-    assert [g["name"] for g in qual["gates"]] == ["G1", "G2", "G3",
+    assert [g["name"] for g in qual["gates"]] == ["G1", "G2",   # G3 removed D29
                                                   "G4", "G5", "G6"]
     assert await run() == structure                        # deterministic
     assert "XRPUSDT" not in str(structure)
@@ -190,7 +190,7 @@ async def test_pipeline_g5_reflects_psychology_guard():
             o=100.0, h=100.5, l=99.5, c=100.2, v=1.0, qv=100.0,
             n_trades=1, taker_buy_v=0.5))
     qual = store.snapshot("BTCUSDT").structure["qualification"]
-    g5 = qual["gates"][4]
+    g5 = qual["gates"][3]                                   # G5 (G3 removed D29)
     assert g5["name"] == "G5" and not g5["passed"] and not g5["flagged"]
     assert "hard lock" in g5["detail"]
     assert qual["verdict"] == "NO_SIGNAL"          # any gate fail -> no signal

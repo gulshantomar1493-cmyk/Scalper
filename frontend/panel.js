@@ -21,14 +21,15 @@ const Panel = (function () {
     { key: "volume", label: "Volume", weight: "0.25" },
     { key: "momentum", label: "Momentum", weight: "0.15" },
   ];
-  const GATE_NAMES = ["G1", "G2", "G3", "G4", "G5", "G6"];
-  // Each hard gate, explained in Hinglish (all six must pass or there's no
+  const GATE_NAMES = ["G1", "G2", "G4", "G5", "G6"];
+  // Each hard gate, explained in Hinglish (all five must pass or there's no
   // trade). `hi` is the plain-language meaning shown under every gate; the
   // backend's specific reason (g.detail) is shown in full below it on a fail.
+  // (G3 session filter was removed at D29 — crypto is 24/7, so late-night
+  // setups are judged from analytics, not blocked.)
   const GATE_INFO = {
     G1: { label: "Data", hi: "Data taaza aur bina gap ka ho — recent candles, clock sync." },
     G2: { label: "Spread", hi: "Bid/ask spread itna tight ho ki trade ho sake (0.05% se kam)." },
-    G3: { label: "Session", hi: "Active trading hours ho — dheeme LATE session (raat) mein skip." },
     G4: { label: "News", hi: "Koi bada news blackout na chal raha ho." },
     G5: { label: "Risk", hi: "Risk budget theek ho — revenge / over-trading block na ho." },
     G6: { label: "Reward", hi: "Reward-to-risk minimum floor se upar ho (kam-se-kam 1:1)." },

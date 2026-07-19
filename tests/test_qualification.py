@@ -149,42 +149,39 @@ def test_g5_psychology_seam():
     # a failing G5 (hard lock) -> a real gate -> whole bar NO_SIGNAL (§6)
     fail = G5State(False, True, False, "hard lock: 9 taken today (> 8)")
     result = rig.step(_candle(30), psych=fail)
-    g5 = result.gates[4]
+    g5 = result.gates[3]
     assert g5.name == "G5" and not g5.passed and not g5.flagged
     assert result.verdict == "NO_SIGNAL" and result.score is None
     assert "hard lock" in g5.detail
     # a passing G5 carrying a warn -> real gate, still passes
     ok = G5State(True, False, True, "overtrade warn: 7 taken today (> 6)")
-    g5 = rig.step(_candle(31), psych=ok).gates[4]
+    g5 = rig.step(_candle(31), psych=ok).gates[3]
     assert g5.passed and not g5.flagged and "overtrade warn" in g5.detail
     # None (replay/tests) -> the D16.2 legacy flagged placeholder, unchanged
-    g5 = rig.step(_candle(32)).gates[4]
+    g5 = rig.step(_candle(32)).gates[3]
     assert g5.passed and g5.flagged and g5.detail == "no journal yet"
 
 
-def test_g3_session_gate_passes_outside_late():
-    # D24.1: G3 is a REAL gate now — LONDON (T0 = 09:00) passes, not flagged.
-    result = _warm(_Rig(), 30)
-    g3 = result.gates[2]
-    assert g3.name == "G3" and g3.passed and not g3.flagged
-    assert g3.detail == "session LONDON"
+def test_g3_session_gate_removed():
+    # D29: the session filter (G3) is gone — the gate roster is G1,G2,G4,G5,G6
+    # (no G3), keeping the G4/G5/G6 labels (not renumbered).
+    names = [g.name for g in _warm(_Rig(), 30).gates]
+    assert names == ["G1", "G2", "G4", "G5", "G6"]
+    assert "G3" not in names
 
 
-def test_g3_fails_in_the_late_session():
-    # D24.1: the LATE session (21:00–00:00 UTC) is excluded -> NO_SIGNAL.
-    rig = _Rig()
-    # warm 30 contiguous candles starting 21:00 UTC (T0 09:00 + 720 min)
-    result = _warm(rig, 30, start=720)
-    g3 = result.gates[2]
-    assert g3.name == "G3" and not g3.passed and not g3.flagged
-    assert g3.detail == "session LATE"
-    assert result.verdict == "NO_SIGNAL"           # a real hard-gate fail
-    assert result.score is None and result.components is None
+def test_late_session_is_not_blocked_after_g3_removal():
+    # D29: warming 30 contiguous candles starting 21:00 UTC (the old LATE
+    # window) no longer forces NO_SIGNAL — there is no session gate to fail.
+    result = _warm(_Rig(), 30, start=720)
+    assert [g.name for g in result.gates] == ["G1", "G2", "G4", "G5", "G6"]
+    assert result.verdict != "NO_SIGNAL"           # not blocked by session
+    assert result.score is not None                # all gates pass -> scored
 
 
 def test_placeholder_gates_flagged_with_pinned_details():
     result = _warm(_Rig(), 30)
-    g4, g5, g6 = result.gates[3:6]                  # G3 is real now (D24.1)
+    g4, g5, g6 = result.gates[2:5]                  # G3 removed at D29
     assert [g.name for g in (g4, g5, g6)] == ["G4", "G5", "G6"]
     assert all(g.passed and g.flagged for g in (g4, g5, g6))
     assert g4.detail == "no events calendar yet"

@@ -3,14 +3,17 @@ after the D16 conformance audit; Architecture §6; Decision D16 incl. its
 freeze-audit record; roadmap P3.2–P3.11, decisions P3.1/P3.6 folded per
 D16). Modify only on a genuine production defect.
 
-Stage 1 hard gates G1–G6 (any fail → NO_SIGNAL, score never shown) +
-Stage 2 weighted score 0.30×Structure + 0.30×Liquidity + 0.25×Volume +
-0.15×Momentum with the D16.3 rubric. Direction/entry/SL/invalidation are
+Stage 1 hard gates — G1, G2, G4, G5, G6 (any fail → NO_SIGNAL, score never
+shown) + Stage 2 weighted score 0.30×Structure + 0.30×Liquidity + 0.25×Volume
++ 0.15×Momentum with the D16.3 rubric. Direction/entry/SL/invalidation are
 S1–S3 + planner outputs (P3.12–P3.17) — NOT produced here (D16.1).
 
-G3 (session filter) became a REAL gate at D24.1 — the LATE session
-(21:00–00:00 UTC) is excluded, a deterministic function of candle.ts
-(replay ≡ live); ENGINE_VERSION bumped 1 → 2 for it.
+G3 (session filter) was a real gate at D24.1 (the LATE session 21:00–00:00 UTC
+excluded) but was REMOVED at D29 (owner decision — BTC/ETH trade 24/7, so the
+thin-liquidity LATE window is judged from the per-session analytics, not
+blocked by a hard gate). ENGINE_VERSION 1 → 2 (D24.1 added G3) → 3 (D29 removed
+it). G1 (data integrity: continuity + clock) is KEPT. Gate labels G4/G5/G6 are
+unchanged (not renumbered) so their §6 meanings stay stable.
 
 Flagged placeholders (each recorded in D16.2/D16.3, self-healing when the
 owning task lands): G1 clock arm without a provider (replay), G2 without a
@@ -45,7 +48,7 @@ from marketscalper.engines.confluence import (
     CONFLUENCE_BAND_ATR_RATIO,
     ConfluenceZone,
 )
-from marketscalper.engines.liquidity import SweepEvent, session_of
+from marketscalper.engines.liquidity import SweepEvent
 from marketscalper.engines.momentum import (
     IncrementalATR,
     MomentumState,
@@ -56,8 +59,10 @@ from marketscalper.providers.base import Candle
 
 # D1 stamp component: bump on ANY logic/threshold change here.
 # v2 (D24): G3 became a real session gate (LATE excluded) — the first
-# post-freeze logic change; the stamp distinguishes pre/post-G3 signals.
-ENGINE_VERSION = 2
+# post-freeze logic change.
+# v3 (D29): G3 session gate REMOVED (owner decision — crypto is 24/7; the LATE
+# window is judged from per-session analytics, not a hard block). G1 kept.
+ENGINE_VERSION = 3
 
 # Frozen §6 literals — module constants, not config.
 GAP_WINDOW_CANDLES = 30                # G1: no gap in last 30 candles
@@ -110,7 +115,7 @@ class GateResult:
 
 @dataclass(frozen=True)
 class QualificationResult:
-    gates: tuple               # six GateResults, G1..G6
+    gates: tuple               # five GateResults: G1,G2,G4,G5,G6 (G3 removed D29)
     data_integrity: str        # 'PASS' | 'DEGRADED' (G1 AND G2)
     components: dict | None    # None on gate fail (§6: never shown)
     score: float | None        # None on gate fail
@@ -251,12 +256,10 @@ class QualificationEngine:
                 "G2", spread_pct < SPREAD_LIMIT_PCT, False,
                 f"spread {spread_pct:.4f}%"))
 
-        # G3 — session filter (D24.1, real gate): the LATE session
-        # (21:00–00:00 UTC, the D12.1 low-liquidity window) is excluded;
-        # ASIA/LONDON/NY pass. A pure function of candle.ts → replay ≡ live.
-        session = session_of(candle.ts.hour)
-        gates.append(GateResult(
-            "G3", session != "LATE", False, f"session {session}"))
+        # G3 (session filter) REMOVED at D29 (owner: BTC/ETH trade 24/7 — the
+        # thin-liquidity LATE window is judged from the per-session analytics,
+        # not blocked here). Labels G4–G6 are kept, not renumbered, so their
+        # §6 meanings stay stable.
         # G4–G6
         gates.append(GateResult("G4", True, True, "no events calendar yet"))
         # G5 — the psychology guard (D23.4/P4.9). No guard wired
