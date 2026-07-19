@@ -19,14 +19,15 @@
       <span class="brand-sub">deterministic analysis &middot; decision support &middot; no execution</span>
     </div>
     <div class="switcher mono">
-      <button id="sym-BTCUSDT" type="button">BTCUSDT</button>
-      <button id="sym-ETHUSDT" type="button">ETHUSDT</button>
+      <button id="sym-BTCUSDT" type="button" title="Bitcoin (BTCUSDT) ka chart dekho">BTCUSDT</button>
+      <button id="sym-ETHUSDT" type="button" title="Ethereum (ETHUSDT) ka chart dekho">ETHUSDT</button>
     </div>
     <div class="conn">
-      <button id="dash-open" type="button" class="dash-open-btn">Dashboard</button>
-      <span id="trend-state" class="mono trend">trend: —</span>
+      <button id="help-open" type="button" class="help-open-btn" title="Poora guide — tool kaise use karein (Hinglish)">❓ Madad</button>
+      <button id="dash-open" type="button" class="dash-open-btn" title="Analytics + Journal kholo">Dashboard</button>
+      <span id="trend-state" class="mono trend" title="Abhi ka market trend: BULLISH / BEARISH / RANGE">trend: —</span>
       <span id="conn-dot" class="dot"></span>
-      <span id="conn-text" class="mono">CONNECTING</span>
+      <span id="conn-text" class="mono" title="Server se connection status">CONNECTING</span>
     </div>
   </header>
 
@@ -46,25 +47,131 @@
     </div>
   </div>
 
+  <!-- In-app Hinglish help/guide (static text; help.js only toggles it). -->
+  <div id="help" class="help-overlay">
+    <div class="help-panel">
+      <div class="help-head">
+        <h1>MarketScalper — Madad / Guide</h1>
+        <button id="help-close" type="button" class="help-close" title="Band karo (Esc)">✕</button>
+      </div>
+      <div class="help-body">
+        <div class="help-card intro">
+          <h2>🎯 Ye tool kya hai?</h2>
+          <p>MarketScalper ek <b>market ANALYSIS tool</b> hai — ye khud trade
+          <b>NAHI</b> karta. Ye tumhe batata hai ki <b>kab, kahan aur kyun</b> ek
+          trade ka setup ban raha hai. Final decision aur order tum khud apne
+          exchange par lagate ho. (Isliye header me likha hai: "no execution".)</p>
+        </div>
+
+        <div class="help-card">
+          <h2>📈 Chart</h2>
+          <ul>
+            <li><b>Bada chart (upar):</b> 1-minute candles — main price action.</li>
+            <li><b>Chhota chart (5m context):</b> 5-minute candles — bada trend samajhne ke liye.</li>
+            <li>Chart pe jo <b>lines, boxes, arrows</b> dikhte hain wo engine ke detect kiye structures hain (niche "Overlays" dekho).</li>
+          </ul>
+        </div>
+
+        <div class="help-card">
+          <h2>▶️ Replay kya hai aur kyun?</h2>
+          <p>Replay = <b>purane data ko dobara chala ke dekhna</b>, taaki tool ka
+          analysis samajh sako bina live market ka wait kiye. Live me har candle 1
+          minute me banti hai — replay me poora din seconds/minutes me dekh sakte ho.</p>
+          <ul>
+            <li><b>From / To:</b> kaunsi date-time se kaunsi tak chalana hai.</li>
+            <li><b>Speed:</b> <b>×60 = dekhne ke liye best</b> (1 candle/second). ×max sirf fast processing ke liye — itna tez ki screen pe kuch dikhta nahi.</li>
+            <li><b>Start / Stop:</b> replay shuru / band.</li>
+          </ul>
+          <p class="help-tip">💡 Dense data: <b>April 2026</b> ki dates use karo (jaise 20-04-2026). Ek session dekhna ho to From <b>08:00</b> To <b>13:00</b> (LONDON) — ~5 min me pura ×60 par.</p>
+        </div>
+
+        <div class="help-card">
+          <h2>🟢 Live vs Replay</h2>
+          <p><b>LIVE</b> (header me green dot) = abhi ka real Binance data. <b>Replay</b>
+          = history. Replay chalu hone par chart history dikhata hai; khatam hone par
+          wapas live pe aa jata hai.</p>
+        </div>
+
+        <div class="help-card highlight">
+          <h2>🎯 Signal kaise banta hai? (Right panel)</h2>
+          <p>Right side ka panel batata hai ki abhi ka setup kitna strong hai:</p>
+          <ul>
+            <li><b>Score /100 + Verdict:</b> setup ki strength.
+              <br>• <b>NO_SIGNAL</b> → koi setup nahi / koi gate fail.
+              <br>• <b>BELOW_THRESHOLD</b> → weak setup.
+              <br>• <b>TRADEABLE (≥75)</b> → acha setup.
+              <br>• <b>A+ (≥85)</b> → best setup.</li>
+            <li><b>Hard Gates (G1–G6):</b> 6 zaroori shartein. <b>Koi ek bhi ✗ (fail)
+              → seedha NO SIGNAL</b> (score dikhta hi nahi). Jaise abhi shayad
+              <b>G3 = session LATE</b> ✗ ho (raat 21:00–00:00 UTC low-liquidity time
+              me tool jaan-boojhkar signal nahi deta). <b>prov</b> = abhi placeholder gate.</li>
+            <li><b>Signal Agreement:</b> 4 engines milke score banate hain — Structure
+              30%, Liquidity 30%, Volume 25%, Momentum 15%.</li>
+            <li><b>Trade Plan:</b> jab TRADEABLE ho tabhi dikhta hai — <b>Entry, Stop-loss,
+              TP1, TP2, suggested quantity, Risk:Reward</b>. Ye sirf SUGGESTION hai; execute tum karte ho.</li>
+            <li><b>Reason Trace:</b> kyun signal bana ya nahi bana — rule by rule (✓ / ✗).</li>
+          </ul>
+        </div>
+
+        <div class="help-card">
+          <h2>🖍️ Chart Overlays (kya-kya dikhta hai)</h2>
+          <ul>
+            <li><b>Pivots:</b> H / L points (swing high / swing low).</li>
+            <li><b>Trendlines:</b> <b class="c-green">green = support</b>, <b class="c-red">red = resistance</b>.</li>
+            <li><b>Zones (boxes):</b> Order Blocks (OB) aur Fair Value Gaps (FVG) — wo areas jaha price react kar sakta hai.</li>
+            <li><b>Arrows:</b> liquidity sweeps (jaha price ne high/low ko "shikaar" kiya).</li>
+            <li>Header me <b>trend</b> dikhta hai: BULLISH / BEARISH / RANGE.</li>
+          </ul>
+        </div>
+
+        <div class="help-card">
+          <h2>🔍 Audit (Random line / Sweep / OB)</h2>
+          <p>Ye <b>learning / verification</b> tool hai. Button dabao → ek random
+          detected structure pe chart jump karega → tum dekho engine ne sahi pakda ya
+          nahi → <b>Accept / Reject</b> dabao. Upar tally (TL / SWP / OB) count rakhta
+          hai. Trade se koi lena-dena nahi — sirf tumhare review ke liye.</p>
+        </div>
+
+        <div class="help-card">
+          <h2>📊 Dashboard &amp; 🔄 Symbol</h2>
+          <p><b>Dashboard</b> button: Analytics (win rate, expectancy) + Journal
+          (logged trades + reasons). Upar <b>BTCUSDT / ETHUSDT</b> se coin badlo.</p>
+        </div>
+
+        <div class="help-card warn">
+          <h2>⚠️ Zaroori baat</h2>
+          <ul>
+            <li>Ye tool <b>khud trade nahi karta</b> — sirf analysis + suggestion.</li>
+            <li>Koi bhi strategy tab tak <b>"TRUSTED" nahi</b> jab tak 200+
+              recommendations par fees ke baad positive result na aaye. Abhi
+              <b>validation phase</b> hai — signals blindly follow mat karo.</li>
+          </ul>
+        </div>
+
+        <p class="help-foot">Ye guide dobara kholne ke liye upar <b>❓ Madad</b> button dabao. (Band: Esc ya bahar click)</p>
+      </div>
+    </div>
+  </div>
+
   <div class="replay-bar mono">
-    <span class="strip-label-inline">REPLAY</span>
-    <input id="replay-from" type="datetime-local" />
-    <input id="replay-to" type="datetime-local" />
-    <select id="replay-speed">
+    <span class="strip-label-inline" title="Purane data ko chala ke analysis dekho (live ka wait kiye bina)">REPLAY</span>
+    <input id="replay-from" type="datetime-local" title="Replay kis date-time se shuru ho (dense data: April 2026)" />
+    <input id="replay-to" type="datetime-local" title="Replay kis date-time tak chale" />
+    <select id="replay-speed" title="Speed: ×60 dekhne ke liye best (1 candle/sec); max sirf fast processing (itna tez ki dikhta nahi)">
       <option value="1">×1</option>
       <option value="10">×10</option>
       <option value="60" selected>×60</option>
       <option value="max">max</option>
     </select>
-    <button id="replay-start" type="button">Start</button>
-    <button id="replay-stop" type="button">Stop</button>
-    <span class="strip-label-inline audit-label">AUDIT</span>
-    <button id="audit-pick" type="button">Random line</button>
-    <button id="audit-pick-sweep" type="button">Random Sweep</button>
-    <button id="audit-pick-ob" type="button">Random OB</button>
-    <button id="audit-accept" type="button" disabled>Accept</button>
-    <button id="audit-reject" type="button" disabled>Reject</button>
-    <span id="audit-tally">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
+    <button id="replay-start" type="button" title="Replay shuru karo — engine ka analysis live banta dekho">Start</button>
+    <button id="replay-stop" type="button" title="Replay band karo">Stop</button>
+    <span class="strip-label-inline audit-label" title="Detected structures ko khud verify karne ka learning tool">AUDIT</span>
+    <button id="audit-pick" type="button" title="Ek random trendline pe chart jump karega — sahi hai ya nahi verify karo">Random line</button>
+    <button id="audit-pick-sweep" type="button" title="Ek random liquidity sweep pe jump karke verify karo">Random Sweep</button>
+    <button id="audit-pick-ob" type="button" title="Ek random order block (zone) pe jump karke verify karo">Random OB</button>
+    <button id="audit-accept" type="button" disabled title="Ye structure sahi mark karo (tally +1)">Accept</button>
+    <button id="audit-reject" type="button" disabled title="Ye structure galat mark karo">Reject</button>
+    <span id="audit-tally" title="Tally: TrendLine / SWeeP / Order Block — accepted/total (rejected)">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
   </div>
 
   <div id="workspace">
@@ -79,7 +186,7 @@
     <!-- Quality panel (P3.19; §9 right rail) — pure render of the payload's
          qualification / signals / recommendations. No engine math here. -->
     <aside id="quality-panel" class="empty">
-      <section class="panel-section gauge-section">
+      <section class="panel-section gauge-section" title="Setup ki strength /100 + verdict (NO_SIGNAL / BELOW_THRESHOLD / TRADEABLE ≥75 / A+ ≥85)">
         <div class="gauge-wrap">
           <svg class="gauge-svg" viewBox="0 0 120 120" aria-hidden="true">
             <circle class="gauge-track" cx="60" cy="60" r="52" />
@@ -98,22 +205,22 @@
       </section>
 
       <section class="panel-section">
-        <h2 class="panel-title">Hard gates</h2>
+        <h2 class="panel-title" title="6 zaroori shartein (G1–G6). Koi ek bhi ✗ fail → seedha NO SIGNAL. 'prov' = placeholder gate">Hard gates</h2>
         <div id="panel-gates"></div>
       </section>
 
       <section class="panel-section">
-        <h2 class="panel-title">Signal agreement</h2>
+        <h2 class="panel-title" title="4 engines milke score banate hain: Structure 30% + Liquidity 30% + Volume 25% + Momentum 15%">Signal agreement</h2>
         <div id="panel-components"></div>
       </section>
 
       <section class="panel-section">
-        <h2 class="panel-title">Trade plan</h2>
+        <h2 class="panel-title" title="Entry / Stop-loss / TP1 / TP2 / quantity ka SUGGESTION — sirf jab TRADEABLE ho. Execute tum khud karte ho">Trade plan</h2>
         <div id="panel-plan"></div>
       </section>
 
       <section class="panel-section">
-        <h2 class="panel-title">Reason trace</h2>
+        <h2 class="panel-title" title="Kyun signal bana ya nahi bana — rule by rule (✓ / ✗)">Reason trace</h2>
         <div id="panel-reasons"></div>
       </section>
     </aside>
@@ -124,6 +231,7 @@
     <span id="last-event">last event: —</span>
   </footer>
 
+  <script src="help.js"></script>
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
   <script src="dashboard.js"></script>

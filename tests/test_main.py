@@ -23,6 +23,16 @@ def _env(tmp_path, extra: dict) -> dict:
     env = {k: v for k, v in os.environ.items() if not k.startswith("MARKETSCALPER_")}
     env["PYTHONPATH"] = str(ROOT / "backend")
     env["MARKETSCALPER_LOG_DIR"] = str(tmp_path / "logs")
+    # Hermetic config: point at a tmp dir that has ONLY a minimal example
+    # layer, so the refuse-to-start contracts never pick up a developer's
+    # git-ignored backend/config.yaml (e.g. a local DSN) leaking in.
+    cfg_dir = tmp_path / "cfg"
+    cfg_dir.mkdir(exist_ok=True)
+    (cfg_dir / "config.example.yaml").write_text(
+        "app:\n  log_level: INFO\nsymbols:\n  - BTCUSDT\n  - ETHUSDT\n"
+        'timeframes:\n  - 1m\n  - 5m\ndatabase:\n  dsn: ""\n',
+        encoding="utf-8")
+    env["MARKETSCALPER_CONFIG_DIR"] = str(cfg_dir)
     env.update(extra)
     return env
 

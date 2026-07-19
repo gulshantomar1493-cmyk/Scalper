@@ -515,3 +515,51 @@ def test_dashboard_js_is_valid_javascript():
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------------ in-app Hinglish help/guide
+
+
+def test_help_js_exists_and_is_wired_before_app():
+    assert (FRONTEND / "help.js").is_file()
+    html = _read("index.html")
+    assert 'src="help.js"' in html
+    assert html.index("help.js") < html.index('src="app.js"')  # loads first
+
+
+def test_index_has_help_button_and_guide_overlay():
+    html = _read("index.html")
+    assert 'id="help-open"' in html and 'id="help"' in html
+    assert 'id="help-close"' in html
+    # the guide covers the concepts a new user needs, in Hinglish
+    for topic in ("Replay kya hai", "Signal kaise banta hai", "Hard Gates",
+                  "Trade Plan", "Overlays", "no execution"):
+        assert topic in html, topic
+
+
+def test_key_controls_have_hinglish_tooltips():
+    html = _read("index.html")
+    # every interactive control the user asked about carries a title= hint
+    for anchor in ('id="replay-start"', 'id="replay-speed"', 'id="audit-pick"',
+                   'id="sym-BTCUSDT"', 'id="dash-open"', 'id="help-open"'):
+        i = html.index(anchor)
+        segment = html[i:i + 260]
+        assert "title=" in segment, anchor
+
+
+def test_help_js_is_a_pure_ui_toggler():
+    js = _read("help.js")
+    # no data, no network, no engine math — help is static text + show/hide
+    for banned in ("fetch(", "WebSocket", "Math.log", "Math.exp", "slope",
+                   "intercept", "ATR", "tolerance", "XMLHttpRequest"):
+        assert banned not in js, banned
+    assert "getElementById(\"help\")" in js
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_help_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "help.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
