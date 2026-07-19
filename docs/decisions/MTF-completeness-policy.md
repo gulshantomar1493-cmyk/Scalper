@@ -32,9 +32,14 @@ philosophies:
    - **Drop only a fully-empty bucket** (zero 1m candles = a true data void — and
      genuine 1m voids are healed FIRST by the DB-first→provider gap-fill of owner
      decision #6, so a remaining empty bucket means the exchange itself had no trades).
-   - No per-candle completeness flag on the wire (kept simple per the owner's
-     scale/simplicity directive). `metadata.count` reports how many candles are
-     returned; the ChartService may log a partial-bucket warning for observability.
+   - **Per-candle completeness metadata (owner rule 5, Phase-1 lock):** each
+     aggregated candle carries `complete` (bool) and `n` (count of underlying 1m
+     candles present). `complete = (n == expected_minutes(tf, bucket_ts))` where
+     expected = N for fixed TFs, 1440 for 1D, 10080 for 1W, and (days-in-month×1440)
+     for 1M. Native `1m`/`5m` rows are canonical → `complete: true`. This lets the
+     frontend render incomplete candles differently (e.g. dimmed) while the backend
+     stays a pure deterministic function of the stored 1m. `metadata.count` also
+     reports the number of candles returned.
 
 ## D28.2 — Why best-effort (given the owner's priorities)
 

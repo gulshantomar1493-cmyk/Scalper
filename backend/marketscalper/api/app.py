@@ -51,7 +51,8 @@ import logging
 import math
 from datetime import datetime, timedelta, timezone
 
-from fastapi import Body, Depends, FastAPI, Header, HTTPException, WebSocket
+from fastapi import (Body, Depends, FastAPI, Header, HTTPException, Query,
+                     WebSocket)
 from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db
@@ -114,6 +115,7 @@ def create_app(
     replay_provider=None,
     replay_wiring=None,
     psych_guard=None,
+    chart_service=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -201,6 +203,26 @@ def create_app(
              "n_trades": r["n_trades"], "taker_buy_v": float(r["taker_buy_v"])}
             for r in rows
         ]
+
+    # ------------------------------------------- multi-timeframe chart (D26)
+    # Additive read-only endpoint serving the nine chart timeframes via the
+    # compute-on-read ChartService. /candles above is UNTOUCHED. Isolated from
+    # the decision engine: chart data never touches the bus or the `structure`
+    # payload. `from`/`to` are aliased (Python reserved words).
+    @app.get("/api/chart", dependencies=[Depends(require_token)])
+    async def api_chart(
+        symbol: str,
+        timeframe: str,
+        start: datetime = Query(alias="from"),
+        end: datetime = Query(alias="to"),
+    ) -> dict:
+        if chart_service is None:
+            raise HTTPException(status_code=503,
+                                detail="chart service not configured")
+        try:
+            return await chart_service.get_chart(symbol, timeframe, start, end)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     # ------------------------------------------------------ journal (P4.8)
     # The recommendation core + the AUTO journal context (reason_text,

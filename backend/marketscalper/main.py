@@ -41,6 +41,7 @@ from marketscalper.config import Config, load_config
 from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
+from marketscalper.core.chart_service import ChartService
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
 from marketscalper.core.state import StateStore
@@ -588,11 +589,16 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
+    # D26 multi-timeframe ChartService: read-only, isolated from the engine bus.
+    # The live feed is injected only as the gap-fill provider (fetches canonical
+    # 1m; ChartService itself imports no concrete provider — P0.19).
+    chart_service = ChartService(pool, provider=feed)
     app = create_app(bus, store, pool, token, replay_provider=ReplayFeed,
                      replay_wiring=partial(                   # F2: full chain
                          _wire_structure_engines, regime_cfg=regime_cfg,
                          shift_accel_atr_ratio=shift_accel),
-                     psych_guard=psych_guard)                 # D23.5 (P4.9)
+                     psych_guard=psych_guard,                 # D23.5 (P4.9)
+                     chart_service=chart_service)             # D26 (Phase 1)
 
     await feed.start()
     await sampler.start()

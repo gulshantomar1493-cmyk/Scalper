@@ -20,6 +20,7 @@ from marketscalper import db
 from marketscalper.api.app import create_app
 from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
+from marketscalper.core.chart_service import ChartService
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle, Trade
 from marketscalper.providers.replay import ReplayFeed
@@ -724,5 +725,99 @@ async def test_concurrent_replay_starts_one_wins(db_conn, monkeypatch):
             assert statuses == [200, 409]
             async with s.post(f"http://{addr}/replay/stop", headers=AUTH) as r:
                 assert r.status == 200
+    finally:
+        await _stop(server, task)
+
+
+# ------------------------------------------------ /api/chart (D26 multi-timeframe)
+
+
+def _chart_app(db_conn, with_service=True):
+    bus = EventBus()
+    store = StateStore(bus)
+    pool = TxPool(db_conn)
+    cs = ChartService(pool) if with_service else None
+    return create_app(bus, store, pool, TOKEN, chart_service=cs)
+
+
+def _chart_params(tf="15m", frm=None, to=None):
+    return {"symbol": "BTCUSDT", "timeframe": tf,
+            "from": (frm or M0).isoformat(),
+            "to": (to or (M0 + timedelta(hours=1))).isoformat()}
+
+
+async def test_api_chart_requires_token(db_conn):
+    server, task, addr = await _serve(_chart_app(db_conn))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/chart", params=_chart_params()) as r:
+                assert r.status == 401
+    finally:
+        await _stop(server, task)
+
+
+async def test_api_chart_503_when_not_configured(db_conn):
+    server, task, addr = await _serve(_chart_app(db_conn, with_service=False))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/chart", params=_chart_params(),
+                             headers=AUTH) as r:
+                assert r.status == 503
+    finally:
+        await _stop(server, task)
+
+
+async def test_api_chart_rejects_unknown_tf_and_bad_range(db_conn):
+    server, task, addr = await _serve(_chart_app(db_conn))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/chart",
+                             params=_chart_params(tf="3m"), headers=AUTH) as r:
+                assert r.status == 400                     # unknown tf
+            async with s.get(f"http://{addr}/api/chart",
+                             params=_chart_params(to=M0), headers=AUTH) as r:
+                assert r.status == 400                     # from == to
+    finally:
+        await _stop(server, task)
+
+
+async def test_api_chart_aggregation_roundtrip(db_conn):
+    await _seed_candles(db_conn, n=30)                     # M0 .. M0+30m of 1m
+    server, task, addr = await _serve(_chart_app(db_conn))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/chart",
+                             params=_chart_params(to=M0 + timedelta(minutes=30)),
+                             headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+    finally:
+        await _stop(server, task)
+    assert set(body) == {"candles", "metadata", "overlays"}
+    assert body["overlays"] is None                        # engine-isolated
+    assert body["metadata"]["timeframe"] == "15m"
+    assert body["metadata"]["aggregated"] is True
+    assert len(body["candles"]) == 2                       # 2 x 15m in 30m
+    b0 = body["candles"][0]
+    # _seed_candles: o=100+i, h=102+i, l=99+i, c=101+i
+    assert (b0["o"], b0["h"], b0["l"], b0["c"]) == (100.0, 116.0, 99.0, 115.0)
+    assert b0["n"] == 15 and b0["complete"] is True
+
+
+async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
+    # regression: /candles stays a BARE array with the pinned tf in {1m,5m}
+    await _seed_candles(db_conn, n=5)
+    server, task, addr = await _serve(_chart_app(db_conn))
+    try:
+        async with aiohttp.ClientSession() as s:
+            p15 = {"symbol": "BTCUSDT", "tf": "15m", "start": M0.isoformat(),
+                   "end": (M0 + timedelta(hours=1)).isoformat()}
+            async with s.get(f"http://{addr}/candles", params=p15, headers=AUTH) as r:
+                assert r.status == 400                     # 15m still rejected
+            p1 = {"symbol": "BTCUSDT", "tf": "1m", "start": M0.isoformat(),
+                  "end": (M0 + timedelta(minutes=5)).isoformat()}
+            async with s.get(f"http://{addr}/candles", params=p1, headers=AUTH) as r:
+                assert r.status == 200
+                assert isinstance(await r.json(), list)    # bare array, no envelope
     finally:
         await _stop(server, task)
