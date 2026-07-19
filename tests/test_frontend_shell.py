@@ -919,6 +919,38 @@ def test_drawing_js_valid():
     assert r.returncode == 0, r.stderr
 
 
+def test_login_flow_wired():
+    """Username/password login gate: login.js (pure UI) + app.js (owns the
+    network) + the overlay/logout in index.html. No raw-token prompt."""
+    html = _read("index.html")
+    lj = _read("login.js")
+    app = _read("app.js")
+    # login.js loads before app.js and is a pure UI (app.js owns fetch/WS, §9)
+    assert 'src="login.js"' in html
+    assert html.index("login.js") < html.index('src="app.js"')
+    for banned in ("fetch(", "WebSocket", "localStorage"):
+        assert banned not in lj, banned                       # app.js owns these
+    assert "window.__msAuth" in lj and "window.Login" in lj
+    # overlay + fields + logout button present
+    for id_ in ("login-overlay", "login-user", "login-pass", "login-btn", "logout-btn"):
+        assert f'id="{id_}"' in html, id_
+    # app.js: NO raw-token prompt; token via ui.js helper (app.js storage-free); 401
+    assert "window.prompt" not in app                         # the whole point
+    assert "localStorage" not in app                          # ui.js owns storage
+    assert "__msToken" in app and "/login" in app
+    assert "__msAuth" in app and "function boot(" in app and "onAuthFail" in app
+    # ui.js persists the token ("remember token")
+    ui = _read("ui.js")
+    assert "ms_token" in ui and "__msToken" in ui
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_login_js_valid():
+    r = subprocess.run(["node", "--check", str(FRONTEND / "login.js")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
 def test_app_js_uses_chart_service_and_gates_higher_tfs():
     js = _read("app.js")
     assert "/api/chart?" in js and "timeframe" in js       # backend ChartService

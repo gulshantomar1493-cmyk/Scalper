@@ -611,7 +611,14 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     # The live feed is injected only as the gap-fill provider (fetches canonical
     # 1m; ChartService itself imports no concrete provider — P0.19).
     chart_service = ChartService(pool, provider=feed)
-    app = create_app(bus, store, pool, token, replay_provider=ReplayFeed,
+    # Username/password login (single-user tool): credentials live in the env
+    # (git-ignored .env). None set -> /login answers 503 and the frontend falls
+    # back to a token in the URL (dev). The API token stays the data-route gate.
+    auth_user = os.environ.get("MARKETSCALPER_AUTH_USER", "")
+    auth_password = os.environ.get("MARKETSCALPER_AUTH_PASSWORD", "")
+    app = create_app(bus, store, pool, token,
+                     auth_user=auth_user, auth_password=auth_password,
+                     replay_provider=ReplayFeed,
                      replay_wiring=partial(                   # F2: full chain
                          _wire_structure_engines, regime_cfg=regime_cfg,
                          shift_accel_atr_ratio=shift_accel),

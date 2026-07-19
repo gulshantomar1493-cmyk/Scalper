@@ -18,7 +18,12 @@
 
 const params = new URLSearchParams(window.location.search);
 const API_HOST = params.get("api") || window.location.host || "127.0.0.1:8000";
-const TOKEN = params.get("token") || window.prompt("MarketScalper API token") || "";
+// Auth (login-based): a ?token= URL override wins (dev / bookmarks); otherwise
+// the token remembered at login. No token -> the login overlay gates the app
+// (no raw-token prompt). Storage lives in ui.js (app.js is storage-free);
+// TOKEN is mutable — set on a successful login.
+let TOKEN = params.get("token") || (window.__msToken ? window.__msToken.get() : "");
+if (params.get("token") && window.__msToken) window.__msToken.save(TOKEN);
 
 // The API scheme follows the page's scheme: a page served over HTTPS MUST call
 // the API over HTTPS/WSS — browsers block mixed http/ws content. So a same-origin
@@ -175,6 +180,7 @@ async function fetchChart(symbol, tf) {
   const resp = await fetch(`${HTTP_BASE}/api/chart?${qs}${iq ? "&" + iq : ""}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
+  if (resp.status === 401) onAuthFail();
   if (!resp.ok) throw new Error(`chart ${symbol}/${tf}: HTTP ${resp.status}`);
   return await resp.json();                         // full body {candles, indicators, ...}
 }
@@ -408,6 +414,7 @@ async function api(path, options) {
     ...options,
   });
   const body = await resp.json().catch(() => ({}));
+  if (resp.status === 401) onAuthFail();          // token invalid -> re-login
   if (!resp.ok) throw new Error(body.detail || `HTTP ${resp.status}`);
   return body;
 }
@@ -628,12 +635,14 @@ async function pollOps() {
     lastFeedConnected = conn;
   } catch (e) { /* transient — keep the last good pill/dashboard */ }
 }
-setInterval(pollOps, 8000); pollOps();
-// rotate the pill's live activity so the app never appears idle (items 3/4)
-setInterval(function () {
-  opsActIdx++;
-  if (opsData) Ops.renderPill($("ops-pill"), opsData, Ops.ACTIVITIES[opsActIdx % Ops.ACTIVITIES.length]);
-}, 3000);
+// ops polling + activity-pill rotation — started by boot() after login.
+function _startOps() {
+  pollOps(); setInterval(pollOps, 8000);
+  setInterval(function () {              // rotate live activity (items 3/4)
+    opsActIdx++;
+    if (opsData) Ops.renderPill($("ops-pill"), opsData, Ops.ACTIVITIES[opsActIdx % Ops.ACTIVITIES.length]);
+  }, 3000);
+}
 
 /* --------------------------------- notifications + Telegram settings (6/7/8) */
 Notify.registerSW();                                   // PWA / installable
@@ -711,14 +720,14 @@ if ($("tg-test")) $("tg-test").addEventListener("click", async () => {
     tgMsg(r.ok ? ("Test sent to " + r.sent + "/" + r.total + " — check Telegram.") : "Send failed.", r.ok); }
   catch (e) { tgMsg(e.message, false); }
 });
-(async function loadSettings() {
+async function loadSettings() {           // called by boot() after login
   try {
     const s = await api("/settings");
     notifPrefs = Object.assign(notifPrefs, s.notifications || {});
     renderTgList(s.telegram_bots);
   } catch (e) { /* settings unavailable — keep defaults */ }
   paintNotifUI();
-})();
+}
 
 /* -------------------------------------------------- chart toolbar (item 1) */
 (function wireToolbar() {
@@ -778,5 +787,47 @@ if ($("tg-test")) $("tg-test").addEventListener("click", async () => {
   });
 })();
 
+/* ----------------------------------------------- auth + boot (login gate) */
+/* The app stays dormant (no WS, no polling, no data fetch) until there is a
+ * token — a fresh visitor sees the login overlay, logs in once, and the token
+ * is remembered (via ui.js) for next time. Logout / a 401 clears it. */
+let booted = false, authFailed = false;
+function boot() {
+  if (booted) return; booted = true;
+  connect();          // WebSocket (its onopen bootstraps history)
+  _startOps();        // /ops polling + activity pill
+  loadSettings();     // notifications + telegram (settings page)
+}
+function resetToLogin() {
+  if (window.__msToken) window.__msToken.clear();
+  const p = new URLSearchParams(window.location.search); p.delete("token");
+  const qs = p.toString();
+  window.location.replace(window.location.pathname + (qs ? "?" + qs : "") + window.location.hash);
+}
+function onAuthFail() { if (authFailed) return; authFailed = true; resetToLogin(); }
+// app.js owns the network (§9) — login.js only renders the form and calls this.
+async function doLogin(username, password) {
+  try {
+    const resp = await fetch(`${HTTP_BASE}/login`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ username, password }),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (resp.ok && body.token) {
+      TOKEN = body.token;
+      if (window.__msToken) window.__msToken.save(TOKEN);
+      if (window.Login) Login.hide();
+      boot();
+      return { ok: true };
+    }
+    if (resp.status === 503) return { ok: false, error: "Login is not set up on the server yet." };
+    return { ok: false, error: "Invalid username or password." };
+  } catch (e) { return { ok: false, error: "Cannot reach the server." }; }
+}
+window.__msAuth = { login: doLogin, logout: resetToLogin };
+{ const lo = $("logout-btn"); if (lo) lo.addEventListener("click", resetToLogin); }
+
 applyAnalysisMode();   // set the initial rail mode before the first payload
-connect();
+if (TOKEN) boot();
+else if (window.Login) Login.show();
+else connect();        // no login.js present -> legacy behavior

@@ -702,6 +702,26 @@ body {
   margin-right: 10px;
 }
 .help-open-btn:hover { filter: brightness(1.08); }
+/* ============================== login overlay ============================== */
+.login-overlay { position:fixed; inset:0; z-index:1000; display:flex; align-items:center;
+  justify-content:center; background:var(--surface); }
+.login-overlay[hidden] { display:none; }
+.login-card { width:320px; max-width:88vw; display:flex; flex-direction:column; gap:12px;
+  padding:28px 26px; border:1px solid var(--hairline); border-radius:14px;
+  background:var(--surface-raised); box-shadow:0 20px 60px rgba(0,0,0,.35); }
+.login-brand { font-size:20px; font-weight:700; color:var(--text); display:flex; align-items:center; gap:8px; }
+.login-logo { font-size:22px; }
+.login-sub { font-size:11px; color:var(--text-dim); margin:-6px 0 6px; letter-spacing:.02em; }
+.login-input { padding:11px 12px; border:1px solid var(--hairline); border-radius:9px;
+  background:var(--surface); color:var(--text); font-size:13px; }
+.login-input:focus { outline:none; border-color:var(--accent); }
+.login-btn { margin-top:2px; padding:11px; border:0; border-radius:9px; background:var(--accent);
+  color:#fff; font:inherit; font-size:14px; font-weight:600; cursor:pointer; }
+.login-btn:hover { filter:brightness(1.08); }
+.login-btn:disabled { opacity:.6; cursor:default; }
+.login-msg { min-height:16px; font-size:11.5px; color:var(--text-dim); text-align:center; }
+.login-msg.bad { color:var(--down); }
+
 .help-overlay {
   position: fixed;
   inset: 0;

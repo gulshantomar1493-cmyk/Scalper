@@ -238,6 +238,48 @@ async def test_multiple_telegram_bots_endpoints(monkeypatch, tmp_path):
         await _stop(server, task)
 
 
+async def test_login_returns_token_and_rejects_bad_creds():
+    # /login validates env credentials and returns the API token (the frontend
+    # then sends it as the Bearer). Wrong user/password -> 401.
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN,
+                     auth_user="Scalper", auth_password="Scalper@01@")
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"http://{addr}/login",
+                              json={"username": "Scalper", "password": "Scalper@01@"}) as r:
+                assert r.status == 200
+                body = await r.json()
+                assert body["token"] == TOKEN                   # the Bearer to use
+            for creds in ({"username": "Scalper", "password": "wrong"},
+                          {"username": "nope", "password": "Scalper@01@"},
+                          {"username": "", "password": ""}):
+                async with s.post(f"http://{addr}/login", json=creds) as r:
+                    assert r.status == 401
+            # the returned token actually authorizes a data route
+            async with s.get(f"http://{addr}/ops",
+                             headers={"Authorization": f"Bearer {TOKEN}"}) as r:
+                assert r.status == 200
+    finally:
+        await _stop(server, task)
+
+
+async def test_login_not_configured_returns_503():
+    # no credentials set -> /login is disabled (503), so a ?token= URL is the
+    # only path (dev); production sets the credentials.
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN)     # no auth_user/password
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"http://{addr}/login",
+                              json={"username": "a", "password": "b"}) as r:
+                assert r.status == 503
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_requires_bearer_token():
     _, _, app = _pipeline()
     server, task, addr = await _serve(app)

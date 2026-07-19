@@ -114,6 +114,8 @@ def create_app(
     store: StateStore,
     pool,
     api_token: str,
+    auth_user: str = "",
+    auth_password: str = "",
     replay_provider=None,
     replay_wiring=None,
     psych_guard=None,
@@ -213,6 +215,26 @@ def create_app(
         except Exception:
             raise HTTPException(status_code=503, detail="database unavailable")
         return {"status": "ready", "db": "ok"}
+
+    @app.post("/login")
+    async def login(payload: dict = Body(...)) -> dict:
+        """Username/password login for the single-user tool. Validates against
+        the env-configured credentials and returns the API token, which the
+        frontend stores (localStorage) and sends as the Bearer on every request.
+        The token stays the only data-route gate (D3); this endpoint just avoids
+        asking the user to paste a raw token. Live-only: replay/tests pass no
+        credentials, so login answers 503 (not configured)."""
+        if not (auth_user and auth_password):
+            raise HTTPException(status_code=503, detail="login not configured")
+        u = str((payload or {}).get("username", ""))
+        p = str((payload or {}).get("password", ""))
+        # both compares constant-time AND both always evaluated (no early-out
+        # timing leak on whether the username alone was correct)
+        u_ok = hmac.compare_digest(u, auth_user)
+        p_ok = hmac.compare_digest(p, auth_password)
+        if not (u_ok and p_ok):
+            raise HTTPException(status_code=401, detail="invalid credentials")
+        return {"token": api_token}
 
     @app.get("/ops", dependencies=[Depends(require_token)])
     async def ops() -> dict:

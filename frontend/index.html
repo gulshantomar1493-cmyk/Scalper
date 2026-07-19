@@ -64,6 +64,7 @@
             <button id="theme-toggle" type="button" class="chrome-btn ic-btn" title="Light / Dark theme">🌙</button>
             <button id="help-open" type="button" class="help-open-btn ic-btn" title="Madad guide">❓</button>
             <div class="lv-user" id="user-menu" title="Account"><span class="lv-avatar">G</span><span class="lv-car">▾</span></div>
+            <button id="logout-btn" type="button" class="chrome-btn ic-btn" title="Sign out">⎋</button>
           </div>
         </header>
 
@@ -301,6 +302,18 @@
     </div>
   </div>
 
+  <!-- Login overlay — gates the app until the user signs in (token via /login). -->
+  <div id="login-overlay" class="login-overlay" hidden>
+    <div class="login-card">
+      <div class="login-brand"><span class="login-logo">📈</span> MarketScalper</div>
+      <div class="login-sub">decision support · sign in to continue</div>
+      <input id="login-user" class="login-input mono" type="text" placeholder="Username" autocomplete="username" autocapitalize="off" spellcheck="false" />
+      <input id="login-pass" class="login-input mono" type="password" placeholder="Password" autocomplete="current-password" />
+      <button id="login-btn" class="login-btn" type="button">Sign in</button>
+      <div id="login-msg" class="login-msg"></div>
+    </div>
+  </div>
+
   <script src="timefmt.js"></script>
   <script src="help.js"></script>
   <script src="ui.js"></script>
@@ -312,6 +325,7 @@
   <script src="notify.js"></script>
   <script src="indicators.js"></script>
   <script src="drawing.js"></script>
+  <script src="login.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

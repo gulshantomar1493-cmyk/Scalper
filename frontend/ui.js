@@ -63,4 +63,14 @@
   window.__msSaveIndicators = function (cfg) {
     try { window.localStorage.setItem(IND_KEY, JSON.stringify(cfg)); } catch (e) {}
   };
+
+  // ---- login token persistence (app.js is storage-banned; ui.js owns it).
+  // "Remember token": the token from a successful login is kept here so the
+  // user does not re-enter credentials every visit; logout/401 clears it. ----
+  var TOKEN_KEY = "ms_token";
+  window.__msToken = {
+    get: function () { try { return window.localStorage.getItem(TOKEN_KEY) || ""; } catch (e) { return ""; } },
+    save: function (t) { try { window.localStorage.setItem(TOKEN_KEY, t); } catch (e) {} },
+    clear: function () { try { window.localStorage.removeItem(TOKEN_KEY); } catch (e) {} },
+  };
 })();
