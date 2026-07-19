@@ -49,6 +49,11 @@ CALENDAR_FIELD = {"1d": "day", "1w": "week", "1M": "month"}
 TIMEFRAMES = ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M")
 
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)   # date_bin origin (UTC midnight)
+# Perf bound (D28 amended): a chart READ auto-fills only a SMALL recent head gap
+# synchronously (e.g. a reconnect gap). A larger gap means the caller wants deep
+# history — that is the batch backfill's job, not a blocking Binance fetch on a
+# chart request (which took 57s+ for 90 days / minutes for a full-history 1W/1M).
+_MAX_GAPFILL_SYNC = timedelta(days=2)
 
 # Aggregate stored 1m -> a fixed N-minute TF. Determinism guards (D26.6): ordered
 # first-open / last-close, closed-buckets-only (HAVING), UTC-anchored date_bin.
@@ -232,6 +237,13 @@ class ChartService:
         # fetch the head range [start, earliest) if we're scrolling before it
         fetch_end = earliest if earliest is not None else end
         if start >= fetch_end:
+            return
+        # Only a SMALL head gap is filled synchronously (perf; see _MAX_GAPFILL_SYNC).
+        # A large gap -> serve stored data now; deep history comes from the backfill.
+        if fetch_end - start > _MAX_GAPFILL_SYNC:
+            log.info("chart gap-fill skipped for %s: head gap %s exceeds sync bound "
+                     "(serving stored data; use the backfill for deep history)",
+                     symbol, fetch_end - start)
             return
         try:
             candles = await provider.fetch_historical_candles(
