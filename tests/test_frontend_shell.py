@@ -29,8 +29,10 @@ def test_shell_files_exist():
 
 def test_index_pins_lwc_v5_and_wires_shell_files():
     html = _read("index.html")
-    assert "lightweight-charts@5.0.0" in html          # pinned, never floating
-    assert "standalone.production.js" in html
+    # LWC is now VENDORED locally (no CDN dependency / no external-host block).
+    assert 'src="lightweight-charts.standalone.production.js"' in html
+    assert "unpkg.com" not in html                     # no external CDN
+    assert (FRONTEND / "lightweight-charts.standalone.production.js").is_file()
     assert 'src="app.js"' in html and 'href="styles.css"' in html
     assert 'id="chart"' in html
     assert 'id="conn-text"' in html and 'id="last-event"' in html

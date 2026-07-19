@@ -5,21 +5,21 @@
    component styles off these vars, so the whole UI + charts re-theme by
    swapping the values — nothing hardcodes a light/dark colour. */
 :root {
-  /* --- light cream (default) --- */
-  --surface: #EFE7D6;            /* warm cream page background */
-  --surface-raised: #FBF6EA;     /* near-white cream for panels/cards */
-  --hairline: rgba(70, 58, 34, 0.18);
-  --subtle: rgba(70, 58, 34, 0.05);   /* faint fills (was white-on-dark) */
-  --accent: #0E7490;             /* deep cyan — readable on cream */
-  --up: #15803D;                 /* green (text/semantic) */
+  /* --- clean light (cool neutral; a subtle whisper of warmth, not cream) --- */
+  --surface: #EDEFF3;            /* soft cool-gray page background */
+  --surface-raised: #FFFFFF;     /* white panels/cards */
+  --hairline: rgba(17, 24, 39, 0.11);
+  --subtle: rgba(17, 24, 39, 0.035);
+  --accent: #0891B2;             /* cyan-600 — readable on light */
+  --up: #16A34A;                 /* green (text/semantic) */
   --down: #DC2626;               /* red   (text/semantic) */
-  --text: #2A2118;               /* warm near-black */
-  --text-dim: #6B6152;           /* warm gray */
+  --text: #111827;               /* cool near-black */
+  --text-dim: #6B7280;           /* cool gray */
   --warn: #B45309;               /* amber (DEGRADED / provisional) */
-  --chart-bg: #FBF6EA;
-  --chart-text: #6B6152;
-  --chart-grid: rgba(70, 58, 34, 0.08);
-  --chart-border: rgba(70, 58, 34, 0.18);
+  --chart-bg: #FFFFFF;
+  --chart-text: #6B7280;
+  --chart-grid: rgba(17, 24, 39, 0.055);
+  --chart-border: rgba(17, 24, 39, 0.11);
   --radius: 12px;                /* locked radius */
   --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
   color-scheme: light;           /* native date pickers / dropdowns match */
@@ -805,14 +805,16 @@ body {
 .lv-stat .k { font-size:8.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim); }
 .lv-stat .v { font-family:var(--mono); font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
 
-.lv-mid { flex:1; min-height:0; display:grid; grid-template-columns:1fr 266px; }
+.lv-mid { flex:1; min-height:0; display:grid; grid-template-columns:1fr 300px; }
 .lv-chartwrap { position:relative; min-width:0; overflow:hidden; }
 #chart { position:absolute; inset:0; }
 .lv-ctitle { position:absolute; top:8px; left:12px; z-index:2; pointer-events:none;
   font-size:11px; color:var(--text-dim); }
 
 .lv-rail { background:var(--surface-raised); border-left:1px solid var(--hairline);
-  overflow-y:auto; padding:11px; display:flex; flex-direction:column; gap:10px; }
+  overflow-y:auto; overflow-x:hidden; padding:11px; display:flex; flex-direction:column; gap:10px; }
+.lv-card { min-width:0; }
+.lv-card * { min-width:0; }
 .lv-card { border:1px solid var(--hairline); border-radius:10px; padding:11px 12px; }
 .lv-ch { font-size:9.5px; letter-spacing:.1em; text-transform:uppercase; color:var(--text-dim);
   font-weight:600; display:flex; align-items:center; gap:6px; margin-bottom:8px; }
@@ -1006,7 +1008,27 @@ body {
 .ctx-exec { margin-top:6px; padding:6px 8px; border-radius:6px; background:color-mix(in srgb, var(--accent) 10%, transparent); color:var(--accent); font-size:11px; }
 
 /* ==================== drawing tools menu (chart UX item 11) ==================== */
-.draw-panel { min-width:170px; display:flex; flex-direction:column; gap:2px; }
+.draw-panel { min-width:170px; gap:2px; }
+.draw-panel:not([hidden]) { display:flex; flex-direction:column; }   /* honour the hidden attr */
 .draw-tool { text-align:left; padding:6px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
 .draw-tool:hover { background:color-mix(in srgb, var(--accent) 12%, transparent); color:var(--accent); }
 .draw-sep { height:1px; background:var(--hairline); margin:4px 2px; }
+
+/* ==================== chart polish v2: legend, crosshair, toolbar ==================== */
+.chart-legend { position:absolute; top:6px; left:10px; z-index:6; display:flex; flex-wrap:wrap; gap:14px; font-size:11px; pointer-events:none; }
+.leg-item { display:inline-flex; align-items:center; gap:6px; }
+.leg-dot { width:12px; height:3px; border-radius:2px; flex:none; }
+.leg-txt { color:var(--text); font-weight:500; }
+.crosshair-box { top:24px; background:color-mix(in srgb, var(--surface-raised) 94%, transparent); box-shadow:0 2px 8px rgba(0,0,0,0.08); }
+.chart-toolbar { gap:4px; padding:5px 8px; }
+.tb-btn { padding:4px 10px; border-radius:8px; font-weight:500; }
+.ind-panel { padding:6px; box-shadow:0 12px 32px rgba(15,23,42,0.18); }
+.draw-tool { border-radius:7px; padding:7px 10px; }
+
+/* ==================== v3 chart layout FIX (toolbar above chart) ==================== */
+.lv-chartwrap { display:flex; flex-direction:column; }
+.lv-chartarea { position:relative; flex:1; min-height:0; min-width:0; }
+.lv-ctitle { display:none; }                 /* redundant — symbol/tf are in the top bar */
+.chart-toolbar { flex:none; position:relative; z-index:8; }
+.chart-legend { position:absolute; top:6px; left:10px; z-index:6; }
+.crosshair-box { top:24px; }

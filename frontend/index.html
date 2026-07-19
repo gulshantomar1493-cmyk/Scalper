@@ -14,7 +14,7 @@
   <meta name="theme-color" content="#0A0F1E" />
   <script>try{var r=document.documentElement;if(localStorage.getItem("ms_theme")==="dark")r.setAttribute("data-theme","dark");r.setAttribute("data-beginner",localStorage.getItem("ms_beginner")==="off"?"off":"on");}catch(e){}</script>
   <link rel="stylesheet" href="styles.css" />
-  <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
+  <script src="lightweight-charts.standalone.production.js"></script>
 </head>
 <body>
   <!-- ===================== SIDEBAR ===================== -->
@@ -107,8 +107,11 @@
               <button id="tb-autoscale" class="tb-btn" type="button" title="Toggle auto-scale">Auto</button>
               <button id="tb-screenshot" class="tb-btn" type="button" title="Screenshot">📷</button>
             </div>
-            <div id="crosshair-box" class="crosshair-box mono" hidden></div>
-            <div id="chart"></div>
+            <div class="lv-chartarea">
+              <div id="chart-legend" class="chart-legend mono"></div>
+              <div id="crosshair-box" class="crosshair-box mono" hidden></div>
+              <div id="chart"></div>
+            </div>
           </div>
 
           <!-- RIGHT RAIL — 3 cards (1m/5m) or a context-only card (15m+) -->

@@ -23,3 +23,7 @@ logs/
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+
+# Node tooling (Playwright screenshot helper — dev only)
+node_modules/
+*.png

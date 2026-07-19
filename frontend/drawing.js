@@ -96,5 +96,5 @@
   function clear() { items.length = 0; pending = null; refresh(); }
   function undo() { items.pop(); refresh(); }
 
-  window.Drawing = { init, setTool, clear, undo, onDone: (cb) => { onDoneCb = cb; }, tool: () => tool };
+  window.Drawing = { init, setTool, clear, undo, onDone: (cb) => { onDoneCb = cb; }, tool: () => tool, count: () => items.length };
 })();

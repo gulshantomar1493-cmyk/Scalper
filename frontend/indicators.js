@@ -19,9 +19,31 @@
   };
   const VUP = "rgba(34,197,94,0.5)", VDN = "rgba(239,68,68,0.5)";
 
-  let chart = null, cfg = clone(DEFAULTS);
+  let chart = null, cfg = clone(DEFAULTS), legendEl = null;
   const S = {};                       // series by key
+  const lastV = {};                   // latest value per indicator (for the legend)
   let obLine = null, osLine = null;
+
+  function fmtN(v) { return v == null ? "" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
+  function lastPoint(pts) { return (pts && pts.length) ? pts[pts.length - 1].value : null; }
+
+  // TradingView-style legend (top-left of the chart) so it's obvious which line
+  // is which. Colour dot + name + latest value.
+  function renderLegend() {
+    if (!legendEl) return;
+    legendEl.textContent = "";
+    const item = (label, color, val) => {
+      const s = document.createElement("span"); s.className = "leg-item";
+      const d = document.createElement("span"); d.className = "leg-dot"; d.style.background = color;
+      const t = document.createElement("span"); t.className = "leg-txt";
+      t.textContent = label + (val != null ? " " + fmtN(val) : "");
+      s.appendChild(d); s.appendChild(t); legendEl.appendChild(s);
+    };
+    for (const p of [20, 50, 200]) if (cfg.ema[p].on) item("EMA" + p, cfg.ema[p].color, lastV["ema" + p]);
+    if (cfg.sma.on) item("SMA" + cfg.sma.len, cfg.sma.color, lastV.sma);
+    if (cfg.rsi.on) item("RSI" + cfg.rsi.len, cfg.rsi.color, lastV.rsi == null ? null : Math.round(lastV.rsi * 10) / 10);
+    if (cfg.volume.on) item("Vol", "#94A3B8", null);
+  }
 
   function clone(o) { return JSON.parse(JSON.stringify(o)); }
   function merge(saved) {
@@ -59,9 +81,13 @@
     S.sma.applyOptions({ visible: cfg.sma.on, color: cfg.sma.color });
     S.rsi.applyOptions({ visible: cfg.rsi.on, color: cfg.rsi.color });
     S.volume.applyOptions({ visible: cfg.volume.on });
+    renderLegend();
   }
 
-  function init(c, saved) { chart = c; cfg = merge(saved); ensure(); }
+  function init(c, saved) {
+    chart = c; cfg = merge(saved); legendEl = document.getElementById("chart-legend");
+    ensure(); renderLegend();
+  }
 
   // Query string for /api/chart based on the enabled indicators (the backend
   // computes exactly these — the browser sends the config, never the formula).
@@ -77,9 +103,15 @@
     if (!chart) return;
     const candles = (body && body.candles) || [], ind = (body && body.indicators) || {};
     S.volume.setData(cfg.volume.on ? candles.map(c => ({ time: tsec(c.ts), value: c.v, color: c.c >= c.o ? VUP : VDN })) : []);
-    for (const p of [20, 50, 200]) S["ema" + p].setData(cfg.ema[p].on && ind.ema ? (ind.ema[String(p)] || []) : []);
-    S.sma.setData(cfg.sma.on && ind.sma ? (ind.sma[String(cfg.sma.len)] || []) : []);
-    S.rsi.setData(cfg.rsi.on && ind.rsi ? (ind.rsi[String(cfg.rsi.len)] || []) : []);
+    for (const p of [20, 50, 200]) {
+      const pts = cfg.ema[p].on && ind.ema ? (ind.ema[String(p)] || []) : [];
+      S["ema" + p].setData(pts); lastV["ema" + p] = lastPoint(pts);
+    }
+    const sp = cfg.sma.on && ind.sma ? (ind.sma[String(cfg.sma.len)] || []) : [];
+    S.sma.setData(sp); lastV.sma = lastPoint(sp);
+    const rp = cfg.rsi.on && ind.rsi ? (ind.rsi[String(cfg.rsi.len)] || []) : [];
+    S.rsi.setData(rp); lastV.rsi = lastPoint(rp);
+    renderLegend();
   }
 
   // Live: the forming stream's interim indicators are 1m; extend the last point
@@ -87,9 +119,10 @@
   function updateForming(f, tf) {
     if (!chart || tf !== "1m" || !f) return;
     const t = tsec(f.ts), fi = f.indicators || {};
-    for (const p of [20, 50, 200]) if (cfg.ema[p].on && fi["ema" + p] != null) S["ema" + p].update({ time: t, value: fi["ema" + p] });
-    if (cfg.rsi.on && fi.rsi != null) S.rsi.update({ time: t, value: fi.rsi });
+    for (const p of [20, 50, 200]) if (cfg.ema[p].on && fi["ema" + p] != null) { S["ema" + p].update({ time: t, value: fi["ema" + p] }); lastV["ema" + p] = fi["ema" + p]; }
+    if (cfg.rsi.on && fi.rsi != null) { S.rsi.update({ time: t, value: fi.rsi }); lastV.rsi = fi.rsi; }
     if (cfg.volume.on) S.volume.update({ time: t, value: f.v, color: f.c >= f.o ? VUP : VDN });
+    renderLegend();
   }
 
   // ---- Indicators menu (item 3) — onChange(needData): true = reload /api/chart
