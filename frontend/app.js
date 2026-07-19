@@ -66,7 +66,14 @@ function chartTheme() {
       horzLines: { color: v("--chart-grid", "rgba(255,255,255,0.06)") },
     },
     rightPriceScale: { borderColor: v("--chart-border", "rgba(255,255,255,0.14)") },
-    timeScale: { borderColor: v("--chart-border", "rgba(255,255,255,0.14)"), timeVisible: true },
+    // Axis + crosshair rendered in IST. The chart's time MODEL stays UTC
+    // (values fed to setData/update are unchanged) — only the labels convert,
+    // so ranges, live updates and overlays keep working on true UTC.
+    localization: { timeFormatter: (t) => window.IST.crosshair(t) },
+    timeScale: {
+      borderColor: v("--chart-border", "rgba(255,255,255,0.14)"), timeVisible: true,
+      tickMarkFormatter: (t, tt) => window.IST.tick(t, tt),
+    },
   };
 }
 function makeChart(el) {
@@ -424,8 +431,8 @@ function connect() {
     const now = Date.now();
     if (lastWsMs) { const lat = $("st-lat"); if (lat) lat.textContent = (now - lastWsMs) + " ms"; }
     lastWsMs = now;
-    const upd = $("lv-update"); if (upd) upd.textContent = new Date().toISOString().slice(11, 19) + " UTC";
-    note(`last event: ${new Date().toISOString()}`);
+    const upd = $("lv-update"); if (upd) upd.textContent = window.IST.now();
+    note(`last event: ${window.IST.full(new Date())}`);
 
     const msg = JSON.parse(event.data);
     const diff = msg.state_diff || {};

@@ -114,6 +114,37 @@ def test_app_js_scheme_follows_page_for_https():
     assert "${WS_BASE}/ws" in js
 
 
+def test_timefmt_ist_display_pure_and_wired():
+    """All user-facing times display in IST (Asia/Kolkata); internals stay UTC.
+    timefmt.js is the single, pure conversion point used only at render."""
+    js = _read("timefmt.js")
+    assert "Asia/Kolkata" in js                          # IST, not UTC/London
+    assert "window.IST" in js
+    for banned in ("fetch(", "WebSocket", "localStorage", "sessionStorage",
+                   "addSeries", "Math.log"):
+        assert banned not in js, banned                  # pure formatter
+    html = _read("index.html")
+    assert 'src="timefmt.js"' in html
+    assert html.index("timefmt.js") < html.index('src="app.js"')       # loads first
+    assert html.index("timefmt.js") < html.index("dashboard.js")
+    app = _read("app.js")
+    # chart axis + crosshair render IST (time model stays UTC)
+    assert "window.IST.tick" in app and "window.IST.crosshair" in app
+    assert "tickMarkFormatter" in app and "timeFormatter" in app
+    assert "window.IST.now" in app                       # live clock in IST
+    assert "toISOString().slice(11, 19) + \" UTC\"" not in app          # old UTC clock gone
+    assert "window.IST" in _read("dashboard.js")         # journal/trade tables IST
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_timefmt_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "timefmt.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_app_js_is_valid_javascript():
     result = subprocess.run(

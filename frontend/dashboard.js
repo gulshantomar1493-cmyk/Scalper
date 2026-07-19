@@ -103,7 +103,7 @@ const Dashboard = (function () {
       table.appendChild(head);
       for (const j of evaluated) {
         const row = elem("tr");
-        row.appendChild(elem("td", "mono", (j.ts || "").slice(0, 16)));
+        row.appendChild(elem("td", "mono", (j.ts ? window.IST.dateTime(j.ts) : "—")));
         row.appendChild(elem("td", "row-key", j.strategy || "—"));
         row.appendChild(elem("td", "mono " + (j.direction === "LONG" ? "j-long" : "j-short"), j.direction || ""));
         row.appendChild(elem("td", "mono", (j.eval_outcome || "").toUpperCase()));
@@ -183,7 +183,7 @@ const Dashboard = (function () {
       "jcard-dir " + (j.direction === "LONG" ? "long" : "short"),
       j.direction || ""));
     head.appendChild(elem("span", "jcard-status", j.status || ""));
-    head.appendChild(elem("span", "jcard-ts mono", (j.ts || "").slice(0, 16)));
+    head.appendChild(elem("span", "jcard-ts mono", (j.ts ? window.IST.dateTime(j.ts) : "—")));
     card.appendChild(head);
 
     const rail = elem("div", "jcard-rail mono");

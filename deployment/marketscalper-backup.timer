@@ -5,8 +5,9 @@
 Description=Daily MarketScalper database backup
 
 [Timer]
-# 03:15 every day (server local time); catch up if the machine was off.
-OnCalendar=*-*-* 03:15:00
+# 03:15 UTC every day (explicit UTC so the VPS location — e.g. Canada — never
+# shifts it); catch up if the machine was off.
+OnCalendar=*-*-* 03:15:00 UTC
 Persistent=true
 
 [Install]
