@@ -36,11 +36,15 @@ const WS_BASE = `${SECURE ? "wss" : "ws"}://${API_HOST}`;
 const SYMBOLS = ["BTCUSDT", "ETHUSDT"];          // frozen v1 pair (§0)
 const ANALYSIS_TFS = ["1m", "5m"];               // only these carry engine analysis
 const LOOKBACK_MS = 24 * 3600 * 1000;            // history bootstrap depth (1m/5m)
-// coarser TFs need a wider window to show enough closed buckets
+// Per-TF chart window (owner decision — fast UI, backend unchanged): 1W/1M show
+// FULL history (few candles, instant); 1D = 1 year; 4H = 180 days. Replay and
+// analytics always read the full DB (this only bounds the Live chart's default
+// fetch). A "Show full history" chart control is a planned future addition.
+const FULL_HISTORY_MS = 20 * 365 * 24 * 3600e3;   // covers all stored 1m (2017+)
 const LOOKBACK_BY_TF = {
   "1m": 24 * 3600e3, "5m": 3 * 24 * 3600e3, "15m": 7 * 24 * 3600e3,
-  "30m": 14 * 24 * 3600e3, "1h": 30 * 24 * 3600e3, "4h": 90 * 24 * 3600e3,
-  "1d": 365 * 24 * 3600e3, "1w": 2 * 365 * 24 * 3600e3, "1M": 5 * 365 * 24 * 3600e3,
+  "30m": 14 * 24 * 3600e3, "1h": 30 * 24 * 3600e3, "4h": 180 * 24 * 3600e3,
+  "1d": 365 * 24 * 3600e3, "1w": FULL_HISTORY_MS, "1M": FULL_HISTORY_MS,
 };
 
 const urlSymbol = (params.get("symbol") || "").toUpperCase();
