@@ -55,4 +55,12 @@
   window.__msSaveTf = function (tf) {
     if (TFS.indexOf(tf) >= 0) { try { window.localStorage.setItem(TF_KEY, tf); } catch (e) {} }
   };
+
+  // ---- indicator config persistence (chart UX; app.js is storage-banned) ----
+  var IND_KEY = "ms_indicators";
+  try { window.__msIndicators = JSON.parse(window.localStorage.getItem(IND_KEY) || "null"); }
+  catch (e) { window.__msIndicators = null; }
+  window.__msSaveIndicators = function (cfg) {
+    try { window.localStorage.setItem(IND_KEY, JSON.stringify(cfg)); } catch (e) {}
+  };
 })();

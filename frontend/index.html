@@ -83,6 +83,16 @@
         <div class="lv-mid">
           <div class="lv-chartwrap">
             <div class="lv-ctitle mono" id="chart-title">BTCUSDT · 1m · Binance</div>
+            <div class="chart-toolbar">
+              <div class="ind-menu">
+                <button id="ind-btn" class="tb-btn" type="button" title="Indicators">📈 Indicators ▾</button>
+                <div id="ind-panel" class="ind-panel" hidden></div>
+              </div>
+              <span class="tb-spacer"></span>
+              <button id="tb-reset" class="tb-btn" type="button" title="Reset view">⤢ Reset</button>
+              <button id="tb-autoscale" class="tb-btn" type="button" title="Toggle auto-scale">Auto</button>
+              <button id="tb-screenshot" class="tb-btn" type="button" title="Screenshot">📷</button>
+            </div>
             <div id="crosshair-box" class="crosshair-box mono" hidden></div>
             <div id="chart"></div>
           </div>
@@ -280,6 +290,7 @@
   <script src="dashboard.js"></script>
   <script src="ops.js"></script>
   <script src="notify.js"></script>
+  <script src="indicators.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

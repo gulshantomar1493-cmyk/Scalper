@@ -978,3 +978,21 @@ body {
 #st-price { transition:color .12s ease; }
 #st-price.tick-up { color:var(--up); }
 #st-price.tick-down { color:var(--down); }
+
+/* ==================== chart toolbar + indicators menu (chart UX P2c) ==================== */
+.chart-toolbar { display:flex; align-items:center; gap:6px; padding:4px 8px; border-bottom:1px solid var(--hairline); background:var(--surface-raised); }
+.tb-btn { padding:4px 9px; border:1px solid var(--hairline); border-radius:7px; background:transparent; color:var(--text-dim); cursor:pointer; font:inherit; font-size:11px; white-space:nowrap; }
+.tb-btn:hover { color:var(--text); border-color:var(--text-dim); }
+.tb-btn.on { color:var(--accent); border-color:var(--accent); }
+.tb-spacer { flex:1; }
+.ind-menu { position:relative; }
+.ind-panel { position:absolute; top:calc(100% + 4px); left:0; z-index:20; min-width:232px; padding:8px; background:var(--surface-raised); border:1px solid var(--hairline); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.28); }
+.ind-row { display:flex; align-items:center; gap:6px; padding:4px 2px; }
+.ind-label { flex:0 0 62px; font-size:11px; color:var(--text); }
+.ind-tog { width:30px; height:17px; border-radius:10px; background:var(--hairline); border:0; position:relative; cursor:pointer; flex:none; transition:background .15s; }
+.ind-tog::after { content:""; position:absolute; top:2px; left:2px; width:13px; height:13px; border-radius:50%; background:var(--text-dim); transition:transform .15s; }
+.ind-tog.on { background:var(--accent); }
+.ind-tog.on::after { transform:translateX(13px); background:#04141a; }
+.ind-num { width:42px; padding:2px 4px; border:1px solid var(--hairline); border-radius:5px; background:var(--surface); color:var(--text); font:inherit; font-size:11px; }
+.ind-color { width:24px; height:20px; padding:0; border:1px solid var(--hairline); border-radius:5px; background:transparent; cursor:pointer; }
+.ind-sub { display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-dim); }

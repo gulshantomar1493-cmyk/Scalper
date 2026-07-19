@@ -850,6 +850,36 @@ def test_live_forming_candle_price_countdown_crosshair():
     assert 'id="lv-countdown"' in html and 'id="crosshair-box"' in html
 
 
+def test_indicators_render_and_toolbar_wired():
+    """Items 1/2/3/4: the frontend RENDERS backend-computed EMA/SMA/RSI/Volume —
+    it never computes an indicator itself. Toolbar hosts a single Indicators
+    menu + reset/auto/screenshot."""
+    js = _read("indicators.js")
+    assert "window.Indicators" in js
+    for fn in ("paramsQuery", "render", "renderMenu", "updateForming", "applyVisibility"):
+        assert fn in js, fn
+    assert "HistogramSeries" in js and "LineSeries" in js       # volume + MA/RSI series
+    for banned in ("fetch(", "WebSocket", "localStorage", "sessionStorage",
+                   "Math.log", "Math.exp"):
+        assert banned not in js, banned                         # pure renderer, no math
+    html = _read("index.html")
+    assert 'src="indicators.js"' in html
+    assert html.index("indicators.js") < html.index('src="app.js"')
+    for id_ in ("ind-btn", "ind-panel", "tb-reset", "tb-autoscale", "tb-screenshot"):
+        assert f'id="{id_}"' in html, id_
+    app = _read("app.js")
+    for call in ("Indicators.init", "Indicators.render", "Indicators.paramsQuery",
+                 "Indicators.updateForming", "Indicators.renderMenu"):
+        assert call in app, call
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_indicators_js_valid():
+    r = subprocess.run(["node", "--check", str(FRONTEND / "indicators.js")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
 def test_app_js_uses_chart_service_and_gates_higher_tfs():
     js = _read("app.js")
     assert "/api/chart?" in js and "timeframe" in js       # backend ChartService

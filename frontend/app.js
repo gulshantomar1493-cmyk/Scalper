@@ -91,6 +91,7 @@ const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERI
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
 Dashboard.init();
+Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 
 // Crosshair OHLC readout (item 12) — reads the hovered bar from LWC, no caching.
 mainChart.subscribeCrosshairMove((param) => {
@@ -156,12 +157,12 @@ async function fetchChart(symbol, tf) {
   const qs = new URLSearchParams({
     symbol, timeframe: tf, from: start.toISOString(), to: end.toISOString(),
   });
-  const resp = await fetch(`${HTTP_BASE}/api/chart?${qs}`, {
+  const iq = Indicators.paramsQuery();             // backend computes the enabled ones
+  const resp = await fetch(`${HTTP_BASE}/api/chart?${qs}${iq ? "&" + iq : ""}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
   if (!resp.ok) throw new Error(`chart ${symbol}/${tf}: HTTP ${resp.status}`);
-  const body = await resp.json();
-  return body.candles || [];
+  return await resp.json();                         // full body {candles, indicators, ...}
 }
 
 // Preserve the visible time window (zoom + pan) across a setData — keeps the
@@ -176,10 +177,12 @@ function preserveView(chart, fn) {
 
 async function loadHistory(symbol) {
   try {
-    const candles = await fetchChart(symbol, activeTf);
+    const body = await fetchChart(symbol, activeTf);
+    const candles = body.candles || [];
     const bars = candles.map(toBar);
     preserveView(mainChart, () => mainSeries.setData(bars));
     liveBar = bars.length ? bars[bars.length - 1] : null;   // baseline for forming
+    Indicators.render(body);                                // EMA/SMA/RSI/Volume
     setChartTitle(symbol, activeTf);
     note(`history: ${symbol} ${activeTf} (${candles.length} candles)`);
   } catch (err) {
@@ -273,6 +276,7 @@ function handleForming(f) {
     }
   }
   try { mainSeries.update(liveBar); } catch (e) { /* history not loaded yet */ }
+  Indicators.updateForming(f, activeTf);           // extend indicator lines (backend values)
 }
 function updateLiveStats(f) {
   const set = (id, v) => { const e = $(id); if (e) e.textContent = fmt(v); };
@@ -648,6 +652,42 @@ if ($("tg-clear")) $("tg-clear").addEventListener("click", async () => {
     paintTgStatus(s.telegram);
   } catch (e) { /* settings unavailable — keep defaults */ }
   paintNotifUI();
+})();
+
+/* -------------------------------------------------- chart toolbar (item 1) */
+(function wireToolbar() {
+  const btn = $("ind-btn"), panel = $("ind-panel");
+  if (btn && panel) {
+    Indicators.renderMenu(panel, function (needData) {
+      window.__msSaveIndicators(Indicators.config());
+      if (needData) loadHistory(activeSymbol);       // refetch with new indicator params
+      else Indicators.applyVisibility();
+    });
+    btn.addEventListener("click", (e) => { e.stopPropagation(); panel.hidden = !panel.hidden; });
+    document.addEventListener("click", (e) => {
+      if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) panel.hidden = true;
+    });
+  }
+  const reset = $("tb-reset");
+  if (reset) reset.addEventListener("click", () => mainChart.timeScale().fitContent());
+  let autoOn = true;
+  const auto = $("tb-autoscale");
+  if (auto) {
+    auto.classList.add("on");
+    auto.addEventListener("click", () => {
+      autoOn = !autoOn; auto.classList.toggle("on", autoOn);
+      mainChart.priceScale("right").applyOptions({ autoScale: autoOn });
+    });
+  }
+  const shot = $("tb-screenshot");
+  if (shot) shot.addEventListener("click", () => {
+    try {
+      const canvas = mainChart.takeScreenshot();
+      const a = document.createElement("a");
+      a.download = `${activeSymbol}_${activeTf}.png`;
+      a.href = canvas.toDataURL(); a.click();
+    } catch (e) { note("screenshot unavailable"); }
+  });
 })();
 
 applyAnalysisMode();   // set the initial rail mode before the first payload
