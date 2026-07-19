@@ -136,6 +136,21 @@ def test_timefmt_ist_display_pure_and_wired():
     assert "window.IST.now" in app                       # live clock in IST
     assert "toISOString().slice(11, 19) + \" UTC\"" not in app          # old UTC clock gone
     assert "window.IST" in _read("dashboard.js")         # journal/trade tables IST
+    # tick MUST render each granularity — a multi-year 1W/1M axis needs YEAR
+    # (type 0) and MONTH (type 1) labels, not "DD Mon" for everything (that
+    # produced garbled "01 Jan / 07 Jan" year labels with no year).
+    assert "tickMarkType === 0" in js and "tickMarkType === 1" in js
+    assert "fYear" in js and "fMon" in js                 # "2020" / "Mar" formatters
+
+
+def test_chart_loading_overlay_present_and_wired():
+    """A slow /api/chart fetch (full-history 1W/1M) shows a loading overlay
+    instead of a stale/empty chart. Overlay hides itself when empty."""
+    html, css, app = _read("index.html"), _read("styles.css"), _read("app.js")
+    assert 'id="chart-loading"' in html
+    assert ".chart-loading" in css and ".chart-loading:empty" in css   # hidden when empty
+    assert "chart-loading" in app and "Loading" in app                 # set before fetch
+    assert 'loadEl.textContent = ""' in app                            # cleared after
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

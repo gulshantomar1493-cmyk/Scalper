@@ -211,6 +211,8 @@ async function loadHistory(symbol, opts) {
   // refetch. Preserving a 1m window onto sparse 5m/1h data (the old bug) produced
   // 2 giant blocks — so a stale/degenerate range falls back to the recent window.
   const resetView = !!(opts && opts.resetView) || !hasView;
+  const loadEl = $("chart-loading");
+  if (loadEl) loadEl.textContent = `Loading ${symbol} ${activeTf}…`;
   try {
     const body = await fetchChart(symbol, activeTf);
     const candles = body.candles || [];
@@ -229,6 +231,8 @@ async function loadHistory(symbol, opts) {
     note(`history: ${symbol} ${activeTf} (${candles.length} candles)`);
   } catch (err) {
     note(String(err));
+  } finally {
+    if (loadEl) loadEl.textContent = "";   // hide the spinner (:empty)
   }
 }
 

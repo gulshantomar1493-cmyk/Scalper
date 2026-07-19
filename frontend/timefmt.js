@@ -22,6 +22,8 @@
   var fHM   = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, hour: "2-digit", minute: "2-digit", hour12: false });
   var fDT   = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit", hour12: false });
   var fDay  = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, day: "2-digit", month: "short" });
+  var fMon  = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, month: "short" });               // "Mar"
+  var fYear = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric" });              // "2020"
   var fFull = new Intl.DateTimeFormat("en-GB", { timeZone: TZ, year: "numeric", month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
 
   var IST = {
@@ -34,10 +36,16 @@
 
     // Lightweight Charts axis ticks. time = UTCTimestamp (seconds); tickMarkType
     // 0=Year 1=Month 2=DayOfMonth 3=Time 4=TimeWithSeconds. Underlying time
-    // values stay UTC — only the LABEL is IST.
+    // values stay UTC — only the LABEL is IST. Each type MUST render its own
+    // granularity: a year tick as "2020", a month tick as "Mar", a day tick as
+    // "15 Mar", a time tick as "05:30". (Collapsing Year/Month to "DD Mon" made
+    // a multi-year 1W/1M axis show garbled "01 Jan / 07 Jan" labels with no year.)
     tick: function (time, tickMarkType) {
-      var ms = msOf(time);
-      return (tickMarkType >= 3) ? fHM.format(new Date(ms)) : fDay.format(new Date(ms));
+      var d = new Date(msOf(time));
+      if (tickMarkType === 0) return fYear.format(d);   // Year  -> "2020"
+      if (tickMarkType === 1) return fMon.format(d);    // Month -> "Mar"
+      if (tickMarkType >= 3)  return fHM.format(d);     // Time  -> "05:30"
+      return fDay.format(d);                            // Day   -> "15 Mar"
     },
     // Lightweight Charts crosshair readout — full IST datetime.
     crosshair: function (time) { return fDT.format(new Date(msOf(time))); },

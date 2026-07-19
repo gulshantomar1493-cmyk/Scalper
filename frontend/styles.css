@@ -1041,6 +1041,21 @@ body {
   background:color-mix(in srgb, var(--surface-raised) 90%, transparent);
   border:1px solid var(--hairline); border-radius:6px; }
 .chart-countdown:empty { display:none; }
+/* Centered loading overlay shown while /api/chart is in flight (full-history
+   1W/1M can take several seconds) — so a slow fetch never looks like a broken
+   or empty chart. :empty hides it, matching the countdown pattern. */
+.chart-loading { position:absolute; top:50%; left:50%; transform:translate(-50%,-50%);
+  z-index:7; pointer-events:none; color:var(--text); font-size:12px; font-weight:600;
+  padding:8px 16px; white-space:nowrap; letter-spacing:.02em;
+  background:color-mix(in srgb, var(--surface-raised) 94%, transparent);
+  border:1px solid var(--hairline); border-radius:8px;
+  box-shadow:0 4px 18px rgba(0,0,0,.28); }
+.chart-loading::before { content:""; display:inline-block; width:11px; height:11px;
+  margin-right:8px; vertical-align:-1px; border:2px solid var(--hairline);
+  border-top-color:var(--accent); border-radius:50%; animation:chart-spin .7s linear infinite; }
+.chart-loading:empty { display:none; }
+@keyframes chart-spin { to { transform:rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .chart-loading::before { animation:none; } }
 .crosshair-box { position:absolute; top:8px; left:8px; z-index:5; display:flex; flex-wrap:wrap; gap:10px; padding:5px 10px; background:color-mix(in srgb, var(--surface) 86%, transparent); border:1px solid var(--hairline); border-radius:8px; font-size:11px; pointer-events:none; }
 .crosshair-box .cx-item { display:inline-flex; gap:4px; align-items:baseline; }
 .crosshair-box .cx-item b { color:var(--text-dim); font-weight:600; }
