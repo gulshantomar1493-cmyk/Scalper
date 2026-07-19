@@ -1,17 +1,46 @@
 /* MarketScalper frontend shell (P0.22) — TradeOS locked design tokens (§9). */
 
+/* Two themes, one variable set. LIGHT CREAM is the default (owner request);
+   the locked TradeOS DARK palette is applied via [data-theme="dark"]. Every
+   component styles off these vars, so the whole UI + charts re-theme by
+   swapping the values — nothing hardcodes a light/dark colour. */
 :root {
-  --surface: #0A0F1E;             /* locked surface */
+  /* --- light cream (default) --- */
+  --surface: #EFE7D6;            /* warm cream page background */
+  --surface-raised: #FBF6EA;     /* near-white cream for panels/cards */
+  --hairline: rgba(70, 58, 34, 0.18);
+  --subtle: rgba(70, 58, 34, 0.05);   /* faint fills (was white-on-dark) */
+  --accent: #0E7490;             /* deep cyan — readable on cream */
+  --up: #15803D;                 /* green (text/semantic) */
+  --down: #DC2626;               /* red   (text/semantic) */
+  --text: #2A2118;               /* warm near-black */
+  --text-dim: #6B6152;           /* warm gray */
+  --warn: #B45309;               /* amber (DEGRADED / provisional) */
+  --chart-bg: #FBF6EA;
+  --chart-text: #6B6152;
+  --chart-grid: rgba(70, 58, 34, 0.08);
+  --chart-border: rgba(70, 58, 34, 0.18);
+  --radius: 12px;                /* locked radius */
+  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  color-scheme: light;           /* native date pickers / dropdowns match */
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  /* --- locked TradeOS dark palette --- */
+  --surface: #0A0F1E;            /* locked surface */
   --surface-raised: #0E1526;
   --hairline: rgba(255, 255, 255, 0.14);  /* locked hairline */
-  --accent: #22D3EE;              /* locked cyan accent */
-  --up: #22C55E;                  /* semantic green */
-  --down: #EF4444;                /* semantic red */
+  --subtle: rgba(255, 255, 255, 0.06);
+  --accent: #22D3EE;             /* locked cyan accent */
+  --up: #22C55E;                 /* semantic green */
+  --down: #EF4444;               /* semantic red */
   --text: #E5E7EB;
   --text-dim: #8B93A7;
-  --warn: #F59E0B;                /* semantic amber (DEGRADED / provisional) */
-  --radius: 12px;                 /* locked radius */
-  --mono: ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --warn: #F59E0B;               /* semantic amber (DEGRADED / provisional) */
+  --chart-bg: #0A0F1E;
+  --chart-text: #8B93A7;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-border: rgba(255, 255, 255, 0.14);
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -143,15 +172,22 @@ body {
 }
 
 .replay-bar button { cursor: pointer; color: var(--accent); border-color: var(--accent); }
-.replay-bar input { color-scheme: dark; }
 .replay-bar button:disabled { opacity: 0.35; cursor: default; }
+/* Dropdown fix: give the select + its option popup a SOLID themed background
+   and text colour (transparent left the options unreadable, esp. on dark). */
+.replay-bar select {
+  background: var(--surface-raised);
+  color: var(--text);
+  cursor: pointer;
+}
+.replay-bar select option { background: var(--surface-raised); color: var(--text); }
 
 /* P1.20 replay-audit tool (session-local tally) */
 .audit-label { margin-left: 24px; }
 #audit-tally { color: var(--accent); min-width: 72px; }
 
 /* P1.19 trend-state readout (pure engine output) */
-.trend { margin-right: 14px; color: #8B93A7; }
+.trend { margin-right: 14px; color: var(--text-dim); }
 
 /* symbol switcher (frozen v1 pair) */
 .switcher {
@@ -221,7 +257,7 @@ body {
 .gauge-section { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .gauge-wrap { position: relative; width: 120px; height: 120px; }
 .gauge-svg { width: 120px; height: 120px; transform: rotate(-90deg); }
-.gauge-track { fill: none; stroke: rgba(255, 255, 255, 0.08); stroke-width: 10; }
+.gauge-track { fill: none; stroke: var(--subtle); stroke-width: 10; }
 .gauge-arc {
   fill: none;
   stroke: var(--accent);
@@ -300,7 +336,7 @@ body {
 .comp-track {
   height: 6px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--subtle);
   overflow: hidden;
 }
 .comp-fill {
@@ -499,7 +535,7 @@ body {
   padding: 4px 8px;
   border-bottom: 1px solid var(--hairline);
 }
-.dash-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,0.05); }
+.dash-table td { text-align: right; padding: 5px 8px; border-bottom: 1px solid var(--subtle); }
 .dash-table td.row-key { text-align: left; color: var(--accent); font-weight: 600; }
 
 /* journal tab */
@@ -638,7 +674,7 @@ body {
   border-radius: calc(var(--radius) - 2px);
   padding: 12px 14px;
   margin-bottom: 12px;
-  background: rgba(255, 255, 255, 0.015);
+  background: var(--subtle);
 }
 .help-card h2 { font-size: 13px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
 .help-card p { font-size: 12.5px; color: var(--text-dim); line-height: 1.6; }
@@ -652,3 +688,36 @@ body {
 .help-foot { text-align: center; font-size: 12px; color: var(--text-dim); margin-top: 4px; }
 .c-green { color: var(--up); }
 .c-red { color: var(--down); }
+
+/* -------------------------------- theme toggle + Replay & Tools drawer (UX) */
+.chrome-btn {
+  background: transparent;
+  color: var(--text-dim);
+  border: 1px solid var(--hairline);
+  border-radius: calc(var(--radius) - 4px);
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  margin-right: 10px;
+}
+.chrome-btn:hover { color: var(--text); border-color: var(--text-dim); }
+.chrome-btn.active { color: var(--accent); border-color: var(--accent); }
+
+/* Home stays clean: the drawer holding Replay + advanced tools is closed by
+   default and only opens on the header "Replay & Tools" toggle. */
+#tools-drawer { display: none; }
+#tools-drawer.open { display: block; }
+.tools-hint { color: var(--text-dim); font-size: 11px; padding: 7px 16px 0; }
+.tools-hint b { color: var(--text); }
+.tools-advanced { padding: 2px 16px 8px; background: var(--surface-raised); }
+.tools-advanced > summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  padding: 7px 0;
+  user-select: none;
+}
+.tools-advanced[open] > summary { color: var(--text); }
+.tools-advanced .replay-bar { padding-top: 2px; }

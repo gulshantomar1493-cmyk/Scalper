@@ -563,3 +563,65 @@ def test_help_js_is_valid_javascript():
         capture_output=True, text=True,
     )
     assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------- light/dark theme + tools drawer (UX)
+
+
+def test_ui_js_exists_and_wired_before_app():
+    assert (FRONTEND / "ui.js").is_file()
+    html = _read("index.html")
+    assert 'src="ui.js"' in html
+    assert html.index("ui.js") < html.index('src="app.js"')
+
+
+def test_theme_system_has_both_palettes_default_light():
+    css = _read("styles.css")
+    # light cream is the DEFAULT (:root); dark is the opt-in override
+    assert ':root[data-theme="dark"]' in css
+    assert "--chart-bg" in css and "--chart-grid" in css      # chart theming vars
+    html = _read("index.html")
+    assert 'id="theme-toggle"' in html
+    assert 'localStorage.getItem("ms_theme")' in html         # head sets theme pre-paint
+
+
+def test_home_is_clean_with_replay_and_audit_in_a_closed_drawer():
+    html = _read("index.html")
+    assert 'id="tools-toggle"' in html and 'id="tools-drawer"' in html
+    drawer = html[html.index('id="tools-drawer"'):]
+    # every replay + audit control still exists, just tucked into the drawer
+    for cid in ("replay-start", "replay-stop", "replay-speed",
+                "audit-pick", "audit-accept", "audit-reject", "audit-tally"):
+        assert f'id="{cid}"' in drawer, cid
+    # audit tools sit under an Advanced <details> (hidden from starters)
+    assert "tools-advanced" in html and "<summary" in html
+
+
+def test_dropdown_has_solid_themed_background():
+    css = _read("styles.css")
+    assert ".replay-bar select" in css
+    assert ".replay-bar select option" in css                 # options readable
+    assert "color-scheme" in css                              # native pickers match theme
+
+
+def test_app_js_charts_read_theme_vars_and_retheme():
+    js = _read("app.js")
+    assert "--chart-bg" in js and "getComputedStyle" in js
+    assert "ms-theme-change" in js                            # re-themes on toggle
+
+
+def test_ui_js_is_chrome_only_no_data():
+    js = _read("ui.js")
+    for banned in ("fetch(", "WebSocket", "Math.log", "Math.exp", "slope",
+                   "intercept", "ATR", "tolerance", "XMLHttpRequest"):
+        assert banned not in js, banned
+    assert "ms-theme-change" in js and "data-theme" in js
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_ui_js_is_valid_javascript():
+    result = subprocess.run(
+        ["node", "--check", str(FRONTEND / "ui.js")],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr

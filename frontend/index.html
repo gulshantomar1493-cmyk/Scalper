@@ -8,6 +8,8 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>MarketScalper</title>
+  <!-- Set the saved theme before first paint (no flash). Default = light cream. -->
+  <script>try{if(localStorage.getItem("ms_theme")==="dark")document.documentElement.setAttribute("data-theme","dark");}catch(e){}</script>
   <link rel="stylesheet" href="styles.css" />
   <!-- TradingView Lightweight Charts v5 — pinned version (Apache-2.0, §2 locked) -->
   <script src="https://unpkg.com/lightweight-charts@5.0.0/dist/lightweight-charts.standalone.production.js"></script>
@@ -23,6 +25,8 @@
       <button id="sym-ETHUSDT" type="button" title="Ethereum (ETHUSDT) ka chart dekho">ETHUSDT</button>
     </div>
     <div class="conn">
+      <button id="theme-toggle" type="button" class="chrome-btn" title="Light cream / Dark theme badlo">🌙 Dark</button>
+      <button id="tools-toggle" type="button" class="chrome-btn" title="Replay + advanced tools kholo / band karo (home saaf rehta hai)">▾ Replay &amp; Tools</button>
       <button id="help-open" type="button" class="help-open-btn" title="Poora guide — tool kaise use karein (Hinglish)">❓ Madad</button>
       <button id="dash-open" type="button" class="dash-open-btn" title="Analytics + Journal kholo">Dashboard</button>
       <span id="trend-state" class="mono trend" title="Abhi ka market trend: BULLISH / BEARISH / RANGE">trend: —</span>
@@ -74,6 +78,9 @@
 
         <div class="help-card">
           <h2>▶️ Replay kya hai aur kyun?</h2>
+          <p><b>Kahan hai:</b> upar header me <b>"▾ Replay &amp; Tools"</b> button
+          dabao — replay controls neeche khul jayenge (home saaf rakhne ke liye ye
+          chhupe rehte hain).</p>
           <p>Replay = <b>purane data ko dobara chala ke dekhna</b>, taaki tool ka
           analysis samajh sako bina live market ka wait kiye. Live me har candle 1
           minute me banti hai — replay me poora din seconds/minutes me dekh sakte ho.</p>
@@ -125,11 +132,19 @@
         </div>
 
         <div class="help-card">
-          <h2>🔍 Audit (Random line / Sweep / OB)</h2>
-          <p>Ye <b>learning / verification</b> tool hai. Button dabao → ek random
-          detected structure pe chart jump karega → tum dekho engine ne sahi pakda ya
-          nahi → <b>Accept / Reject</b> dabao. Upar tally (TL / SWP / OB) count rakhta
-          hai. Trade se koi lena-dena nahi — sirf tumhare review ke liye.</p>
+          <h2>🔍 Audit (Random line / Sweep / OB) — Advanced</h2>
+          <p><b>Kahan hai:</b> "Replay &amp; Tools" drawer me neeche <b>"⚙ Advanced"</b>
+          par click karo (starter ke liye chhupa rakha hai). Ye <b>learning /
+          verification</b> tool hai — button dabao → ek random detected structure pe
+          chart jump karega → dekho engine ne sahi pakda ya nahi → <b>Accept / Reject</b>.
+          Trade se koi lena-dena nahi — sirf tumhare review ke liye.</p>
+        </div>
+
+        <div class="help-card">
+          <h2>🎨 Theme (Light / Dark)</h2>
+          <p>Header me <b>🌙 Dark / ☀️ Light</b> button se theme badlo. Default
+          <b>light cream</b> hai (aankhon ko aaram); dark chahiye to ek click. Tumhari
+          choice yaad rahegi.</p>
         </div>
 
         <div class="help-card">
@@ -153,25 +168,35 @@
     </div>
   </div>
 
-  <div class="replay-bar mono">
-    <span class="strip-label-inline" title="Purane data ko chala ke analysis dekho (live ka wait kiye bina)">REPLAY</span>
-    <input id="replay-from" type="datetime-local" title="Replay kis date-time se shuru ho (dense data: April 2026)" />
-    <input id="replay-to" type="datetime-local" title="Replay kis date-time tak chale" />
-    <select id="replay-speed" title="Speed: ×60 dekhne ke liye best (1 candle/sec); max sirf fast processing (itna tez ki dikhta nahi)">
-      <option value="1">×1</option>
-      <option value="10">×10</option>
-      <option value="60" selected>×60</option>
-      <option value="max">max</option>
-    </select>
-    <button id="replay-start" type="button" title="Replay shuru karo — engine ka analysis live banta dekho">Start</button>
-    <button id="replay-stop" type="button" title="Replay band karo">Stop</button>
-    <span class="strip-label-inline audit-label" title="Detected structures ko khud verify karne ka learning tool">AUDIT</span>
-    <button id="audit-pick" type="button" title="Ek random trendline pe chart jump karega — sahi hai ya nahi verify karo">Random line</button>
-    <button id="audit-pick-sweep" type="button" title="Ek random liquidity sweep pe jump karke verify karo">Random Sweep</button>
-    <button id="audit-pick-ob" type="button" title="Ek random order block (zone) pe jump karke verify karo">Random OB</button>
-    <button id="audit-accept" type="button" disabled title="Ye structure sahi mark karo (tally +1)">Accept</button>
-    <button id="audit-reject" type="button" disabled title="Ye structure galat mark karo">Reject</button>
-    <span id="audit-tally" title="Tally: TrendLine / SWeeP / Order Block — accepted/total (rejected)">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
+  <!-- Replay + advanced tools live in a drawer, CLOSED by default, so the home
+       screen stays a clean live view. The header "Replay & Tools" button opens it. -->
+  <div id="tools-drawer">
+    <p class="tools-hint">▶️ <b>Replay</b> = purane data ko chala ke analysis dekho. Speed <b>×60</b> = dekhne ke liye best. Dense data: <b>April 2026</b> (jaise 20-04-2026 · From 08:00 · To 13:00).</p>
+    <div class="replay-bar mono">
+      <span class="strip-label-inline" title="Purane data ko chala ke analysis dekho (live ka wait kiye bina)">REPLAY</span>
+      <input id="replay-from" type="datetime-local" title="Replay kis date-time se shuru ho (dense data: April 2026)" />
+      <input id="replay-to" type="datetime-local" title="Replay kis date-time tak chale" />
+      <select id="replay-speed" title="Speed: ×60 dekhne ke liye best (1 candle/sec); max sirf fast processing (itna tez ki dikhta nahi)">
+        <option value="1">×1</option>
+        <option value="10">×10</option>
+        <option value="60" selected>×60</option>
+        <option value="max">max</option>
+      </select>
+      <button id="replay-start" type="button" title="Replay shuru karo — engine ka analysis live banta dekho">Start</button>
+      <button id="replay-stop" type="button" title="Replay band karo">Stop</button>
+    </div>
+    <details class="tools-advanced mono">
+      <summary title="Advanced — sirf review/learning ke liye, trade se koi lena-dena nahi">⚙ Advanced — engine ke detect kiye structures verify karo (audit / learning tool)</summary>
+      <div class="replay-bar mono">
+        <span class="strip-label-inline audit-label" title="Detected structures ko khud verify karne ka learning tool">AUDIT</span>
+        <button id="audit-pick" type="button" title="Ek random trendline pe chart jump karega — sahi hai ya nahi verify karo">Random line</button>
+        <button id="audit-pick-sweep" type="button" title="Ek random liquidity sweep pe jump karke verify karo">Random Sweep</button>
+        <button id="audit-pick-ob" type="button" title="Ek random order block (zone) pe jump karke verify karo">Random OB</button>
+        <button id="audit-accept" type="button" disabled title="Ye structure sahi mark karo (tally +1)">Accept</button>
+        <button id="audit-reject" type="button" disabled title="Ye structure galat mark karo">Reject</button>
+        <span id="audit-tally" title="Tally: TrendLine / SWeeP / Order Block — accepted/total (rejected)">TL 0/0 (0)  SWP 0/0 (0)  OB 0/0 (0)</span>
+      </div>
+    </details>
   </div>
 
   <div id="workspace">
@@ -232,6 +257,7 @@
   </footer>
 
   <script src="help.js"></script>
+  <script src="ui.js"></script>
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
   <script src="dashboard.js"></script>

@@ -36,22 +36,29 @@ const SERIES_OPTS = {
   borderVisible: false,
 };
 
-function makeChart(el) {
-  return LightweightCharts.createChart(el, {
-    autoSize: true,
+// Chart colours come from the CSS theme variables (single source of truth),
+// so the charts re-theme with the rest of the UI on a light/dark switch.
+function chartTheme() {
+  const cs = getComputedStyle(document.documentElement);
+  const v = (name, fb) => (cs.getPropertyValue(name).trim() || fb);
+  return {
     layout: {
-      background: { color: "#0A0F1E" },        // --surface
-      textColor: "#8B93A7",
+      background: { color: v("--chart-bg", "#0A0F1E") },
+      textColor: v("--chart-text", "#8B93A7"),
       fontFamily:
         'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace',
     },
     grid: {
-      vertLines: { color: "rgba(255,255,255,0.06)" },
-      horzLines: { color: "rgba(255,255,255,0.06)" },
+      vertLines: { color: v("--chart-grid", "rgba(255,255,255,0.06)") },
+      horzLines: { color: v("--chart-grid", "rgba(255,255,255,0.06)") },
     },
-    rightPriceScale: { borderColor: "rgba(255,255,255,0.14)" },
-    timeScale: { borderColor: "rgba(255,255,255,0.14)", timeVisible: true },
-  });
+    rightPriceScale: { borderColor: v("--chart-border", "rgba(255,255,255,0.14)") },
+    timeScale: { borderColor: v("--chart-border", "rgba(255,255,255,0.14)"), timeVisible: true },
+  };
+}
+
+function makeChart(el) {
+  return LightweightCharts.createChart(el, Object.assign({ autoSize: true }, chartTheme()));
 }
 
 const mainChart = makeChart(document.getElementById("chart"));
@@ -63,6 +70,14 @@ const lastStructure = {};                        // latest payload per symbol
 
 const stripChart = makeChart(document.getElementById("strip"));
 const stripSeries = stripChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
+
+// ui.js dispatches this when the user flips the theme — re-apply the chart
+// colours from the (now updated) CSS variables. Data/series are untouched.
+window.addEventListener("ms-theme-change", function () {
+  const t = chartTheme();
+  mainChart.applyOptions(t);
+  stripChart.applyOptions(t);
+});
 
 function toBar(c) {
   return {
