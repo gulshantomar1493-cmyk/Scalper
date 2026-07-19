@@ -805,7 +805,11 @@ body {
 .lv-stat .k { font-size:8.5px; letter-spacing:.05em; text-transform:uppercase; color:var(--text-dim); }
 .lv-stat .v { font-family:var(--mono); font-size:12px; font-weight:600; font-variant-numeric:tabular-nums; }
 
-.lv-mid { flex:1; min-height:0; display:grid; grid-template-columns:1fr 300px; }
+.lv-mid { flex:1; min-height:0; display:grid; grid-template-columns:1fr 300px;
+  grid-template-rows:1fr auto; grid-template-areas:"chart rail" "bottom rail"; }
+.lv-chartwrap { grid-area:chart; }
+.lv-rail { grid-area:rail; min-height:0; }
+.lv-bottom { grid-area:bottom; }
 .lv-chartwrap { position:relative; min-width:0; overflow:hidden; }
 #chart { position:absolute; inset:0; }
 .lv-ctitle { position:absolute; top:8px; left:12px; z-index:2; pointer-events:none;
