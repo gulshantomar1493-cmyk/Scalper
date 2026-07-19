@@ -22,17 +22,18 @@
     // label shows the OTHER theme (the action)
     themeBtn.textContent = currentTheme() === "dark" ? "☀️ Light" : "🌙 Dark";
   }
-  paintThemeBtn();                                   // head script already set the theme
-  if (themeBtn) {
-    themeBtn.addEventListener("click", function () {
-      const next = currentTheme() === "dark" ? "light" : "dark";
-      if (next === "dark") root.setAttribute("data-theme", "dark");
-      else root.removeAttribute("data-theme");       // light = default (no attr)
-      try { window.localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
-      paintThemeBtn();
-      window.dispatchEvent(new CustomEvent("ms-theme-change"));
-    });
+  function setTheme(next) {
+    if (next === "dark") root.setAttribute("data-theme", "dark");
+    else root.removeAttribute("data-theme");         // light = default (no attr)
+    try { window.localStorage.setItem(THEME_KEY, next); } catch (e) { /* ignore */ }
+    paintThemeBtn();
+    window.dispatchEvent(new CustomEvent("ms-theme-change"));
   }
+  window.__msSetTheme = setTheme;                     // Settings page uses this
+  paintThemeBtn();                                   // head script already set the theme
+  if (themeBtn) themeBtn.addEventListener("click", function () {
+    setTheme(currentTheme() === "dark" ? "light" : "dark");
+  });
 
   // ---- Replay & Tools drawer (legacy; only present on the old layout) ----
   const drawer = document.getElementById("tools-drawer");

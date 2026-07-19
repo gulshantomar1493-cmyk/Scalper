@@ -760,3 +760,38 @@ def test_replay_page_has_a_dedicated_chart_and_progress():
     js = _read("app.js")
     assert "replayChart" in js and "replaySeries" in js     # separate replay chart
     assert "/replay/start" in js and "/replay/status" in js
+
+
+# ------------------------------------------- Phase 2 Steps 4-7: data pages + settings
+
+
+def test_data_pages_have_containers_and_settings_controls():
+    html = _read("index.html")
+    for pid in ("page-review", "page-journal", "page-analytics"):
+        assert f'id="{pid}"' in html, pid
+    for sid in ("set-theme-dark", "set-theme-light", "set-beginner", "set-api", "set-token"):
+        assert f'id="{sid}"' in html, sid
+
+
+def test_trade_review_is_display_only_no_execution():
+    # Step 4: honest "Trade Review" — never a paper broker / execution engine.
+    js = _read("dashboard.js")
+    assert "renderReview" in js
+    assert "renderAnalytics, renderJournal, renderReview" in js   # exposed for pages
+    for banned in ("placeOrder", "openPosition", "broker", "executeTrade",
+                   "submitOrder", "closePosition"):
+        assert banned not in js, banned
+
+
+def test_app_js_loads_data_pages_thin():
+    js = _read("app.js")
+    assert "loadDataPages" in js
+    assert '"ms-page"' in js                                # shell navigation event
+    assert "/analytics" in js and "/journal" in js          # reused endpoints (no new API)
+    assert "Dashboard.renderReview" in js and "Dashboard.renderAnalytics" in js
+    assert "data-refresh" in js
+
+
+def test_shell_dispatches_page_event_and_ui_exposes_theme_setter():
+    assert '"ms-page"' in _read("shell.js")
+    assert "__msSetTheme" in _read("ui.js")

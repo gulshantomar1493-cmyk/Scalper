@@ -75,10 +75,16 @@ const lastStructure = {};                        // latest engine payload per sy
 // A dedicated, candle-only chart for the Replay page (Step 3). Overlays/analysis
 // on the replay chart are a documented follow-up; the replay page shows the
 // deterministic price replay + progress (the engine still runs server-side).
+// Created once (never recreated). Guarded: the replay page is hidden at load,
+// so a 0-size-init hiccup must never take down the Live page.
 const replayEl = $("replay-chart");
-const replayChart = replayEl ? makeChart(replayEl) : null;
-const replaySeries = replayChart
-  ? replayChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS) : null;
+let replayChart = null, replaySeries = null;
+try {
+  if (replayEl) {
+    replayChart = makeChart(replayEl);
+    replaySeries = replayChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
+  }
+} catch (e) { console.warn("replay chart init deferred:", e && e.message); }
 
 window.addEventListener("ms-theme-change", function () {
   const t = chartTheme();
@@ -339,6 +345,48 @@ async function openDashboard() {
   } catch (err) { note(`dashboard: ${err.message}`); }
 }
 { const d = $("dash-open"); if (d) d.addEventListener("click", openDashboard); }
+
+/* ---------------------------------------------- data pages (Steps 4-6) */
+// Thin: app.js owns the fetch; dashboard.js renders (pure consumer). Loaded
+// on demand when a data page is shown, or via its Refresh button.
+async function loadDataPages() {
+  try {
+    const [analytics, journal] = await Promise.all([
+      api("/analytics", { method: "GET" }),
+      api("/journal?limit=200", { method: "GET" }),
+    ]);
+    Dashboard.renderAnalytics($("page-analytics"), analytics);
+    Dashboard.renderReview($("page-review"), analytics, journal);
+    Dashboard.renderJournal($("page-journal"), journal);
+  } catch (err) {
+    for (const id of ["page-analytics", "page-review", "page-journal"]) {
+      const e = $(id); if (e) e.textContent = "Could not load: " + err.message;
+    }
+  }
+}
+const DATA_PAGES = ["review", "journal", "analytics"];
+window.addEventListener("ms-page", (e) => {
+  if (DATA_PAGES.indexOf(e.detail) >= 0) loadDataPages();
+});
+for (const btn of document.querySelectorAll("[data-refresh]")) {
+  btn.addEventListener("click", loadDataPages);
+}
+
+/* -------------------------------------------------- settings (Step 7) */
+{
+  const dark = $("set-theme-dark"), light = $("set-theme-light");
+  if (dark && window.__msSetTheme) dark.addEventListener("click", () => window.__msSetTheme("dark"));
+  if (light && window.__msSetTheme) light.addEventListener("click", () => window.__msSetTheme("light"));
+  const sb = $("set-beginner"), bt = $("beginner-toggle");
+  if (sb && bt) {
+    const sync = () => sb.classList.toggle("on",
+      document.documentElement.getAttribute("data-beginner") !== "off");
+    sync();
+    sb.addEventListener("click", () => { bt.click(); sync(); });
+  }
+  const apiEl = $("set-api"); if (apiEl) apiEl.textContent = API_HOST;
+  const tokEl = $("set-token"); if (tokEl) tokEl.textContent = TOKEN ? TOKEN.slice(0, 3) + "•••" : "(none)";
+}
 
 /* ------------------------------------------- WebSocket client + reconnect */
 

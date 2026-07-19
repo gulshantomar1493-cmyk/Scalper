@@ -60,24 +60,60 @@ const Dashboard = (function () {
   /* ----------------------------------------------------------- analytics */
 
   function render(analytics, journal) {
-    renderAnalytics(analytics);
-    renderJournal(journal || []);
+    renderAnalytics(el.analytics, analytics);
+    renderJournal(el.journal, journal || []);
     setTab(tab);
   }
 
-  function renderAnalytics(a) {
-    clear(el.analytics);
+  // renders into ANY target element (the overlay OR a page container)
+  function renderAnalytics(target, a) {
+    if (!target) return;
+    clear(target);
     if (!a || !a.n_recommendations) {
-      el.analytics.appendChild(elem("div", "dash-empty",
-        "No recommendations logged yet."));
+      target.appendChild(elem("div", "dash-empty", "No recommendations logged yet."));
       return;
     }
-    el.analytics.appendChild(elem("div", "dash-count",
+    target.appendChild(elem("div", "dash-count",
       a.n_recommendations + " recommendation" +
       (a.n_recommendations === 1 ? "" : "s")));
-    el.analytics.appendChild(statBlock("Overall", a.overall));
-    el.analytics.appendChild(statTable("By strategy", a.by_strategy));
-    el.analytics.appendChild(statTable("By session", a.by_session));
+    target.appendChild(statBlock("Overall", a.overall));
+    target.appendChild(statTable("By strategy", a.by_strategy));
+    target.appendChild(statTable("By session", a.by_session));
+  }
+
+  // Trade Review (Step 4) — DISPLAY-ONLY: hypothetical outcomes + manual
+  // results, never an execution engine. Overall summary + evaluated trades.
+  function renderReview(target, a, journal) {
+    if (!target) return;
+    clear(target);
+    if (!a || !a.n_recommendations) {
+      target.appendChild(elem("div", "dash-empty", "No recommendations to review yet."));
+      return;
+    }
+    target.appendChild(statBlock("Performance (hypothetical + your logged trades)", a.overall));
+    const evaluated = (journal || []).filter((j) => j.eval_outcome);
+    const wrap = elem("div", "stat-block");
+    wrap.appendChild(elem("h3", "dash-h3", "Closed trades (hypothetical)"));
+    if (!evaluated.length) {
+      wrap.appendChild(elem("div", "dash-empty", "No evaluated trades yet."));
+    } else {
+      const table = elem("table", "dash-table");
+      const head = elem("tr");
+      for (const h of ["Time", "Strategy", "Dir", "Outcome", "R", "You"]) head.appendChild(elem("th", null, h));
+      table.appendChild(head);
+      for (const j of evaluated) {
+        const row = elem("tr");
+        row.appendChild(elem("td", "mono", (j.ts || "").slice(0, 16)));
+        row.appendChild(elem("td", "row-key", j.strategy || "—"));
+        row.appendChild(elem("td", "mono " + (j.direction === "LONG" ? "j-long" : "j-short"), j.direction || ""));
+        row.appendChild(elem("td", "mono", (j.eval_outcome || "").toUpperCase()));
+        row.appendChild(elem("td", "mono", r(j.eval_r)));
+        row.appendChild(elem("td", "mono", j.taken === true && j.result ? j.result.toUpperCase() + " " + r(j.actual_r) : (j.taken === false ? "skipped" : "—")));
+        table.appendChild(row);
+      }
+      wrap.appendChild(table);
+    }
+    target.appendChild(wrap);
   }
 
   function statBlock(title, s) {
@@ -129,13 +165,14 @@ const Dashboard = (function () {
 
   /* ------------------------------------------------------------- journal */
 
-  function renderJournal(list) {
-    clear(el.journal);
+  function renderJournal(target, list) {
+    if (!target) return;
+    clear(target);
     if (!list.length) {
-      el.journal.appendChild(elem("div", "dash-empty", "No journal entries yet."));
+      target.appendChild(elem("div", "dash-empty", "No journal entries yet."));
       return;
     }
-    for (const j of list) el.journal.appendChild(journalCard(j));
+    for (const j of list) target.appendChild(journalCard(j));
   }
 
   function journalCard(j) {
@@ -187,5 +224,5 @@ const Dashboard = (function () {
     return card;
   }
 
-  return { init, show, hide, render };
+  return { init, show, hide, render, renderAnalytics, renderJournal, renderReview };
 })();

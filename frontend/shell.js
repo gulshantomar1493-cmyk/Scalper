@@ -21,6 +21,8 @@
       navs[j].classList.toggle("on", navs[j].getAttribute("data-nav") === name);
     }
     try { window.localStorage.setItem(PAGE_KEY, name); } catch (e) { /* ignore */ }
+    // let app.js load a data page's content on demand (thin: app.js owns the fetch)
+    window.dispatchEvent(new CustomEvent("ms-page", { detail: name }));
   }
 
   function fromHash() {

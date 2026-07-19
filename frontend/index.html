@@ -164,11 +164,46 @@
         </details>
       </section>
 
-      <!-- STUB PAGES (Steps 4-7) -->
-      <section class="page" data-page="review"><div class="page-stub"><b>Trade Review</b><span>Display-only performance — Step 4.</span></div></section>
-      <section class="page" data-page="journal"><div class="page-stub"><b>Journal</b><span>Trades, notes, mistakes, lessons — Step 5.</span></div></section>
-      <section class="page" data-page="analytics"><div class="page-stub"><b>Analytics</b><span>Win rate · PnL · expectancy — Step 6.</span></div></section>
-      <section class="page" data-page="settings"><div class="page-stub"><b>Settings</b><span>Theme · token · symbols · preferences — Step 7.</span></div></section>
+      <!-- TRADE REVIEW (Step 4) — display-only performance -->
+      <section class="page" data-page="review">
+        <header class="pg-head"><div class="pg-title"><b>Trade Review</b><span data-beginner-text>How the recommendations would have performed — display only, no execution.</span></div>
+          <button class="pg-refresh" type="button" data-refresh="review">↻ Refresh</button></header>
+        <div class="pg-body" id="page-review"><div class="dash-empty">Loading…</div></div>
+      </section>
+
+      <!-- JOURNAL (Step 5) -->
+      <section class="page" data-page="journal">
+        <header class="pg-head"><div class="pg-title"><b>Journal</b><span data-beginner-text>Your logged trades, notes, mistakes and lessons.</span></div>
+          <button class="pg-refresh" type="button" data-refresh="journal">↻ Refresh</button></header>
+        <div class="pg-body" id="page-journal"><div class="dash-empty">Loading…</div></div>
+      </section>
+
+      <!-- ANALYTICS (Step 6) -->
+      <section class="page" data-page="analytics">
+        <header class="pg-head"><div class="pg-title"><b>Analytics</b><span data-beginner-text>Win rate · expectancy · system-vs-you, overall and per strategy/session.</span></div>
+          <button class="pg-refresh" type="button" data-refresh="analytics">↻ Refresh</button></header>
+        <div class="pg-body" id="page-analytics"><div class="dash-empty">Loading…</div></div>
+      </section>
+
+      <!-- SETTINGS (Step 7) -->
+      <section class="page" data-page="settings">
+        <header class="pg-head"><div class="pg-title"><b>Settings</b><span data-beginner-text>Theme, helper text, symbols and connection.</span></div></header>
+        <div class="pg-body">
+          <div class="set-card">
+            <div class="set-row"><div><b>Theme</b><small data-beginner-text>Dark terminal or light cream.</small></div>
+              <div class="set-seg"><button id="set-theme-dark" type="button">🌙 Dark</button><button id="set-theme-light" type="button">☀️ Light</button></div></div>
+            <div class="set-row"><div><b>Beginner mode</b><small data-beginner-text>Show helper text under each section.</small></div>
+              <button id="set-beginner" class="sb-switch" type="button" role="switch"></button></div>
+          </div>
+          <div class="set-card">
+            <div class="set-row"><div><b>Symbols</b><small>v1 scope (frozen)</small></div><span class="mono">BTCUSDT · ETHUSDT</span></div>
+            <div class="set-row"><div><b>Timeframes</b><small>chart display</small></div><span class="mono">1m · 5m · 15m · 30m · 1H · 4H · 1D · 1W · 1M</span></div>
+            <div class="set-row"><div><b>API host</b><small>backend</small></div><span class="mono" id="set-api">—</span></div>
+            <div class="set-row"><div><b>Token</b><small>in memory only — never stored</small></div><span class="mono" id="set-token">—</span></div>
+          </div>
+          <div class="set-card set-note" data-beginner-text>MarketScalper is decision-support only — it never places or executes trades.</div>
+        </div>
+      </section>
     </div>
   </div>
 
