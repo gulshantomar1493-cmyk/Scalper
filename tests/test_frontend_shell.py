@@ -855,9 +855,9 @@ def test_live_forming_candle_price_countdown_crosshair():
     assert "updateLiveStats" in js                             # live price/O/H/L/C/vol
     assert "mainSeries.update(liveBar)" in js                  # forming folds into last bar
     assert "subscribeCrosshairMove" in js                      # crosshair OHLC (item 12)
-    assert "lv-countdown" in js                                # candle countdown (item 7)
+    assert "chart-countdown" in js                             # candle countdown (item 7; Step 5 bottom-right)
     html = _read("index.html")
-    assert 'id="lv-countdown"' in html and 'id="crosshair-box"' in html
+    assert 'id="chart-countdown"' in html and 'id="crosshair-box"' in html
 
 
 def test_indicators_render_and_toolbar_wired():

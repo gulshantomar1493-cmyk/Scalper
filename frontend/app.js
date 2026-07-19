@@ -99,6 +99,11 @@ function makeChart(el) {
   const opts = Object.assign({ autoSize: true }, chartTheme());
   opts.timeScale = Object.assign({}, opts.timeScale,
     { barSpacing: BAR_SPACING, rightOffset: RIGHT_OFFSET, minBarSpacing: 1.5 });
+  // Premium interaction feel. Evidence: zero long-tasks during zoom/pan, so the
+  // gap vs TradingView is the DEFAULT interaction model, not perf. LWC's mouse
+  // kinetic scroll is OFF by default — enabling it gives drag momentum/inertia
+  // (the "momentum drag" feel). handleScroll/handleScale are already enabled.
+  opts.kineticScroll = { mouse: true, touch: true };
   return LightweightCharts.createChart(el, opts);
 }
 
@@ -134,7 +139,7 @@ mainChart.subscribeCrosshairMove((param) => {
 
 // Candle countdown (item 7) — time until the active TF's bar closes (intraday).
 setInterval(() => {
-  const el = $("lv-countdown"); if (!el) return;
+  const el = $("chart-countdown"); if (!el) return;
   const dur = TF_SEC[activeTf] || 60;
   if (dur >= 86400) { el.textContent = ""; return; }
   const left = dur - (Math.floor(Date.now() / 1000) % dur);
@@ -240,9 +245,11 @@ function applyAnalysisMode() {
   Panel.setContextMode(on, activeTf, trend);
   if (on) {
     Overlays.setStructure(lastStructure[activeSymbol]);   // redraw overlays
+    Overlays.setSetup(activeRec(lastStructure[activeSymbol]));   // Step 6: setup lines
     Panel.setStructure(lastStructure[activeSymbol]);
   } else {
     Overlays.setStructure(null);                          // no fabricated analysis
+    Overlays.setSetup(null);                              // clear setup lines on 15m+
   }
 }
 
@@ -273,6 +280,7 @@ function setSymbol(symbol) {
     const el = $(`sym-${s}`);
     if (el) el.classList.toggle("active", s === symbol);
   }
+  clearMarketStructure();          // Step 6: box streams the active symbol only
   loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
@@ -569,8 +577,10 @@ function connect() {
     const st = diff[activeSymbol] && diff[activeSymbol].structure;
     if (st) {
       renderSignalsTab(st);
+      detectStructureEvents(activeSymbol, st);         // Step 6: stream to Market Structure box
       if (!replayMode && isAnalysisTf(activeTf)) {
         Overlays.setStructure(st, candle.c);
+        Overlays.setSetup(activeRec(st));              // Step 6: setup-only chart annotations
         Panel.setStructure(st, candle.ts);
       }
     }
@@ -592,6 +602,60 @@ Ops.initActivity($("activity-feed"));
 let opsData = null, opsActIdx = 0, lastFeedConnected = null;
 const seenRec = {};                                    // last announced rec per symbol
 const seenEv = { sweep: {}, choch: {} };               // last announced event ts
+
+/* ---------------------------------- Market Structure box (Step 6) --------- */
+// Streams the underlying 1m structure events (HH/HL, sweeps, BOS/CHoCH, OB, FVG)
+// into the rail box — replacing the always-on chart labels. app.js owns the
+// detection (§9): it compares the latest event id per kind to the last seen.
+const msSeen = { pivot: {}, bos: {}, choch: {}, sweep: {}, ob: {}, fvg: {} };
+const MS_MAX = 14;
+function msPush(text, cls) {
+  const host = $("ms-stream"); if (!host) return;
+  const empty = host.querySelector(".ms-empty"); if (empty) empty.remove();
+  const row = document.createElement("div");
+  row.className = "ms-row " + (cls || "");
+  const t = document.createElement("span"); t.className = "ms-t"; t.textContent = window.IST.now();
+  const m = document.createElement("span"); m.className = "ms-m"; m.textContent = text;
+  row.appendChild(t); row.appendChild(m);
+  host.insertBefore(row, host.firstChild);             // newest on top
+  while (host.children.length > MS_MAX) host.removeChild(host.lastChild);
+}
+function clearMarketStructure() {
+  const host = $("ms-stream");
+  if (host) {
+    host.textContent = "";
+    const e = document.createElement("div"); e.className = "ms-empty";
+    e.textContent = "Waiting for structure…"; host.appendChild(e);
+  }
+  for (const k in msSeen) msSeen[k] = {};
+}
+function activeRec(st) {
+  const recs = (st && st.recommendations) || [];
+  if (!recs.length) return null;
+  const r = recs[recs.length - 1];
+  return (!r.status || r.status === "active") ? r : null;    // draw only an active setup
+}
+function detectStructureEvents(sym, st) {
+  if (!st || sym !== activeSymbol) return;             // stream the active symbol only
+  const seen = (key, id, msg, cls) => {
+    if (id == null || msSeen[key][sym] === id) return;
+    if (msSeen[key][sym] !== undefined) msPush(msg, cls);    // skip the baseline (first payload)
+    msSeen[key][sym] = id;
+  };
+  const last = (a) => (a && a.length) ? a[a.length - 1] : null;
+  const piv = last(st.pivots);
+  if (piv) seen("pivot", piv.ts, (piv.label || piv.kind) + " @ " + fmt(piv.price), "struct");
+  const bos = last(st.bos);
+  if (bos) seen("bos", bos.ts, "BOS " + bos.direction + (bos.displacement ? " (strong)" : ""), "bos");
+  const ch = last(st.choch);
+  if (ch) seen("choch", ch.ts, "CHoCH " + ch.direction, "choch");
+  const sw = last((st.liquidity || {}).sweeps);
+  if (sw) seen("sweep", sw.ts, "Liquidity sweep " + sw.side, "sweep");
+  const ob = last((st.orderblocks || {}).blocks);
+  if (ob) seen("ob", ob.created_ts, "Order block (" + String(ob.direction).toLowerCase() + ")", "ob");
+  const fv = last(st.fvgs);
+  if (fv) seen("fvg", fv.created_ts, "FVG (" + String(fv.direction).toLowerCase() + ")", "fvg");
+}
 
 // Meaningful activity from the live payload (item 16): trade setups, liquidity
 // sweeps, CHOCH. No debug logs — only structural events the engine produced.
@@ -763,11 +827,11 @@ async function loadSettings() {           // called by boot() after login
     const cl = $("draw-clear"); if (cl) cl.addEventListener("click", () => Drawing.clear());
     Drawing.onDone(() => drawBtn.classList.remove("on"));
   }
-  let structOn = true;
+  let structOn = false;    // Step 6: clean execution chart by default (advanced opt-in)
   const struct = $("tb-structure");
   if (struct) struct.addEventListener("click", () => {
     structOn = !structOn; struct.classList.toggle("on", structOn);
-    Overlays.setStructureVisible(structOn);          // item 10: HH/HL/LH/LL/BOS/CHOCH
+    Overlays.setStructureVisible(structOn);          // advanced: full structure overlay
   });
   const reset = $("tb-reset");
   if (reset) reset.addEventListener("click", () => mainChart.timeScale().fitContent());

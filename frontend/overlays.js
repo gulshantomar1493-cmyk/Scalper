@@ -226,7 +226,12 @@ const Overlays = (() => {
   let boxesPrimitive = null;        // P2.20: OB/breaker/FVG zones
   let shadingPrimitive = null;      // P2.21: premium/discount split
   let markers = null;               // createSeriesMarkers handle
-  let structureOn = true;           // item 10: HH/HL/LH/LL/BOS/CHOCH toggle
+  // Step 6: execution charts stay CLEAN by default. Structure (HH/HL/LH/LL,
+  // BOS/CHOCH, trendlines, OB/FVG, pools/levels/VWAP) is an ADVANCED opt-in via
+  // the toolbar toggle — never littered on 1m/5m by default. The streaming
+  // Market Structure box (app.js) carries the events; confirmed trade setups
+  // draw their own entry/SL/TP lines (setSetup) regardless of this toggle.
+  let structureOn = false;          // default OFF — clean execution chart
   let trendEl = null;
   let structure = null;             // latest payload for the active symbol
   let lastClose = null;             // P2.21: latest close, passed by app.js
@@ -257,7 +262,9 @@ const Overlays = (() => {
 
   function redraw() {
     if (!primitive) return;
-    const st = structure;
+    // OFF -> `st` is null so every structure layer below builds an empty set
+    // (clean chart). The trend readout still uses the real payload.
+    const st = structureOn ? structure : null;
     const lines = [];
     if (st) {
       (st.trendlines || []).forEach((ln, i) => {
@@ -404,7 +411,7 @@ const Overlays = (() => {
     marks.sort((a, b) => a.time - b.time);
     markers.setMarkers(marks);
 
-    if (trendEl) trendEl.textContent = "trend: " + ((st && st.trend) || "—");
+    if (trendEl) trendEl.textContent = "trend: " + ((structure && structure.trend) || "—");
   }
 
   /* --------------------------------------------------------- audit tool */
@@ -482,9 +489,37 @@ const Overlays = (() => {
     return false;
   }
 
+  /* ---- setup annotations (Step 6). The ONLY thing that draws on a clean
+   * execution chart, and only when there's a CONFIRMED recommendation: its
+   * entry / SL / TP as price lines. Independent of the structure toggle. ---- */
+  let setupLines = [];
+  let setupKey = null;
+  function clearSetup() {
+    for (const pl of setupLines) { try { series.removePriceLine(pl); } catch (e) { /* gone */ } }
+    setupLines = [];
+  }
+  function setSetup(rec) {
+    const key = rec ? [rec.id, rec.entry, rec.sl, rec.tp1, rec.tp2].join("|") : null;
+    if (key === setupKey) return;         // unchanged -> don't churn price lines
+    setupKey = key;
+    clearSetup();
+    if (!rec) return;
+    const add = (price, color, title) => {
+      if (price == null) return;
+      setupLines.push(series.createPriceLine({
+        price, color, lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title,
+      }));
+    };
+    add(rec.entry, COLORS.highlight, "Entry");
+    add(rec.sl, COLORS.resistance, "SL");
+    add(rec.tp1, COLORS.support, "TP1");
+    add(rec.tp2, COLORS.support, "TP2");
+  }
+
   /* -------------------------------------------------------------- API */
 
   return {
+    setSetup,
     init(mainChart, mainSeries) {
       chart = mainChart;
       series = mainSeries;

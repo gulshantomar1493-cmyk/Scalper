@@ -888,6 +888,17 @@ body {
 .lv-trend { font-family:var(--mono); font-size:14px; font-weight:700; color:var(--text-dim); }
 .lv-trend.up { color:var(--up); } .lv-trend.down { color:var(--down); }
 .lv-pos { margin-top:9px; font-size:11px; color:var(--text-dim); display:flex; align-items:center; gap:6px; }
+/* Market Structure streaming box (Step 6) — events stream here instead of the chart */
+.ms-stream { display:flex; flex-direction:column; max-height:190px; overflow-y:auto; margin-top:2px; }
+.ms-empty { font-size:10.5px; color:var(--text-dim); padding:4px 0; }
+.ms-row { display:flex; gap:8px; align-items:baseline; padding:3px 0; border-top:1px solid var(--hairline); font-size:11px; }
+.ms-row:first-child { border-top:0; }
+.ms-t { flex:none; font-family:var(--mono); font-size:9.5px; color:var(--text-dim); }
+.ms-m { color:var(--text); min-width:0; }
+.ms-row.bos .ms-m { color:var(--accent); }
+.ms-row.choch .ms-m { color:var(--warn); }
+.ms-row.sweep .ms-m { color:#F472B6; }
+.ms-row.ob .ms-m, .ms-row.fvg .ms-m { color:var(--text-dim); }
 .lv-ctxonly { border-style:dashed; }
 .lv-ctxbig { text-align:center; padding:6px 0 2px; } .lv-ctxbig .lv-trend { font-size:22px; }
 .lv-lab { font-size:10.5px; color:var(--text-dim); margin-top:2px; }
@@ -1022,6 +1033,14 @@ body {
 
 /* ==================== live candle: countdown, crosshair, price tick (chart UX P1) ==================== */
 .lv-countdown { color:var(--accent); font-size:11px; padding:2px 8px; border:1px solid var(--hairline); border-radius:999px; white-space:nowrap; }
+/* Step 5: candle-close countdown, bottom-right of the plot — offset to clear
+ * the right price scale (~62px) and the bottom time axis (~22px), like
+ * TradingView. Auto-hides when empty (daily+ TFs). */
+.chart-countdown { position:absolute; right:66px; bottom:26px; z-index:6; pointer-events:none;
+  color:var(--accent); font-size:11px; font-weight:600; padding:2px 8px; white-space:nowrap;
+  background:color-mix(in srgb, var(--surface-raised) 90%, transparent);
+  border:1px solid var(--hairline); border-radius:6px; }
+.chart-countdown:empty { display:none; }
 .crosshair-box { position:absolute; top:8px; left:8px; z-index:5; display:flex; flex-wrap:wrap; gap:10px; padding:5px 10px; background:color-mix(in srgb, var(--surface) 86%, transparent); border:1px solid var(--hairline); border-radius:8px; font-size:11px; pointer-events:none; }
 .crosshair-box .cx-item { display:inline-flex; gap:4px; align-items:baseline; }
 .crosshair-box .cx-item b { color:var(--text-dim); font-weight:600; }
