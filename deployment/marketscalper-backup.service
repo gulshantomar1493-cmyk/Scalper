@@ -1,0 +1,18 @@
+# MarketScalper daily backup (Phase D). Oneshot unit driven by the .timer.
+# Install both, then: systemctl enable --now marketscalper-backup.timer
+[Unit]
+Description=MarketScalper database backup
+After=postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=oneshot
+# pg_dump needs the DSN; the backup script sources it from the env file.
+EnvironmentFile=/etc/marketscalper/env
+ExecStart=/opt/marketscalper/deployment/backup.sh
+# Hardening: the backup only reads the DB and writes the archive dir.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+PrivateTmp=yes
+ReadWritePaths=/var/backups/marketscalper

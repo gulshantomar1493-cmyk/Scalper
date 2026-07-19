@@ -20,6 +20,14 @@ const params = new URLSearchParams(window.location.search);
 const API_HOST = params.get("api") || window.location.host || "127.0.0.1:8000";
 const TOKEN = params.get("token") || window.prompt("MarketScalper API token") || "";
 
+// The API scheme follows the page's scheme: a page served over HTTPS MUST call
+// the API over HTTPS/WSS — browsers block mixed http/ws content. So a same-origin
+// deployment behind a TLS reverse proxy "just works" (open https://host/, no
+// params), while plain-http local dev (?api=127.0.0.1:8000) is unchanged.
+const SECURE = window.location.protocol === "https:";
+const HTTP_BASE = `${SECURE ? "https" : "http"}://${API_HOST}`;
+const WS_BASE = `${SECURE ? "wss" : "ws"}://${API_HOST}`;
+
 const SYMBOLS = ["BTCUSDT", "ETHUSDT"];          // frozen v1 pair (§0)
 const ANALYSIS_TFS = ["1m", "5m"];               // only these carry engine analysis
 const LOOKBACK_MS = 24 * 3600 * 1000;            // history bootstrap depth (1m/5m)
@@ -108,7 +116,7 @@ async function fetchChart(symbol, tf) {
   const qs = new URLSearchParams({
     symbol, timeframe: tf, from: start.toISOString(), to: end.toISOString(),
   });
-  const resp = await fetch(`http://${API_HOST}/api/chart?${qs}`, {
+  const resp = await fetch(`${HTTP_BASE}/api/chart?${qs}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
   if (!resp.ok) throw new Error(`chart ${symbol}/${tf}: HTTP ${resp.status}`);
@@ -292,7 +300,7 @@ function setRpStatus(s) {
 }
 
 async function api(path, options) {
-  const resp = await fetch(`http://${API_HOST}${path}`, {
+  const resp = await fetch(`${HTTP_BASE}${path}`, {
     headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
     ...options,
   });
@@ -403,8 +411,8 @@ function setStatus(state, detail) {
 
 function connect() {
   setStatus("CONNECTING");
-  if (wsTarget) wsTarget.textContent = `ws://${API_HOST}/ws`;
-  const ws = new WebSocket(`ws://${API_HOST}/ws?token=${encodeURIComponent(TOKEN)}`);
+  if (wsTarget) wsTarget.textContent = `${WS_BASE}/ws`;
+  const ws = new WebSocket(`${WS_BASE}/ws?token=${encodeURIComponent(TOKEN)}`);
 
   ws.onopen = () => {
     backoffMs = BACKOFF_INITIAL_MS;

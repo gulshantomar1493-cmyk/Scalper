@@ -48,4 +48,9 @@ systemctl enable "$SERVICE"
 systemctl restart "$SERVICE"
 systemctl --no-pager --lines=5 status "$SERVICE" || true
 
-echo "[deploy] done. Frontend: open frontend/index.html?api=HOST:PORT&token=TOKEN"
+echo "[deploy] core app done (backend on 127.0.0.1:$MARKETSCALPER_API_PORT, if set)."
+echo "[deploy] production front door + data safety + monitoring (see docs/DEPLOYMENT.md):"
+echo "[deploy]   reverse proxy + HTTPS : deployment/nginx.conf  (+ certbot)"
+echo "[deploy]   daily backups         : systemctl enable --now marketscalper-backup.timer"
+echo "[deploy]   health / uptime       : deployment/healthcheck.sh  (GET /health/ready)"
+echo "[deploy] local/no-proxy access   : open frontend/index.html?api=HOST:PORT&token=TOKEN"

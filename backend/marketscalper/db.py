@@ -28,9 +28,16 @@ import asyncpg
 # --------------------------------------------------------------------------- pool
 
 
-async def create_pool(dsn: str) -> asyncpg.Pool:
-    """Create the process-wide connection pool for the configured DSN."""
-    return await asyncpg.create_pool(dsn)
+async def create_pool(dsn: str, *, min_size: int = 2,
+                      max_size: int = 10) -> asyncpg.Pool:
+    """Create the process-wide connection pool for the configured DSN.
+
+    Sizing is tuned for the single-user (multi-device) production profile:
+    a small floor keeps idle PostgreSQL backends — and VPS memory — low,
+    while the ceiling leaves burst headroom for the concurrent WS push, the
+    chart/analytics reads, and the background rollover/watchdog tasks. asyncpg
+    would otherwise pin 10 connections open at all times."""
+    return await asyncpg.create_pool(dsn, min_size=min_size, max_size=max_size)
 
 
 # --------------------------------------------------------------- partitions (001)

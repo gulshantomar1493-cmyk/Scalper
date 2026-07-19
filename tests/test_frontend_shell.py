@@ -98,6 +98,22 @@ def test_app_js_live_chart_contract():
     assert "indexedDB" not in js                         # no client-side storage/caching
 
 
+def test_app_js_scheme_follows_page_for_https():
+    """Production HTTPS: the client must derive the API scheme from the page
+    (https/wss), never hardcode http/ws — a page served over TLS otherwise
+    hits mixed-content blocking on every fetch and on the WebSocket."""
+    js = _read("app.js")
+    assert "window.location.protocol" in js              # scheme derived from page
+    assert "HTTP_BASE" in js and "WS_BASE" in js
+    assert '"https"' in js and '"wss"' in js             # secure variants present
+    # the mixed-content bug must be gone: no literal http/ws + API_HOST
+    assert "http://${API_HOST}" not in js
+    assert "ws://${API_HOST}" not in js
+    # and the call sites use the scheme-aware bases
+    assert "${HTTP_BASE}/api/chart" in js
+    assert "${WS_BASE}/ws" in js
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_app_js_is_valid_javascript():
     result = subprocess.run(

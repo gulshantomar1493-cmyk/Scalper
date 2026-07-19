@@ -263,3 +263,23 @@ async def test_second_journal_seed_rejected_by_primary_key(db_conn):
         await db.insert_journal_seed(
             db_conn, recommendation_id=rid, reason_text="second",
             chart_snapshot_path=None, rule_violations=None)
+
+
+async def test_create_pool_is_bounded(monkeypatch):
+    """Single-user (multi-device) production tuning: the pool floors low (few
+    idle PostgreSQL backends -> low VPS memory) and caps at a modest burst —
+    never asyncpg's default of pinning 10 connections open at all times."""
+    captured = {}
+
+    async def fake_create_pool(dsn, **kwargs):
+        captured["dsn"] = dsn
+        captured.update(kwargs)
+        return "POOL"
+
+    monkeypatch.setattr(asyncpg, "create_pool", fake_create_pool)
+    pool = await db.create_pool("postgresql://example")
+    assert pool == "POOL"
+    assert captured["dsn"] == "postgresql://example"
+    assert captured["min_size"] <= 2                     # low idle floor
+    assert 2 <= captured["max_size"] <= 20               # modest burst cap
+    assert captured["min_size"] <= captured["max_size"]

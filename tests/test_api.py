@@ -89,6 +89,36 @@ async def test_health_is_open():
         await _stop(server, task)
 
 
+async def test_health_ready_ok(db_conn):
+    # Readiness (Phase E): liveness + a real DB round-trip, unauthenticated.
+    _, _, app = _pipeline(pool=TxPool(db_conn))
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/health/ready") as resp:
+                assert resp.status == 200
+                assert await resp.json() == {"status": "ready", "db": "ok"}
+    finally:
+        await _stop(server, task)
+
+
+class _BrokenPool:
+    def acquire(self):
+        raise RuntimeError("database unavailable")
+
+
+async def test_health_ready_503_when_db_unreachable():
+    # DB down -> readiness reports 503 so a monitor/proxy can act on it.
+    _, _, app = _pipeline(pool=_BrokenPool())
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/health/ready") as resp:
+                assert resp.status == 503
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_requires_bearer_token():
     _, _, app = _pipeline()
     server, task, addr = await _serve(app)

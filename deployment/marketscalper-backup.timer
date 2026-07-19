@@ -1,0 +1,13 @@
+# MarketScalper daily backup schedule (Phase D).
+# Enable: sudo systemctl enable --now marketscalper-backup.timer
+# Check:  systemctl list-timers marketscalper-backup.timer
+[Unit]
+Description=Daily MarketScalper database backup
+
+[Timer]
+# 03:15 every day (server local time); catch up if the machine was off.
+OnCalendar=*-*-* 03:15:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -47,6 +47,7 @@ being announced.
 from __future__ import annotations
 
 import asyncio
+import hmac
 import logging
 import math
 from datetime import datetime, timedelta, timezone
@@ -181,13 +182,31 @@ def create_app(
     # at most one replay at a time; lazy latch turns completion into idle
     replay = {"feed": None, "info": None, "seen_connected": False}
 
+    expected_auth = f"Bearer {api_token}"
+
     def require_token(authorization: str | None = Header(default=None)) -> None:
-        if authorization != f"Bearer {api_token}":
+        # Constant-time compare (hmac.compare_digest): a plain `!=` leaks the
+        # matched-prefix length via response time. Single static token (D3).
+        if authorization is None or not hmac.compare_digest(
+                authorization, expected_auth):
             raise HTTPException(status_code=401, detail="invalid or missing token")
 
     @app.get("/health")
     async def health() -> dict:
         return {"status": "ok"}
+
+    @app.get("/health/ready")
+    async def health_ready() -> dict:
+        # Readiness probe (Phase E monitoring): liveness + a cheap DB round-
+        # trip. Unauthenticated like /health and leaks nothing beyond up/down,
+        # so a cron uptime check or the reverse proxy can probe it. 503 =>
+        # the database is unreachable and the app cannot serve data.
+        try:
+            async with pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+        except Exception:
+            raise HTTPException(status_code=503, detail="database unavailable")
+        return {"status": "ready", "db": "ok"}
 
     @app.get("/candles", dependencies=[Depends(require_token)])
     async def candles(symbol: str, tf: str, start: datetime, end: datetime) -> list[dict]:
@@ -365,7 +384,8 @@ def create_app(
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
-        if websocket.query_params.get("token") != api_token:
+        supplied = websocket.query_params.get("token")
+        if supplied is None or not hmac.compare_digest(supplied, api_token):
             await websocket.close(code=1008)          # policy violation: bad token
             return
         await websocket.accept()

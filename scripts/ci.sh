@@ -22,6 +22,17 @@ if [ -z "${MARKETSCALPER_DB_DSN:-}" ]; then
     exit 1
 fi
 
+# Same anti-vacuous-green discipline (F3): the whole suite is asyncio, so a
+# 'python' WITHOUT pytest-asyncio would make every async test/fixture error or
+# fail — a false red that looks like broken code. Fail fast with the real cause.
+# (Run inside the project venv: pip install -e .[dev].)
+if ! python -c "import pytest_asyncio" >/dev/null 2>&1; then
+    echo "[ci] FAIL: pytest-asyncio is not importable by '$(command -v python)'." >&2
+    echo "[ci]       Activate the project virtualenv first (pip install -e .[dev])." >&2
+    echo "[ci]       Without it the async test/fixture suite cannot run." >&2
+    exit 1
+fi
+
 echo "[ci] step 1: pytest suite (incl. determinism + conformance + boundary gates)"
 python -m pytest
 
