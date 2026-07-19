@@ -160,6 +160,22 @@ Or point any free external uptime monitor at `https://your.domain/health/ready`.
 The app already logs feed-gap alerts and a daily performance snapshot to the
 journal — no extra observability stack needed.
 
+**In-app operations** — the Live top bar shows a scanner-status pill (never
+idle), the **Activity** tab shows the live scan feed, and **Settings →
+Operations** shows a full dashboard: feed / scanner / database / backfill /
+uptime + per-symbol last candle & data coverage. Backed by `GET /ops` (Bearer,
+read-only), so a script can consume the same JSON.
+
+**Times display in IST** (Asia/Kolkata) everywhere in the UI; all internals
+(DB, feed, scheduler, backend) stay UTC regardless of the VPS timezone.
+
+**Alerts (optional)** — from **Settings → Notifications / Telegram** the owner
+enables desktop notifications (browser, works when the tab is unfocused) and/or
+Telegram (works when the app is closed). Telegram setup: create a bot via
+@BotFather, message it once, paste the token, click **Verify** — the chat id is
+auto-detected. The bot token is written to `backend/runtime_settings.json`
+(git-ignored, mode-600, NOT in the DB/backups) — see Security.
+
 ---
 
 ## 7. Operations
@@ -205,7 +221,10 @@ change. Keep the previous archive until a new version is proven.
 
 ## 9. Security posture
 
-- **No secrets in git** — DSN + token live only in `/etc/marketscalper/env` (600).
+- **No secrets in git** — DSN + API token live only in `/etc/marketscalper/env`
+  (600); the Telegram bot token (if used) lives only in
+  `backend/runtime_settings.json` (git-ignored, mode-600, kept out of the DB and
+  its backups). `GET /settings` never returns the token.
 - **Auth** — single static Bearer token (D3), constant-time compared. REST via
   `Authorization: Bearer`; WS via `?token=` at handshake.
 - **Token in URL** — the WS handshake needs `?token=`; nginx logs the path
