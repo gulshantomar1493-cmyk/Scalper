@@ -226,6 +226,7 @@ const Overlays = (() => {
   let boxesPrimitive = null;        // P2.20: OB/breaker/FVG zones
   let shadingPrimitive = null;      // P2.21: premium/discount split
   let markers = null;               // createSeriesMarkers handle
+  let structureOn = true;           // item 10: HH/HL/LH/LL/BOS/CHOCH toggle
   let trendEl = null;
   let structure = null;             // latest payload for the active symbol
   let lastClose = null;             // P2.21: latest close, passed by app.js
@@ -358,30 +359,32 @@ const Overlays = (() => {
 
     const marks = [];
     if (st) {
-      for (const p of st.pivots || []) {
-        marks.push({
-          time: toTime(p.ts),
-          position: p.kind === "H" ? "aboveBar" : "belowBar",
-          color: p.kind === "H" ? COLORS.resistance : COLORS.support,
-          shape: "circle", size: 0.6,
-          text: p.label || "",
-        });
-      }
-      for (const e of st.bos || []) {
-        marks.push({
-          time: toTime(e.ts),
-          position: e.direction === "UP" ? "aboveBar" : "belowBar",
-          color: COLORS.highlight, shape: "square", size: 0.7,
-          text: "BOS" + (e.displacement ? "!" : ""),
-        });
-      }
-      for (const e of st.choch || []) {
-        marks.push({
-          time: toTime(e.ts),
-          position: e.direction === "UP" ? "aboveBar" : "belowBar",
-          color: "#F59E0B", shape: "square", size: 0.7,
-          text: "CHOCH",
-        });
+      if (structureOn) {                      // item 10: market-structure markers
+        for (const p of st.pivots || []) {
+          marks.push({
+            time: toTime(p.ts),
+            position: p.kind === "H" ? "aboveBar" : "belowBar",
+            color: p.kind === "H" ? COLORS.resistance : COLORS.support,
+            shape: "circle", size: 0.6,
+            text: p.label || "",
+          });
+        }
+        for (const e of st.bos || []) {
+          marks.push({
+            time: toTime(e.ts),
+            position: e.direction === "UP" ? "aboveBar" : "belowBar",
+            color: COLORS.highlight, shape: "square", size: 0.7,
+            text: "BOS" + (e.displacement ? "!" : ""),
+          });
+        }
+        for (const e of st.choch || []) {
+          marks.push({
+            time: toTime(e.ts),
+            position: e.direction === "UP" ? "aboveBar" : "belowBar",
+            color: "#F59E0B", shape: "square", size: 0.7,
+            text: "CHOCH",
+          });
+        }
       }
       // P2.20 + P2.22: sweep events, audit-pick highlighted
       const sweeps = (st.liquidity && st.liquidity.sweeps) || [];
@@ -515,6 +518,10 @@ const Overlays = (() => {
         auditPick = null;       // the picked object no longer exists
         setAuditButtons();
       }
+      redraw();
+    },
+    setStructureVisible(on) {            // item 10: toggle HH/HL/LH/LL/BOS/CHOCH
+      structureOn = !!on;
       redraw();
     },
   };

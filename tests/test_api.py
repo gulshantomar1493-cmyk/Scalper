@@ -893,9 +893,10 @@ async def test_api_chart_aggregation_roundtrip(db_conn):
                 body = await r.json()
     finally:
         await _stop(server, task)
-    assert set(body) == {"candles", "metadata", "overlays", "indicators"}
+    assert set(body) == {"candles", "metadata", "overlays", "indicators", "context"}
     assert body["overlays"] is None                        # engine-isolated
     assert body["indicators"] is None                      # none requested
+    assert body["context"] is None                         # only 2 candles (<30)
     assert body["metadata"]["timeframe"] == "15m"
     assert body["metadata"]["aggregated"] is True
     assert len(body["candles"]) == 2                       # 2 x 15m in 30m
@@ -929,6 +930,21 @@ async def test_api_chart_returns_display_indicators(db_conn):
                 assert ind["sma"]["8"] and ind["rsi"]["5"]
     finally:
         await _stop(server, task)
+
+
+def test_chart_service_htf_context_pure():
+    # Item 9: 15m..1D carry display-only CONTEXT (never "unavailable"). Pure —
+    # _context is a function of the candles, no DB.
+    cs = ChartService(None)
+    candles = [{"c": 100.0 + i * 0.5, "l": 99.0 + i * 0.5, "h": 101.0 + i * 0.5}
+               for i in range(260)]
+    ctx = cs._context("1h", candles)
+    assert ctx["trend"] == "Bullish" and ctx["bias"] == "Long only"
+    assert ctx["ema_alignment"] == "20 > 50 > 200"
+    assert 0.0 <= ctx["rsi"] <= 100.0 and ctx["support"] < ctx["resistance"]
+    assert "confirmation" in ctx["execution"]
+    assert cs._context("1m", candles) is None              # analysis TF -> no context
+    assert cs._context("1h", candles[:10]) is None         # too few candles
 
 
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):

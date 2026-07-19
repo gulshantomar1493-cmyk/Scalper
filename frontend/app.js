@@ -92,6 +92,7 @@ Overlays.init(mainChart, mainSeries);            // overlays draw on the Live ch
 Panel.init(quickLogSubmit);
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
+Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
 
 // Crosshair OHLC readout (item 12) — reads the hovered bar from LWC, no caching.
 mainChart.subscribeCrosshairMove((param) => {
@@ -107,6 +108,9 @@ mainChart.subscribeCrosshairMove((param) => {
   };
   put("", window.IST.dateTime((typeof param.time === "number" ? param.time : 0) * 1000), "cx-time");
   put("O", fmt(d.open)); put("H", fmt(d.high)); put("L", fmt(d.low)); put("C", fmt(d.close));
+  const vs = Indicators.volumeSeries && Indicators.volumeSeries();
+  const vd = (vs && param.seriesData) ? param.seriesData.get(vs) : null;   // item 12: volume
+  if (vd && vd.value != null) put("V", fmt(vd.value));
 });
 
 // Candle countdown (item 7) — time until the active TF's bar closes (intraday).
@@ -183,6 +187,7 @@ async function loadHistory(symbol) {
     preserveView(mainChart, () => mainSeries.setData(bars));
     liveBar = bars.length ? bars[bars.length - 1] : null;   // baseline for forming
     Indicators.render(body);                                // EMA/SMA/RSI/Volume
+    Panel.setContext(body.context);                         // HTF context (item 9)
     setChartTitle(symbol, activeTf);
     note(`history: ${symbol} ${activeTf} (${candles.length} candles)`);
   } catch (err) {
@@ -553,9 +558,29 @@ function connect() {
 Ops.initActivity($("activity-feed"));
 let opsData = null, opsActIdx = 0, lastFeedConnected = null;
 const seenRec = {};                                    // last announced rec per symbol
+const seenEv = { sweep: {}, choch: {} };               // last announced event ts
 
+// Meaningful activity from the live payload (item 16): trade setups, liquidity
+// sweeps, CHOCH. No debug logs — only structural events the engine produced.
 function detectActivity(sym, st) {
-  const recs = (st && st.recommendations) || [];
+  if (!st) return;
+  const sweeps = (st.liquidity && st.liquidity.sweeps) || [];
+  if (sweeps.length) {
+    const s = sweeps[sweeps.length - 1];
+    if (s.ts && seenEv.sweep[sym] !== s.ts) {
+      if (seenEv.sweep[sym] !== undefined) Ops.pushActivity("Liquidity sweep: " + sym + " " + s.side, "setup");
+      seenEv.sweep[sym] = s.ts;
+    }
+  }
+  const choch = st.choch || [];
+  if (choch.length) {
+    const c = choch[choch.length - 1];
+    if (c.ts && seenEv.choch[sym] !== c.ts) {
+      if (seenEv.choch[sym] !== undefined) Ops.pushActivity("CHOCH detected: " + sym + " " + c.direction, "setup");
+      seenEv.choch[sym] = c.ts;
+    }
+  }
+  const recs = st.recommendations || [];
   if (!recs.length) return;
   const r = recs[recs.length - 1];                     // newest recommendation
   if (!r || !r.created_ts) return;
@@ -668,6 +693,28 @@ if ($("tg-clear")) $("tg-clear").addEventListener("click", async () => {
       if (!panel.hidden && !panel.contains(e.target) && e.target !== btn) panel.hidden = true;
     });
   }
+  // Draw menu (item 11)
+  const drawBtn = $("draw-btn"), drawPanel = $("draw-panel");
+  if (drawBtn && drawPanel) {
+    drawBtn.addEventListener("click", (e) => { e.stopPropagation(); drawPanel.hidden = !drawPanel.hidden; });
+    document.addEventListener("click", (e) => {
+      if (!drawPanel.hidden && !drawPanel.contains(e.target) && e.target !== drawBtn) drawPanel.hidden = true;
+    });
+    drawPanel.querySelectorAll(".draw-tool[data-tool]").forEach((b) => b.addEventListener("click", () => {
+      Drawing.setTool(b.getAttribute("data-tool"));
+      drawPanel.hidden = true; drawBtn.classList.add("on");
+      note("draw: " + b.textContent.trim() + " — click the chart to place points");
+    }));
+    const u = $("draw-undo"); if (u) u.addEventListener("click", () => Drawing.undo());
+    const cl = $("draw-clear"); if (cl) cl.addEventListener("click", () => Drawing.clear());
+    Drawing.onDone(() => drawBtn.classList.remove("on"));
+  }
+  let structOn = true;
+  const struct = $("tb-structure");
+  if (struct) struct.addEventListener("click", () => {
+    structOn = !structOn; struct.classList.toggle("on", structOn);
+    Overlays.setStructureVisible(structOn);          // item 10: HH/HL/LH/LL/BOS/CHOCH
+  });
   const reset = $("tb-reset");
   if (reset) reset.addEventListener("click", () => mainChart.timeScale().fitContent());
   let autoOn = true;

@@ -880,6 +880,35 @@ def test_indicators_js_valid():
     assert r.returncode == 0, r.stderr
 
 
+def test_structure_toggle_htf_context_and_drawing_wired():
+    """Structure overlay toggle (item 10), HTF context render (item 9),
+    drawing tools (item 11) — all display-only."""
+    html, app = _read("index.html"), _read("app.js")
+    # item 10 — HH/HL/LH/LL/BOS/CHOCH visibility toggle
+    ov = _read("overlays.js")
+    assert "setStructureVisible" in ov and "structureOn" in ov
+    assert 'id="tb-structure"' in html and "Overlays.setStructureVisible" in app
+    # item 9 — HTF context rendered in the panel (backend-computed values)
+    pj = _read("panel.js")
+    assert "setContext" in pj and "ema_alignment" in pj and "execution" in pj
+    assert 'id="ctxonly-body"' in html and "Panel.setContext" in app
+    # item 11 — drawing tools
+    dj = _read("drawing.js")
+    assert "window.Drawing" in dj and "subscribeClick" in dj and "attachPrimitive" in dj
+    for t in ("trendline", "hline", "rect", "fib", "text"):
+        assert 'data-tool="' + t + '"' in html, t
+    for banned in ("fetch(", "WebSocket", "localStorage", "Math.log"):
+        assert banned not in dj, banned
+    assert 'src="drawing.js"' in html and "Drawing.init" in app
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_drawing_js_valid():
+    r = subprocess.run(["node", "--check", str(FRONTEND / "drawing.js")],
+                       capture_output=True, text=True)
+    assert r.returncode == 0, r.stderr
+
+
 def test_app_js_uses_chart_service_and_gates_higher_tfs():
     js = _read("app.js")
     assert "/api/chart?" in js and "timeframe" in js       # backend ChartService

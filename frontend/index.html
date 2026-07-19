@@ -88,6 +88,20 @@
                 <button id="ind-btn" class="tb-btn" type="button" title="Indicators">📈 Indicators ▾</button>
                 <div id="ind-panel" class="ind-panel" hidden></div>
               </div>
+              <div class="ind-menu">
+                <button id="draw-btn" class="tb-btn" type="button" title="Drawing tools">✏ Draw ▾</button>
+                <div id="draw-panel" class="ind-panel draw-panel" hidden>
+                  <button class="draw-tool" type="button" data-tool="trendline">╱ Trend Line</button>
+                  <button class="draw-tool" type="button" data-tool="hline">— Horizontal Line</button>
+                  <button class="draw-tool" type="button" data-tool="rect">▭ Rectangle</button>
+                  <button class="draw-tool" type="button" data-tool="fib">☰ Fibonacci</button>
+                  <button class="draw-tool" type="button" data-tool="text">T Text</button>
+                  <div class="draw-sep"></div>
+                  <button id="draw-undo" class="draw-tool" type="button">↶ Undo</button>
+                  <button id="draw-clear" class="draw-tool" type="button">🗑 Clear all</button>
+                </div>
+              </div>
+              <button id="tb-structure" class="tb-btn on" type="button" title="Market structure — HH/HL/LH/LL/BOS/CHOCH">≋ Structure</button>
               <span class="tb-spacer"></span>
               <button id="tb-reset" class="tb-btn" type="button" title="Reset view">⤢ Reset</button>
               <button id="tb-autoscale" class="tb-btn" type="button" title="Toggle auto-scale">Auto</button>
@@ -121,9 +135,10 @@
               </div>
             </div>
             <div id="rail-ctxonly" class="lv-card lv-ctxonly" hidden>
-              <div class="lv-ch">Market Context</div>
-              <div class="lv-ctxbig"><span id="ctxonly-tf" class="lv-trend">1H</span><div id="ctxonly-trend" class="lv-lab">Trend: —</div></div>
-              <div class="lv-ctxnote">This timeframe is for <b>market context only</b>.<br>Analysis is available only on 1m and 5m.</div>
+              <div class="lv-ch"><span id="ctxonly-tf">1H</span> Context</div>
+              <div class="lv-ctxbig"><div id="ctxonly-trend" class="lv-lab">Trend: —</div></div>
+              <div id="ctxonly-body" class="ctx-body"></div>
+              <div class="lv-ctxnote">Context only — <b>execution</b> waits for confirmation on 1m / 5m.</div>
             </div>
           </aside>
         </div>
@@ -291,6 +306,7 @@
   <script src="ops.js"></script>
   <script src="notify.js"></script>
   <script src="indicators.js"></script>
+  <script src="drawing.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

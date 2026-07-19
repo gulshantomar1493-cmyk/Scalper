@@ -126,5 +126,5 @@
     row("Volume", [toggle(() => cfg.volume.on, v => cfg.volume.on = v)]);
   }
 
-  window.Indicators = { init, ensure, paramsQuery, render, updateForming, renderMenu, applyVisibility, config: () => cfg };
+  window.Indicators = { init, ensure, paramsQuery, render, updateForming, renderMenu, applyVisibility, config: () => cfg, volumeSeries: () => S.volume };
 })();

@@ -141,6 +141,45 @@ class ChartService:
             # Display-only indicators (item 2) — computed here, rendered by the
             # frontend. None when none were requested. Isolated from the engine.
             "indicators": self._indicators(candles, ema, sma, rsi),
+            # DISPLAY-ONLY higher-timeframe CONTEXT (chart UX item 9) so 15m..1D
+            # never show "analysis unavailable". This is market context, NOT a
+            # signal — the decision engine stays 1m/5m; execution waits for 1m/5m
+            # confirmation. Null for the analysis TFs (they use the live engine).
+            "context": self._context(tf, candles),
+        }
+
+    _CONTEXT_TFS = ("15m", "30m", "1h", "4h", "1d")
+
+    def _context(self, tf: str, candles) -> dict | None:
+        if tf not in self._CONTEXT_TFS or len(candles) < 30:
+            return None
+        closes = [c["c"] for c in candles]
+        e20 = ind.ema(closes, 20)[-1]
+        e50 = ind.ema(closes, 50)[-1]
+        e200 = ind.ema(closes, 200)[-1]
+        r = ind.rsi(closes, 14)[-1]
+        recent = candles[-50:]
+        support = min(c["l"] for c in recent)
+        resistance = max(c["h"] for c in recent)
+        trend, alignment, bias = "Ranging", "mixed", "Neutral / range"
+        if e20 and e50 and e200:
+            if e20 > e50 > e200:
+                trend, alignment, bias = "Bullish", "20 > 50 > 200", "Long only"
+            elif e20 < e50 < e200:
+                trend, alignment, bias = "Bearish", "20 < 50 < 200", "Short only"
+        elif e20 and e50:
+            if e20 > e50:
+                trend, bias = "Bullish", "Long bias"
+            elif e20 < e50:
+                trend, bias = "Bearish", "Short bias"
+        return {
+            "trend": trend,
+            "ema_alignment": alignment,
+            "rsi": round(r, 1) if r is not None else None,
+            "support": round(support, 2),
+            "resistance": round(resistance, 2),
+            "bias": bias,
+            "execution": "Wait for confirmation on 1m / 5m.",
         }
 
     def _indicators(self, candles, ema_lens, sma_len, rsi_len) -> dict | None:

@@ -996,3 +996,17 @@ body {
 .ind-num { width:42px; padding:2px 4px; border:1px solid var(--hairline); border-radius:5px; background:var(--surface); color:var(--text); font:inherit; font-size:11px; }
 .ind-color { width:24px; height:20px; padding:0; border:1px solid var(--hairline); border-radius:5px; background:transparent; cursor:pointer; }
 .ind-sub { display:inline-flex; align-items:center; gap:3px; font-size:10px; color:var(--text-dim); }
+
+/* ==================== HTF context card (chart UX item 9) ==================== */
+.ctx-body { display:flex; flex-direction:column; gap:2px; margin:6px 0; }
+.ctx-row { display:flex; justify-content:space-between; gap:10px; font-size:12px; padding:3px 0; border-bottom:1px solid var(--hairline); }
+.ctx-row:last-child { border-bottom:0; }
+.ctx-k { color:var(--text-dim); }
+.ctx-v { color:var(--text); font-weight:600; }
+.ctx-exec { margin-top:6px; padding:6px 8px; border-radius:6px; background:color-mix(in srgb, var(--accent) 10%, transparent); color:var(--accent); font-size:11px; }
+
+/* ==================== drawing tools menu (chart UX item 11) ==================== */
+.draw-panel { min-width:170px; display:flex; flex-direction:column; gap:2px; }
+.draw-tool { text-align:left; padding:6px 9px; border:0; border-radius:6px; background:transparent; color:var(--text); cursor:pointer; font:inherit; font-size:12px; white-space:nowrap; }
+.draw-tool:hover { background:color-mix(in srgb, var(--accent) 12%, transparent); color:var(--accent); }
+.draw-sep { height:1px; background:var(--hairline); margin:4px 2px; }

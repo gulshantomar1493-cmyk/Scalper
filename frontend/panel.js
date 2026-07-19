@@ -91,6 +91,39 @@ const Panel = (function () {
     return t === "BULLISH" ? "up" : t === "BEARISH" ? "down" : "";
   }
 
+  // Higher-timeframe CONTEXT (chart UX item 9) — backend-computed, rendered
+  // here so 15m..1D never show "analysis unavailable". Display-only context.
+  function ctxTrendClass(t) {
+    return t === "Bullish" ? "up" : t === "Bearish" ? "down" : "";
+  }
+  function setContext(ctx) {
+    const body = document.getElementById("ctxonly-body");
+    if (!body) return;
+    body.textContent = "";
+    if (!ctx) return;
+    if (el.ctxonlyTrend) {
+      el.ctxonlyTrend.textContent = "Trend: " + (ctx.trend || "—");
+      el.ctxonlyTrend.className = "lv-lab " + ctxTrendClass(ctx.trend);
+    }
+    const nm = (v) => (v == null ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 }));
+    const rows = [
+      ["EMA Alignment", ctx.ema_alignment || "—"],
+      ["RSI", ctx.rsi == null ? "—" : String(ctx.rsi)],
+      ["Support", nm(ctx.support)],
+      ["Resistance", nm(ctx.resistance)],
+      ["Bias", ctx.bias || "—"],
+    ];
+    for (const [k, v] of rows) {
+      const r = document.createElement("div"); r.className = "ctx-row";
+      const a = document.createElement("span"); a.className = "ctx-k"; a.textContent = k;
+      const b = document.createElement("span"); b.className = "ctx-v"; b.textContent = v;
+      r.appendChild(a); r.appendChild(b); body.appendChild(r);
+    }
+    const ex = document.createElement("div"); ex.className = "ctx-exec";
+    ex.textContent = "▸ " + (ctx.execution || "Wait for confirmation on 1m / 5m.");
+    body.appendChild(ex);
+  }
+
   /* ---------------------------------------------------------- rendering */
   function setStructure(structure, candleTs) {
     if (candleTs) lastCandleTs = candleTs;
@@ -317,5 +350,5 @@ const Panel = (function () {
     rail.appendChild(row);
   }
 
-  return { init, setStructure, setContextMode };
+  return { init, setStructure, setContextMode, setContext };
 })();
