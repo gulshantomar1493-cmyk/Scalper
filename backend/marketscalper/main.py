@@ -42,6 +42,7 @@ from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.chart_service import ChartService
+from marketscalper.core.live_bar import LiveBarTracker
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
 from marketscalper.core.state import StateStore
@@ -556,6 +557,9 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     store = StateStore(bus)                                # before create_app
     CandleBuilder(bus)
     CandleWriter(bus, pool)
+    LiveBarTracker(bus)                                    # display-only forming
+                                                          # candle (live-only; no
+                                                          # engine subscribes to it)
     reconciler = KlineReconciler()
 
     async def to_built(candle: Candle) -> None:            # truth 1m -> reconciler

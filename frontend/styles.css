@@ -968,3 +968,13 @@ body {
 .tg-msg { font-size:12px; color:var(--text-dim); flex:1; }
 .tg-msg.ok { color:var(--up); } .tg-msg.bad { color:var(--down); }
 .tg-actions { display:flex; gap:8px; margin-left:auto; }
+
+/* ==================== live candle: countdown, crosshair, price tick (chart UX P1) ==================== */
+.lv-countdown { color:var(--accent); font-size:11px; padding:2px 8px; border:1px solid var(--hairline); border-radius:999px; white-space:nowrap; }
+.crosshair-box { position:absolute; top:8px; left:8px; z-index:5; display:flex; flex-wrap:wrap; gap:10px; padding:5px 10px; background:color-mix(in srgb, var(--surface) 86%, transparent); border:1px solid var(--hairline); border-radius:8px; font-size:11px; pointer-events:none; }
+.crosshair-box .cx-item { display:inline-flex; gap:4px; align-items:baseline; }
+.crosshair-box .cx-item b { color:var(--text-dim); font-weight:600; }
+.crosshair-box .cx-time { color:var(--accent); }
+#st-price { transition:color .12s ease; }
+#st-price.tick-up { color:var(--up); }
+#st-price.tick-down { color:var(--down); }

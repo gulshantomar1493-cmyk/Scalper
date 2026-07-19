@@ -45,6 +45,12 @@ let activeTf = (window.__msTf && LOOKBACK_BY_TF[window.__msTf]) ? window.__msTf 
 const $ = (id) => document.getElementById(id);
 const isAnalysisTf = (tf) => ANALYSIS_TFS.indexOf(tf) >= 0;
 
+// Live forming-candle state (chart UX items 5/6/7) — display-only. The backend
+// streams the current 1m bar's OHLCV; we fold it into the active TF's last bar.
+const TF_SEC = { "1m": 60, "5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800, "1M": 2592000 };
+let liveBar = null;                 // the active TF's current bar (baseline + forming)
+let lastLivePrice = 0, liveTickMs = 0;
+
 /* ----------------------------------------------------------------- charts */
 
 const SERIES_OPTS = {
@@ -85,6 +91,33 @@ const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERI
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
 Dashboard.init();
+
+// Crosshair OHLC readout (item 12) — reads the hovered bar from LWC, no caching.
+mainChart.subscribeCrosshairMove((param) => {
+  const box = $("crosshair-box"); if (!box) return;
+  const d = (param.time && param.seriesData) ? param.seriesData.get(mainSeries) : null;
+  if (!d) { box.hidden = true; return; }
+  box.hidden = false; box.textContent = "";
+  const put = (k, v, cls) => {
+    const w = document.createElement("span"); w.className = "cx-item " + (cls || "");
+    if (k) { const a = document.createElement("b"); a.textContent = k; w.appendChild(a); }
+    const b = document.createElement("span"); b.textContent = v; w.appendChild(b);
+    box.appendChild(w);
+  };
+  put("", window.IST.dateTime((typeof param.time === "number" ? param.time : 0) * 1000), "cx-time");
+  put("O", fmt(d.open)); put("H", fmt(d.high)); put("L", fmt(d.low)); put("C", fmt(d.close));
+});
+
+// Candle countdown (item 7) — time until the active TF's bar closes (intraday).
+setInterval(() => {
+  const el = $("lv-countdown"); if (!el) return;
+  const dur = TF_SEC[activeTf] || 60;
+  if (dur >= 86400) { el.textContent = ""; return; }
+  const left = dur - (Math.floor(Date.now() / 1000) % dur);
+  const pad = (n) => String(n).padStart(2, "0");
+  const h = Math.floor(left / 3600), m = Math.floor(left / 60) % 60, s = left % 60;
+  el.textContent = "⏱ " + (h ? pad(h) + ":" : "") + pad(m) + ":" + pad(s);
+}, 500);
 const lastStructure = {};                        // latest engine payload per symbol
 
 // A dedicated, candle-only chart for the Replay page (Step 3). Overlays/analysis
@@ -144,7 +177,9 @@ function preserveView(chart, fn) {
 async function loadHistory(symbol) {
   try {
     const candles = await fetchChart(symbol, activeTf);
-    preserveView(mainChart, () => mainSeries.setData(candles.map(toBar)));
+    const bars = candles.map(toBar);
+    preserveView(mainChart, () => mainSeries.setData(bars));
+    liveBar = bars.length ? bars[bars.length - 1] : null;   // baseline for forming
     setChartTitle(symbol, activeTf);
     note(`history: ${symbol} ${activeTf} (${candles.length} candles)`);
   } catch (err) {
@@ -215,6 +250,36 @@ function updateStats(c) {
   set("st-o", fmt(c.o)); set("st-h", fmt(c.h)); set("st-l", fmt(c.l)); set("st-c", fmt(c.c));
   set("st-vol", fmt(c.v));
   set("st-session", sessionLabel(c.ts));   // display-only time-of-day label
+}
+
+// Live forming candle (items 5/6): fold the streamed current-1m OHLCV into the
+// active TF's last bar. DISPLAY-ONLY — the engine never sees this; it only moves
+// the chart + the live stats, exactly like Binance/TradingView.
+function handleForming(f) {
+  if (f.symbol !== activeSymbol) return;
+  liveTickMs = Date.now();
+  updateLiveStats(f);
+  if (!liveBar || replayMode) return;
+  const fMs = Date.parse(f.ts), dur = TF_SEC[activeTf] || 60;
+  if (activeTf === "1m") {
+    liveBar = { time: Math.floor(fMs / 1000), open: f.o, high: f.h, low: f.l, close: f.c };
+  } else {
+    const barT = Math.floor(fMs / 1000 / dur) * dur;     // active-TF bucket for this minute
+    if (dur >= 86400 || barT <= liveBar.time) {          // same period -> fold the 1m in
+      liveBar = { time: liveBar.time, open: liveBar.open,
+                  high: Math.max(liveBar.high, f.h), low: Math.min(liveBar.low, f.l), close: f.c };
+    } else {                                             // new intraday HTF bar
+      liveBar = { time: barT, open: f.o, high: f.h, low: f.l, close: f.c };
+    }
+  }
+  try { mainSeries.update(liveBar); } catch (e) { /* history not loaded yet */ }
+}
+function updateLiveStats(f) {
+  const set = (id, v) => { const e = $(id); if (e) e.textContent = fmt(v); };
+  set("st-price", f.c); set("st-o", f.o); set("st-h", f.h); set("st-l", f.l); set("st-c", f.c); set("st-vol", f.v);
+  const p = $("st-price");
+  if (p) { p.classList.toggle("tick-up", f.c >= lastLivePrice); p.classList.toggle("tick-down", f.c < lastLivePrice); }
+  lastLivePrice = f.c;
 }
 function fmt(v) {
   if (v === null || v === undefined) return "—";
@@ -431,10 +496,11 @@ function connect() {
     const now = Date.now();
     if (lastWsMs) { const lat = $("st-lat"); if (lat) lat.textContent = (now - lastWsMs) + " ms"; }
     lastWsMs = now;
-    const upd = $("lv-update"); if (upd) upd.textContent = window.IST.now();
-    note(`last event: ${window.IST.full(new Date())}`);
+    const upd = $("lv-update"); if (upd) upd.textContent = window.IST.now();    // last tick time (item 8)
 
     const msg = JSON.parse(event.data);
+    if (msg.forming) { handleForming(msg.forming); return; }    // live forming candle (item 5)
+    note(`last event: ${window.IST.full(new Date())}`);
     const diff = msg.state_diff || {};
     for (const sym of Object.keys(diff)) {
       if (diff[sym].structure) {
@@ -451,10 +517,11 @@ function connect() {
     try {
       if (replayMode) {
         if (replaySeries && candle.tf === "1m") replaySeries.update(toBar(candle));
-      } else if (isAnalysisTf(activeTf) && candle.tf === activeTf) {
-        mainSeries.update(toBar(candle));            // diff-only live update (§9)
+      } else if (candle.tf === activeTf) {
+        const bar = toBar(candle);
+        mainSeries.update(bar);                      // diff-only close (§9)
+        liveBar = bar;                               // forming folds onto the closed bar
       }
-      // higher-TF Live charts are aggregated history; no live forming bar yet.
     } catch (err) { console.warn("chart update skipped:", err.message); }
 
     const st = diff[activeSymbol] && diff[activeSymbol].structure;

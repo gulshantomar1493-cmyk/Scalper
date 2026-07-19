@@ -61,6 +61,7 @@ from marketscalper.analytics import (compute_analytics,
                                      compute_mae_distribution, journal_list)
 from marketscalper.campaign import (data_quality_audit, expectancy_report)
 from marketscalper.core.bus import EventBus
+from marketscalper.core.live_bar import FormingBar
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
 
@@ -670,4 +671,28 @@ def create_app(
         _push(candle, store)
 
     bus.subscribe(Candle, broadcast)
+
+    def _push_forming(fb: FormingBar) -> None:
+        """Fan a display-only forming-bar payload to every client (no
+        state_diff, no network send in the subscriber — F4)."""
+        if not clients:
+            return
+        payload = {"forming": {
+            "symbol": fb.symbol, "ts": fb.ts.isoformat(),
+            "o": fb.o, "h": fb.h, "l": fb.l, "c": fb.c, "v": fb.v}}
+        for websocket, queue in list(clients.items()):
+            try:
+                queue.put_nowait(payload)
+            except asyncio.QueueFull:
+                clients.pop(websocket, None)
+                asyncio.ensure_future(_close_quietly(websocket))
+
+    async def forming_broadcast(fb: FormingBar) -> None:
+        """Live forming candle (chart UX item 5). Display-only; suppressed
+        while a replay owns the stream (like the closed-candle broadcast)."""
+        if replay["feed"] is not None:
+            return
+        _push_forming(fb)
+
+    bus.subscribe(FormingBar, forming_broadcast)
     return app

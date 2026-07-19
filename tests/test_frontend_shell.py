@@ -836,6 +836,20 @@ def test_notify_and_sw_valid_javascript():
         assert r.returncode == 0, (f, r.stderr)
 
 
+def test_live_forming_candle_price_countdown_crosshair():
+    """Live forming candle (item 5), live price (6), countdown (7),
+    crosshair OHLC (12). The forming update is DISPLAY-ONLY — it returns before
+    the structure/panel path, so the engine payload is never affected."""
+    js = _read("app.js")
+    assert "msg.forming" in js and "handleForming" in js       # WS forming branch
+    assert "updateLiveStats" in js                             # live price/O/H/L/C/vol
+    assert "mainSeries.update(liveBar)" in js                  # forming folds into last bar
+    assert "subscribeCrosshairMove" in js                      # crosshair OHLC (item 12)
+    assert "lv-countdown" in js                                # candle countdown (item 7)
+    html = _read("index.html")
+    assert 'id="lv-countdown"' in html and 'id="crosshair-box"' in html
+
+
 def test_app_js_uses_chart_service_and_gates_higher_tfs():
     js = _read("app.js")
     assert "/api/chart?" in js and "timeframe" in js       # backend ChartService

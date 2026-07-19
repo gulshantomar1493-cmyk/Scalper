@@ -59,7 +59,8 @@
           </div>
           <div class="lv-right">
             <div class="lv-conn"><span id="conn-dot" class="dot"></span><span id="conn-text" class="mono" title="Connection status">CONNECTING</span><span id="lv-latency" class="mono lv-latency"></span></div>
-            <span id="lv-update" class="mono lv-update" title="Last update"></span>
+            <span id="lv-update" class="mono lv-update" title="Last tick time (IST)"></span>
+            <span id="lv-countdown" class="mono lv-countdown" title="Time until the current candle closes"></span>
             <button id="theme-toggle" type="button" class="chrome-btn ic-btn" title="Light / Dark theme">🌙</button>
             <button id="help-open" type="button" class="help-open-btn ic-btn" title="Madad guide">❓</button>
             <div class="lv-user" id="user-menu" title="Account"><span class="lv-avatar">G</span><span class="lv-car">▾</span></div>
@@ -82,6 +83,7 @@
         <div class="lv-mid">
           <div class="lv-chartwrap">
             <div class="lv-ctitle mono" id="chart-title">BTCUSDT · 1m · Binance</div>
+            <div id="crosshair-box" class="crosshair-box mono" hidden></div>
             <div id="chart"></div>
           </div>
 
