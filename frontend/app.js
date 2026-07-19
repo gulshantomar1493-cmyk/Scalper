@@ -1,13 +1,15 @@
-/* MarketScalper frontend (roadmap P0.22 shell + P0.23 live chart).
+/* MarketScalper frontend — v3 Live terminal (Phase 2 Step 2) + Replay page (Step 3).
  *
- * Thin client, exactly per §9: history bootstraps once through the existing
- * REST /candles endpoint; live candles apply as diff-only series.update()
- * calls — no full redraws. On reconnect: reconnect, reload history through
- * the same REST endpoint, continue. Nothing else: no client-side gap
- * detection, replay, deduplication, buffering, recovery logic, caching or
- * storage — the backend owns data correctness.
+ * Thin client, exactly per §9: the backend owns ALL data correctness. This file
+ * is the ONLY one that does fetch / WebSocket. It NEVER aggregates candles,
+ * builds candles, computes indicators, or caches a candle history — history for
+ * ANY timeframe comes from GET /api/chart (the backend ChartService), and live
+ * 1m/5m candles apply as diff-only series.update() calls. Higher timeframes
+ * (15m+) are candle-only market context — the backend has no analysis for them,
+ * so overlays and the analysis rail are hidden (never fabricated).
  *
- * Vanilla JS. No frameworks. Token lives in memory only.
+ * Vanilla JS. No frameworks. Token lives in memory only. UI prefs (theme,
+ * beginner, last timeframe) are persisted by ui.js — this file is storage-free.
  */
 
 "use strict";
@@ -15,29 +17,33 @@
 /* ---------------------------------------------------------- configuration */
 
 const params = new URLSearchParams(window.location.search);
-const API_HOST =
-  params.get("api") || window.location.host || "127.0.0.1:8000";
+const API_HOST = params.get("api") || window.location.host || "127.0.0.1:8000";
 const TOKEN = params.get("token") || window.prompt("MarketScalper API token") || "";
 
-const SYMBOLS = ["BTCUSDT", "ETHUSDT"];        // frozen v1 pair (Architecture §0)
-const LOOKBACK_1M_MS = 24 * 3600 * 1000;       // history bootstrap depth
-const LOOKBACK_5M_MS = 24 * 3600 * 1000;
+const SYMBOLS = ["BTCUSDT", "ETHUSDT"];          // frozen v1 pair (§0)
+const ANALYSIS_TFS = ["1m", "5m"];               // only these carry engine analysis
+const LOOKBACK_MS = 24 * 3600 * 1000;            // history bootstrap depth (1m/5m)
+// coarser TFs need a wider window to show enough closed buckets
+const LOOKBACK_BY_TF = {
+  "1m": 24 * 3600e3, "5m": 3 * 24 * 3600e3, "15m": 7 * 24 * 3600e3,
+  "30m": 14 * 24 * 3600e3, "1h": 30 * 24 * 3600e3, "4h": 90 * 24 * 3600e3,
+  "1d": 365 * 24 * 3600e3, "1w": 2 * 365 * 24 * 3600e3, "1M": 5 * 365 * 24 * 3600e3,
+};
 
 const urlSymbol = (params.get("symbol") || "").toUpperCase();
 let activeSymbol = SYMBOLS.includes(urlSymbol) ? urlSymbol : SYMBOLS[0];
+let activeTf = (window.__msTf && LOOKBACK_BY_TF[window.__msTf]) ? window.__msTf : "1m";
+
+const $ = (id) => document.getElementById(id);
+const isAnalysisTf = (tf) => ANALYSIS_TFS.indexOf(tf) >= 0;
 
 /* ----------------------------------------------------------------- charts */
 
 const SERIES_OPTS = {
-  upColor: "#22C55E",                          // semantic green (token)
-  downColor: "#EF4444",                        // semantic red (token)
-  wickUpColor: "#22C55E",
-  wickDownColor: "#EF4444",
-  borderVisible: false,
+  upColor: "#22C55E", downColor: "#EF4444",       // semantic token colors
+  wickUpColor: "#22C55E", wickDownColor: "#EF4444", borderVisible: false,
 };
 
-// Chart colours come from the CSS theme variables (single source of truth),
-// so the charts re-theme with the rest of the UI on a light/dark switch.
 function chartTheme() {
   const cs = getComputedStyle(document.documentElement);
   const v = (name, fb) => (cs.getPropertyValue(name).trim() || fb);
@@ -45,8 +51,7 @@ function chartTheme() {
     layout: {
       background: { color: v("--chart-bg", "#0A0F1E") },
       textColor: v("--chart-text", "#8B93A7"),
-      fontFamily:
-        'ui-monospace, "SF Mono", "Cascadia Mono", "JetBrains Mono", Consolas, monospace',
+      fontFamily: 'ui-monospace, "JetBrains Mono", "SF Mono", Consolas, monospace',
     },
     grid: {
       vertLines: { color: v("--chart-grid", "rgba(255,255,255,0.06)") },
@@ -56,65 +61,112 @@ function chartTheme() {
     timeScale: { borderColor: v("--chart-border", "rgba(255,255,255,0.14)"), timeVisible: true },
   };
 }
-
 function makeChart(el) {
   return LightweightCharts.createChart(el, Object.assign({ autoSize: true }, chartTheme()));
 }
 
-const mainChart = makeChart(document.getElementById("chart"));
+const mainChart = makeChart($("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
-Overlays.init(mainChart, mainSeries);            // P1.19 overlays + P1.20 audit
-Panel.init(quickLogSubmit);                      // P3.19 panel + P4.7 quick-log
-Dashboard.init();                                // P4.12 analytics + journal
-const lastStructure = {};                        // latest payload per symbol
+Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
+Panel.init(quickLogSubmit);
+Dashboard.init();
+const lastStructure = {};                        // latest engine payload per symbol
 
-const stripChart = makeChart(document.getElementById("strip"));
-const stripSeries = stripChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
+// A dedicated, candle-only chart for the Replay page (Step 3). Overlays/analysis
+// on the replay chart are a documented follow-up; the replay page shows the
+// deterministic price replay + progress (the engine still runs server-side).
+const replayEl = $("replay-chart");
+const replayChart = replayEl ? makeChart(replayEl) : null;
+const replaySeries = replayChart
+  ? replayChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS) : null;
 
-// ui.js dispatches this when the user flips the theme — re-apply the chart
-// colours from the (now updated) CSS variables. Data/series are untouched.
 window.addEventListener("ms-theme-change", function () {
   const t = chartTheme();
   mainChart.applyOptions(t);
-  stripChart.applyOptions(t);
+  if (replayChart) replayChart.applyOptions(t);
 });
 
 function toBar(c) {
-  return {
-    time: Math.floor(Date.parse(c.ts) / 1000),
-    open: c.o, high: c.h, low: c.l, close: c.c,
-  };
+  return { time: Math.floor(Date.parse(c.ts) / 1000), open: c.o, high: c.h, low: c.l, close: c.c };
 }
 
-/* -------------------------------------------------------------- bootstrap */
+/* -------------------------------------------------- backend chart history */
 
-const lastEvent = document.getElementById("last-event");
+const lastEvent = $("last-event");
+function note(text) { if (lastEvent) lastEvent.textContent = text; }
 
-async function fetchCandles(symbol, tf, lookbackMs) {
+// GET /api/chart — the backend ChartService aggregates canonical 1m -> tf.
+async function fetchChart(symbol, tf) {
   const end = new Date();
-  const start = new Date(end.getTime() - lookbackMs);
+  const start = new Date(end.getTime() - (LOOKBACK_BY_TF[tf] || LOOKBACK_MS));
   const qs = new URLSearchParams({
-    symbol, tf, start: start.toISOString(), end: end.toISOString(),
+    symbol, timeframe: tf, from: start.toISOString(), to: end.toISOString(),
   });
-  const resp = await fetch(`http://${API_HOST}/candles?${qs}`, {
+  const resp = await fetch(`http://${API_HOST}/api/chart?${qs}`, {
     headers: { Authorization: `Bearer ${TOKEN}` },
   });
-  if (!resp.ok) throw new Error(`history ${symbol}/${tf}: HTTP ${resp.status}`);
-  return resp.json();
+  if (!resp.ok) throw new Error(`chart ${symbol}/${tf}: HTTP ${resp.status}`);
+  const body = await resp.json();
+  return body.candles || [];
+}
+
+// Preserve the visible time window (zoom + pan) across a setData — keeps the
+// user looking at the same period when reloading or switching timeframe.
+function preserveView(chart, fn) {
+  const ts = chart.timeScale();
+  let range = null;
+  try { range = ts.getVisibleRange(); } catch (e) { /* empty chart */ }
+  fn();
+  if (range) { try { ts.setVisibleRange(range); } catch (e) { /* snap failed */ } }
 }
 
 async function loadHistory(symbol) {
   try {
-    const [oneM, fiveM] = await Promise.all([
-      fetchCandles(symbol, "1m", LOOKBACK_1M_MS),
-      fetchCandles(symbol, "5m", LOOKBACK_5M_MS),
-    ]);
-    mainSeries.setData(oneM.map(toBar));       // bootstrap is the ONLY setData path
-    stripSeries.setData(fiveM.map(toBar));
-    lastEvent.textContent = `history loaded: ${symbol} (${oneM.length}×1m, ${fiveM.length}×5m)`;
+    const candles = await fetchChart(symbol, activeTf);
+    preserveView(mainChart, () => mainSeries.setData(candles.map(toBar)));
+    setChartTitle(symbol, activeTf);
+    note(`history: ${symbol} ${activeTf} (${candles.length} candles)`);
   } catch (err) {
-    lastEvent.textContent = String(err);       // next switch/reconnect reloads
+    note(String(err));
   }
+}
+
+function setChartTitle(symbol, tf) {
+  const t = $("chart-title");
+  if (t) t.textContent = `${symbol} · ${tf} · Binance`;
+}
+
+/* --------------------------------------------------------- timeframe switch */
+
+function applyAnalysisMode() {
+  const on = isAnalysisTf(activeTf);
+  const trend = (lastStructure[activeSymbol] || {}).trend;
+  Panel.setContextMode(on, activeTf, trend);
+  if (on) {
+    Overlays.setStructure(lastStructure[activeSymbol]);   // redraw overlays
+    Panel.setStructure(lastStructure[activeSymbol]);
+  } else {
+    Overlays.setStructure(null);                          // no fabricated analysis
+  }
+}
+
+function setTimeframe(tf) {
+  if (!LOOKBACK_BY_TF[tf]) return;
+  activeTf = tf;
+  if (window.__msSaveTf) window.__msSaveTf(tf);
+  for (const b of document.querySelectorAll(".lv-tf")) {
+    b.classList.toggle("on", b.getAttribute("data-tf") === tf);
+  }
+  loadHistory(activeSymbol);      // fetch the tf via /api/chart (view preserved)
+  applyAnalysisMode();
+}
+
+for (const b of document.querySelectorAll(".lv-tf")) {
+  b.addEventListener("click", () => setTimeframe(b.getAttribute("data-tf")));
+}
+// mark the initial active timeframe button
+for (const b of document.querySelectorAll(".lv-tf")) {
+  if (b.getAttribute("data-tf") === activeTf) b.classList.add("on");
 }
 
 /* -------------------------------------------------------- symbol switcher */
@@ -122,53 +174,118 @@ async function loadHistory(symbol) {
 function setSymbol(symbol) {
   activeSymbol = symbol;
   for (const s of SYMBOLS) {
-    document.getElementById(`sym-${s}`).classList.toggle("active", s === symbol);
+    const el = $(`sym-${s}`);
+    if (el) el.classList.toggle("active", s === symbol);
   }
   loadHistory(symbol);
-  Overlays.setStructure(lastStructure[symbol]);  // redraw from cached payload
-  Panel.setStructure(lastStructure[symbol]);     // P3.19 panel follows symbol
+  applyAnalysisMode();
 }
-
 for (const s of SYMBOLS) {
-  document.getElementById(`sym-${s}`).addEventListener("click", () => setSymbol(s));
+  const el = $(`sym-${s}`);
+  if (el) el.addEventListener("click", () => setSymbol(s));
 }
-document.getElementById(`sym-${activeSymbol}`).classList.add("active");
+{ const a = $(`sym-${activeSymbol}`); if (a) a.classList.add("active"); }
 
-/* --------------------------------------------------- replay controls (P0.25)
- * Start / stop / speed / date-range. Replay candles arrive through the SAME
- * WebSocket payload as live candles. F2: while a replay runs the server
- * suppresses the live push, so the chart is cleared at start and rendered
- * from the replay stream; a status poll detects completion and re-bootstraps
- * the live chart. Still a thin client — no replay data logic here. */
+/* ---------------------------------------------------- stats strip (§9 top) */
+
+function updateStats(c) {
+  const set = (id, txt) => { const e = $(id); if (e) e.textContent = txt; };
+  set("st-price", fmt(c.c));
+  set("st-o", fmt(c.o)); set("st-h", fmt(c.h)); set("st-l", fmt(c.l)); set("st-c", fmt(c.c));
+  set("st-vol", fmt(c.v));
+  set("st-session", sessionLabel(c.ts));   // display-only time-of-day label
+}
+function fmt(v) {
+  if (v === null || v === undefined) return "—";
+  return Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
+}
+// Display-only UTC time-of-day label (A9 map) — pure formatting of a timestamp,
+// not analysis: it never feeds any decision, mirrors the backend session names.
+function sessionLabel(ts) {
+  const h = new Date(ts).getUTCHours();
+  return h < 8 ? "ASIA" : h < 13 ? "LONDON" : h < 21 ? "NY" : "LATE";
+}
+
+/* ------------------------------------------------------------ bottom tabs */
+
+for (const t of document.querySelectorAll(".lv-tab")) {
+  t.addEventListener("click", () => {
+    const name = t.getAttribute("data-tab");
+    for (const x of document.querySelectorAll(".lv-tab")) x.classList.toggle("active", x === t);
+    for (const p of document.querySelectorAll(".lv-tab-panel")) {
+      p.hidden = p.getAttribute("data-tabpanel") !== name;
+    }
+  });
+}
+
+function renderSignalsTab(structure) {
+  const host = $("tab-signals");
+  if (!host) return;
+  const sigs = (structure && structure.signals) || [];
+  while (host.firstChild) host.removeChild(host.firstChild);
+  if (!sigs.length) {
+    const e = document.createElement("div");
+    e.className = "lv-tab-empty";
+    e.textContent = "No signals yet — waiting for the engine.";
+    host.appendChild(e);
+    return;
+  }
+  const table = document.createElement("table");
+  table.className = "lv-sigtable mono";
+  const th = document.createElement("tr");
+  for (const h of ["Strategy", "Dir", "Entry", "SL", "TP1", "Invalidates in"]) {
+    const c = document.createElement("th"); c.textContent = h; th.appendChild(c);
+  }
+  table.appendChild(th);
+  for (const s of sigs.slice(-10).reverse()) {
+    const tr = document.createElement("tr");
+    const cells = [s.strategy, s.direction, s.entry, s.sl, s.tp1,
+      (s.invalid_after_bars != null ? s.invalid_after_bars + " bars" : "—")];
+    cells.forEach((val, i) => {
+      const td = document.createElement("td");
+      td.textContent = (val === null || val === undefined) ? "—"
+        : (typeof val === "number" ? fmt(val) : String(val));
+      if (i === 1) td.className = s.direction === "LONG" ? "g" : "r";
+      tr.appendChild(td);
+    });
+    table.appendChild(tr);
+  }
+  host.appendChild(table);
+}
+
+/* --------------------------------------------------------- replay (Step 3) */
 
 let replayMode = false;
 let replayPoll = null;
 
 function enterReplayMode() {
   replayMode = true;
-  mainSeries.setData([]);                    // replay owns the chart now
-  stripSeries.setData([]);
-  delete lastStructure[activeSymbol];
-  Overlays.setStructure(null);
-  Panel.setStructure(null);                  // P3.19: clear the panel too
+  if (replaySeries) replaySeries.setData([]);
+  setRpStatus("running");
   if (replayPoll) clearInterval(replayPoll);
   replayPoll = setInterval(async () => {
     try {
-      const status = await replayCall("/replay/status", { method: "GET" });
-      if (!status.running) exitReplayMode("replay finished");
-    } catch (err) { /* transient poll failure: keep polling */ }
-  }, 2000);
+      const st = await api("/replay/status", { method: "GET" });
+      const p = $("replay-progress");
+      if (p) p.textContent = st.running ? `running · ${st.symbol} ×${st.speed}` : "complete";
+      if (!st.running) exitReplayMode("replay finished");
+    } catch (e) { /* transient */ }
+  }, 1500);
 }
-
-function exitReplayMode(note) {
+function exitReplayMode(text) {
   if (!replayMode) return;
   replayMode = false;
   if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
-  lastEvent.textContent = note;
-  loadHistory(activeSymbol);                 // re-bootstrap the live chart
+  setRpStatus("idle");
+  note(text);
+  loadHistory(activeSymbol);         // re-bootstrap the live chart
+}
+function setRpStatus(s) {
+  const st = $("rp-status"); if (st) st.textContent = s;
+  const dot = $("rp-dot"); if (dot) dot.className = "dot" + (s === "running" ? " live" : "");
 }
 
-async function replayCall(path, options) {
+async function api(path, options) {
   const resp = await fetch(`http://${API_HOST}${path}`, {
     headers: { Authorization: `Bearer ${TOKEN}`, "Content-Type": "application/json" },
     ...options,
@@ -178,111 +295,108 @@ async function replayCall(path, options) {
   return body;
 }
 
-/* P4.7: the manual quick-log PATCH. panel.js renders the form and calls
- * this (the network stays in app.js so panel.js is a pure consumer). */
 async function quickLogSubmit(recId, fields) {
-  return replayCall(`/journal/${recId}`, {
-    method: "PATCH",
-    body: JSON.stringify(fields),
-  });
+  return api(`/journal/${recId}`, { method: "PATCH", body: JSON.stringify(fields) });
 }
 
-/* P4.12: open the analytics dashboard + journal tab — app.js fetches
- * (GET /analytics, GET /journal), dashboard.js renders (pure consumer). */
+function replayBody() {
+  const from = $("replay-from").value, to = $("replay-to").value;
+  const raw = $("replay-speed").value;
+  return JSON.stringify({
+    symbol: activeSymbol,
+    start: new Date(from).toISOString(),
+    end: new Date(to).toISOString(),
+    speed: raw === "max" ? "max" : Number(raw),
+  });
+}
+function wireReplay() {
+  const start = $("replay-start"), stop = $("replay-stop"), restart = $("replay-restart");
+  if (start) start.addEventListener("click", async () => {
+    try { const st = await api("/replay/start", { method: "POST", body: replayBody() });
+      enterReplayMode(); note(`replay: ${st.symbol} ×${st.speed}`); }
+    catch (e) { note(`replay: ${e.message}`); }
+  });
+  if (stop) stop.addEventListener("click", async () => {
+    try { await api("/replay/stop", { method: "POST" }); exitReplayMode("replay stopped"); }
+    catch (e) { note(`replay: ${e.message}`); }
+  });
+  if (restart) restart.addEventListener("click", async () => {
+    try { await api("/replay/stop", { method: "POST" }).catch(() => {}); }
+    finally { const s = $("replay-start"); if (s) s.click(); }
+  });
+}
+wireReplay();
+
+/* P4.12 dashboard overlay — kept for the current build; Analytics/Journal pages
+ * (Steps 6/5) reuse the same endpoints. */
 async function openDashboard() {
   try {
     const [analytics, journal] = await Promise.all([
-      replayCall("/analytics", { method: "GET" }),
-      replayCall("/journal?limit=100", { method: "GET" }),
+      api("/analytics", { method: "GET" }),
+      api("/journal?limit=100", { method: "GET" }),
     ]);
-    Dashboard.render(analytics, journal);
-    Dashboard.show();
-  } catch (err) {
-    lastEvent.textContent = `dashboard: ${err.message}`;
-  }
+    Dashboard.render(analytics, journal); Dashboard.show();
+  } catch (err) { note(`dashboard: ${err.message}`); }
 }
-document.getElementById("dash-open").addEventListener("click", openDashboard);
-
-document.getElementById("replay-start").addEventListener("click", async () => {
-  const from = document.getElementById("replay-from").value;
-  const to = document.getElementById("replay-to").value;
-  const rawSpeed = document.getElementById("replay-speed").value;
-  const speed = rawSpeed === "max" ? "max" : Number(rawSpeed);
-  try {
-    const body = JSON.stringify({
-      symbol: activeSymbol,
-      start: new Date(from).toISOString(),
-      end: new Date(to).toISOString(),
-      speed,
-    });
-    const status = await replayCall("/replay/start", { method: "POST", body });
-    enterReplayMode();                       // F2: replay owns the chart
-    lastEvent.textContent = `replay running: ${status.symbol} ×${status.speed}`;
-  } catch (err) {
-    lastEvent.textContent = `replay: ${err.message}`;
-  }
-});
-
-document.getElementById("replay-stop").addEventListener("click", async () => {
-  try {
-    await replayCall("/replay/stop", { method: "POST" });
-    exitReplayMode("replay stopped");        // F2: back to the live chart
-  } catch (err) {
-    lastEvent.textContent = `replay: ${err.message}`;
-  }
-});
+{ const d = $("dash-open"); if (d) d.addEventListener("click", openDashboard); }
 
 /* ------------------------------------------- WebSocket client + reconnect */
 
 const BACKOFF_INITIAL_MS = 1000;
 const BACKOFF_CAP_MS = 30000;
-
-const connDot = document.getElementById("conn-dot");
-const connText = document.getElementById("conn-text");
-const wsTarget = document.getElementById("ws-target");
-
+const connDot = $("conn-dot"), connText = $("conn-text"), wsTarget = $("ws-target");
 let backoffMs = BACKOFF_INITIAL_MS;
+let lastWsMs = 0;
 
 function setStatus(state, detail) {
-  connText.textContent = detail ? `${state} ${detail}` : state;
-  connDot.className = "dot" + (state === "LIVE" ? " live" : state === "RECONNECTING" ? " down" : "");
+  if (connText) connText.textContent = detail ? `${state} ${detail}` : state;
+  if (connDot) connDot.className = "dot" + (state === "LIVE" ? " live" : state === "RECONNECTING" ? " down" : "");
 }
 
 function connect() {
   setStatus("CONNECTING");
-  wsTarget.textContent = `ws://${API_HOST}/ws`;
+  if (wsTarget) wsTarget.textContent = `ws://${API_HOST}/ws`;
   const ws = new WebSocket(`ws://${API_HOST}/ws?token=${encodeURIComponent(TOKEN)}`);
 
   ws.onopen = () => {
     backoffMs = BACKOFF_INITIAL_MS;
     setStatus("LIVE");
-    // Don't clobber an in-progress replay view on a mid-replay reconnect
-    // (F4 can drop a backgrounded tab); replayPoll re-bootstraps on finish.
-    if (!replayMode) loadHistory(activeSymbol); // initial load AND reconnect reload
+    if (!replayMode) loadHistory(activeSymbol);   // initial + reconnect reload
   };
 
   ws.onmessage = (event) => {
-    lastEvent.textContent = `last event: ${new Date().toISOString()}`;
+    const now = Date.now();
+    if (lastWsMs) { const lat = $("st-lat"); if (lat) lat.textContent = (now - lastWsMs) + " ms"; }
+    lastWsMs = now;
+    const upd = $("lv-update"); if (upd) upd.textContent = new Date().toISOString().slice(11, 19) + " UTC";
+    note(`last event: ${new Date().toISOString()}`);
+
     const msg = JSON.parse(event.data);
     const diff = msg.state_diff || {};
-    for (const sym of Object.keys(diff)) {               // cache engine state
+    for (const sym of Object.keys(diff)) {
       if (diff[sym].structure) lastStructure[sym] = diff[sym].structure;
     }
     const candle = msg.candle;
-    if (candle.symbol !== activeSymbol) return;          // client-side filter only
+    if (!candle) return;
+    if (candle.symbol === activeSymbol) updateStats(candle);
+    if (candle.symbol !== activeSymbol) return;
+
     try {
-      if (candle.tf === "1m") mainSeries.update(toBar(candle)); // diff-only (§9)
-      else if (candle.tf === "5m") stripSeries.update(toBar(candle));
-    } catch (err) {
-      // F2: a stray in-flight live bar during the replay-mode transition
-      // would be older/newer than the freshly reset series — drop it.
-      console.warn("chart update skipped:", err.message);
-    }
-    if (diff[activeSymbol] && diff[activeSymbol].structure) {
-      // P2.21: pass the already-available close through — transport
-      // only, no calculation; Overlays uses it for premium/discount.
-      Overlays.setStructure(diff[activeSymbol].structure, candle.c);
-      Panel.setStructure(diff[activeSymbol].structure, candle.ts);  // P3.19/P4.10
+      if (replayMode) {
+        if (replaySeries && candle.tf === "1m") replaySeries.update(toBar(candle));
+      } else if (isAnalysisTf(activeTf) && candle.tf === activeTf) {
+        mainSeries.update(toBar(candle));            // diff-only live update (§9)
+      }
+      // higher-TF Live charts are aggregated history; no live forming bar yet.
+    } catch (err) { console.warn("chart update skipped:", err.message); }
+
+    const st = diff[activeSymbol] && diff[activeSymbol].structure;
+    if (st) {
+      renderSignalsTab(st);
+      if (!replayMode && isAnalysisTf(activeTf)) {
+        Overlays.setStructure(st, candle.c);
+        Panel.setStructure(st, candle.ts);
+      }
     }
   };
 
@@ -291,10 +405,8 @@ function connect() {
     window.setTimeout(connect, backoffMs);
     backoffMs = Math.min(backoffMs * 2, BACKOFF_CAP_MS);
   };
-
-  ws.onerror = () => {
-    ws.close();
-  };
+  ws.onerror = () => ws.close();
 }
 
+applyAnalysisMode();   // set the initial rail mode before the first payload
 connect();

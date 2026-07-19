@@ -1,28 +1,20 @@
-/* MarketScalper quality panel (roadmap P3.19; Architecture §9 right rail).
+/* MarketScalper quality panel — the v3 right rail (Phase 2 Step 2; §9).
  *
- * Pure consumer — exactly the overlays.js contract: it renders values the
- * backend already computed (qualification score/gates/components, the §7
- * plan numbers, the §8 rule-trace) and performs NO engine math. Every
- * displayed number arrives in the WS payload; the panel only formats and
- * positions. Backend strings are written via textContent (never innerHTML)
- * so a reason/detail line can never inject markup.
+ * Pure consumer: it renders values the backend already computed (qualification
+ * verdict/score/gates/components, the §7 plan numbers, the §8 rule-trace) and
+ * performs NO engine math. Every displayed number arrives in the WS payload;
+ * the panel only formats and positions. Backend strings go through textContent
+ * (never innerHTML). Global `Panel`, wired thinly from app.js.
  *
- * Global `Panel`, mirroring `Overlays`. Wired thinly from app.js.
- */
+ * v3 layout: three compact cards — Recommendation (dir · grade · % · stars ·
+ * verdict, with a collapsible gates+reason "Why?"), Trade Plan, and Market
+ * Context (trend + the four weighted components). On 15m+ the analysis cards
+ * are hidden and a "market context only" card is shown (the backend has no
+ * higher-TF analysis — never fabricated). */
 
 "use strict";
 
 const Panel = (function () {
-  /* --------------------------------------------------------- gauge geometry */
-  // Display-only: a ring whose filled fraction is score/100. The score is a
-  // backend value; dividing by the 100-point scale to fill an arc is the same
-  // class of pure rendering as placing a box at a backend coordinate.
-  const GAUGE_R = 52;
-  const GAUGE_CIRC = 2 * Math.PI * GAUGE_R;
-  const COUNT_UP_MS = 420;
-
-  // Weights are the frozen §6 display labels only (never used to compute the
-  // score — the backend owns that); shown so the rail is self-describing.
   const COMPONENTS = [
     { key: "structure", label: "Structure", weight: "0.30" },
     { key: "liquidity", label: "Liquidity", weight: "0.30" },
@@ -30,144 +22,159 @@ const Panel = (function () {
     { key: "momentum", label: "Momentum", weight: "0.15" },
   ];
   const GATE_NAMES = ["G1", "G2", "G3", "G4", "G5", "G6"];
-
-  let el = {};                 // resolved DOM slots
-  let animHandle = null;       // count-up frame handle
-  let shownScore = 0;          // last painted gauge value (for the count-up)
-  let lastCandleTs = null;     // latest closed-candle time (for the timer)
-
-  const STATUS_CLASS = {
-    active: "st-active", evaluated: "st-evaluated",
-    invalidated: "st-invalidated", expired: "st-expired",
+  const VERDICT_CLASS = {
+    A_PLUS: "v-aplus", TRADEABLE: "v-tradeable",
+    BELOW_THRESHOLD: "v-below", NO_SIGNAL: "v-none",
   };
+  const GRADE = { A_PLUS: "A+", TRADEABLE: "A", BELOW_THRESHOLD: "B", NO_SIGNAL: "—" };
   const INVALID_AFTER_DEFAULT = 5;
 
-  let onQuickLog = null;       // app.js-provided PATCH callback (P4.7)
-  let lastPlanKey = null;      // rec identity+status last fully rendered
+  let el = {};
+  let lastCandleTs = null;
+  let onQuickLog = null;
+  let lastPlanKey = null;
 
   function init(quickLogSubmit) {
-    onQuickLog = quickLogSubmit || null;   // keeps the fetch out of panel.js
+    onQuickLog = quickLogSubmit || null;
     el = {
       panel: document.getElementById("quality-panel"),
-      arc: document.getElementById("gauge-arc"),
-      score: document.getElementById("gauge-score"),
-      verdict: document.getElementById("gauge-verdict"),
-      integrity: document.getElementById("gauge-integrity"),
-      agreement: document.getElementById("gauge-agreement"),
-      gates: document.getElementById("panel-gates"),
+      analysis: document.getElementById("rail-analysis"),
+      ctxonly: document.getElementById("rail-ctxonly"),
+      recoDir: document.getElementById("reco-dir"),
+      recoGrade: document.getElementById("reco-grade"),
+      recoPct: document.getElementById("reco-pct"),
+      recoStars: document.getElementById("reco-stars"),
+      recoVerdict: document.getElementById("reco-verdict"),
+      recoNote: document.getElementById("reco-note"),
+      recoWhy: document.getElementById("reco-why"),
+      ctxTrend: document.getElementById("ctx-trend"),
       components: document.getElementById("panel-components"),
       plan: document.getElementById("panel-plan"),
-      reasons: document.getElementById("panel-reasons"),
+      ctxonlyTf: document.getElementById("ctxonly-tf"),
+      ctxonlyTrend: document.getElementById("ctxonly-trend"),
     };
-    if (el.arc) {
-      el.arc.style.strokeDasharray = String(GAUGE_CIRC);
-      el.arc.style.strokeDashoffset = String(GAUGE_CIRC);
-    }
   }
 
-  /* --------------------------------------------------------- small helpers */
-
-  function clear(node) {
-    while (node && node.firstChild) node.removeChild(node.firstChild);
-  }
-
+  /* -------------------------------------------------------- small helpers */
+  function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
   function elem(tag, cls, text) {
     const n = document.createElement(tag);
     if (cls) n.className = cls;
     if (text !== undefined) n.textContent = text;
     return n;
   }
-
-  // Fixed-precision price/number formatting is presentation only. Numbers are
-  // shown as-is from the payload; we just pick a readable width.
   function num(v, digits) {
     if (v === null || v === undefined) return "—";
-    return Number(v).toLocaleString("en-US", {
-      minimumFractionDigits: digits, maximumFractionDigits: digits,
-    });
+    return Number(v).toLocaleString("en-US",
+      { minimumFractionDigits: digits, maximumFractionDigits: digits });
   }
 
-  const VERDICT_CLASS = {
-    A_PLUS: "v-aplus",
-    TRADEABLE: "v-tradeable",
-    BELOW_THRESHOLD: "v-below",
-    NO_SIGNAL: "v-none",
-  };
+  /* ------------------------------------------------------- context mode */
+  // Called by app.js on a timeframe switch. Analysis timeframes (1m/5m) show
+  // the three cards; higher timeframes show only the context card. The trend
+  // string is the backend's (cached) — never recomputed here.
+  function setContextMode(isAnalysisTf, tf, trend) {
+    if (!el.analysis || !el.ctxonly) return;
+    el.analysis.hidden = !isAnalysisTf;
+    el.ctxonly.hidden = isAnalysisTf;
+    if (!isAnalysisTf) {
+      if (el.ctxonlyTf) el.ctxonlyTf.textContent = tf || "—";
+      if (el.ctxonlyTrend) {
+        el.ctxonlyTrend.textContent = "Trend: " + (trend || "—");
+        el.ctxonlyTrend.className = "lv-lab " + trendClass(trend);
+      }
+      if (el.panel) el.panel.classList.remove("empty");
+    }
+  }
 
-  /* ------------------------------------------------------------- rendering */
+  function trendClass(t) {
+    return t === "BULLISH" ? "up" : t === "BEARISH" ? "down" : "";
+  }
 
+  /* ---------------------------------------------------------- rendering */
   function setStructure(structure, candleTs) {
-    if (candleTs) lastCandleTs = candleTs;         // transport only (§9)
+    if (candleTs) lastCandleTs = candleTs;
     if (!structure || !structure.qualification) {
       if (el.panel) el.panel.classList.add("empty");
       return;
     }
     if (el.panel) el.panel.classList.remove("empty");
     const q = structure.qualification;
-    renderGauge(q);
-    renderGates(q.gates || []);
-    renderComponents(q.components);
+    renderReco(q, structure);
+    renderComponents(q.components, structure.trend);
     renderPlan(structure.recommendations || []);
-    renderReasons(q.reasons || [], structure.signals || []);
   }
 
-  function renderGauge(q) {
+  function recoDirection(structure) {
+    const recs = structure.recommendations || [];
+    if (recs.length) return recs[recs.length - 1].direction;
+    const sigs = structure.signals || [];
+    if (sigs.length) return sigs[sigs.length - 1].direction;
+    return null;
+  }
+
+  function renderReco(q, structure) {
+    const verdict = q.verdict || "NO_SIGNAL";
     const scored = typeof q.score === "number";
-    const target = scored ? q.score : 0;
-    // fraction of the 100-point scale (display normalization, not a metric)
-    const frac = Math.max(0, Math.min(1, target / 100));
-    animateArc(scored ? target : 0, frac, scored);
-
-    el.verdict.textContent = (q.verdict || "—").replace("_", " ");
-    el.verdict.className = "gauge-verdict " + (VERDICT_CLASS[q.verdict] || "");
-    el.integrity.textContent = q.data_integrity || "—";
-    el.integrity.className =
-      "gauge-integrity " + (q.data_integrity === "PASS" ? "ok" : "warn");
-    el.agreement.textContent = q.agreement || "";
-  }
-
-  function animateArc(target, frac, scored) {
-    if (animHandle) cancelAnimationFrame(animHandle);
-    const from = shownScore;
-    const start = performance.now();
-    function frame(now) {
-      const t = Math.min(1, (now - start) / COUNT_UP_MS);
-      const eased = 1 - Math.pow(1 - t, 3);          // easeOutCubic (UI only)
-      const value = from + (target - from) * eased;
-      const f = Math.max(0, Math.min(1, value / 100));
-      if (el.arc) el.arc.style.strokeDashoffset = String(GAUGE_CIRC * (1 - f));
-      el.score.textContent = scored ? Math.round(value).toString() : "—";
-      if (t < 1) {
-        animHandle = requestAnimationFrame(frame);
-      } else {
-        shownScore = target;
-        if (el.arc && !scored) el.arc.style.strokeDashoffset = String(GAUGE_CIRC);
-      }
+    const dir = recoDirection(structure);
+    if (el.recoDir) {
+      el.recoDir.textContent = dir || "—";
+      el.recoDir.className = "lv-dir " + (dir === "LONG" ? "up" : dir === "SHORT" ? "down" : "");
     }
-    animHandle = requestAnimationFrame(frame);
+    if (el.recoGrade) el.recoGrade.textContent = GRADE[verdict] || "—";
+    if (el.recoPct) el.recoPct.textContent = scored ? Math.round(q.score) + "%" : "—";
+    if (el.recoStars) {
+      const n = scored ? Math.max(0, Math.min(5, Math.round(q.score / 20))) : 0;
+      el.recoStars.textContent = "★★★★★".slice(0, n) + "☆☆☆☆☆".slice(0, 5 - n);
+    }
+    if (el.recoVerdict) {
+      el.recoVerdict.textContent = verdict.replace("_", " ");
+      el.recoVerdict.className = "lv-pill " + (VERDICT_CLASS[verdict] || "");
+    }
+    if (el.recoNote) {
+      el.recoNote.textContent = q.agreement
+        || (q.data_integrity === "PASS" ? "" : "data integrity: DEGRADED");
+    }
+    renderWhy(q, structure.signals || []);
   }
 
-  function renderGates(gates) {
-    clear(el.gates);
+  // Gates + §8 rule-trace, folded into the collapsible "Why?" (kept accessible
+  // but out of the beginner's default view).
+  function renderWhy(q, signals) {
+    if (!el.recoWhy) return;
+    clear(el.recoWhy);
     const byName = {};
-    for (const g of gates) byName[g.name] = g;
+    for (const g of (q.gates || [])) byName[g.name] = g;
+    const gates = elem("div", "why-gates");
     for (const name of GATE_NAMES) {
       const g = byName[name];
-      const row = elem("div", "gate-row");
-      const mark = elem("span", "gate-mark " + (g && g.passed ? "pass" : "fail"),
-        g && g.passed ? "✓" : "✗");
-      const label = elem("span", "gate-name", name);
-      const detail = elem("span", "gate-detail", g ? g.detail : "");
-      row.appendChild(mark);
-      row.appendChild(label);
-      if (g && g.flagged) row.appendChild(elem("span", "gate-flag", "prov"));
-      row.appendChild(detail);
-      el.gates.appendChild(row);
+      const chip = elem("span", "why-gate " + (g && g.passed ? "pass" : "fail"),
+        name + (g && g.passed ? " ✓" : " ✗"));
+      if (g && g.flagged) chip.classList.add("prov");
+      gates.appendChild(chip);
+    }
+    el.recoWhy.appendChild(gates);
+    if (signals.length) {
+      const s = signals[signals.length - 1];
+      const h = elem("div", "why-sig");
+      h.appendChild(elem("span", "why-strat", s.strategy || ""));
+      h.appendChild(elem("span", "why-dir " + (s.direction === "LONG" ? "up" : "down"), s.direction || ""));
+      el.recoWhy.appendChild(h);
+      for (const f of (s.facts || [])) el.recoWhy.appendChild(elem("div", "why-fact", "• " + f));
+    }
+    for (const line of (q.reasons || [])) {
+      const cls = line.charAt(0) === "✗" ? "why-line fail" : "why-line pass";
+      el.recoWhy.appendChild(elem("div", cls, line));
     }
   }
 
-  function renderComponents(components) {
+  function renderComponents(components, trend) {
+    if (el.ctxTrend) {
+      el.ctxTrend.textContent = trend || "—";
+      el.ctxTrend.className = "lv-trend " + trendClass(trend);
+    }
     clear(el.components);
+    if (!el.components) return;
     for (const c of COMPONENTS) {
       const value = components ? components[c.key] : null;
       const row = elem("div", "comp-row");
@@ -178,27 +185,21 @@ const Panel = (function () {
         value === null || value === undefined ? "—" : num(value, 0)));
       const track = elem("div", "comp-track");
       const fill = elem("div", "comp-fill");
-      // width % is the 0-100 component value as a bar length — presentation
       fill.style.width = (value ? Math.max(0, Math.min(100, value)) : 0) + "%";
       track.appendChild(fill);
-      row.appendChild(head);
-      row.appendChild(track);
+      row.appendChild(head); row.appendChild(track);
       el.components.appendChild(row);
     }
   }
 
   function renderPlan(recommendations) {
+    if (!el.plan) return;
     if (!recommendations.length) {
-      lastPlanKey = null;
-      clear(el.plan);
-      el.plan.appendChild(elem("div", "plan-empty",
-        "No active plan — no recommendation at threshold."));
+      lastPlanKey = null; clear(el.plan);
+      el.plan.appendChild(elem("div", "plan-empty", "No active plan — no recommendation at threshold."));
       return;
     }
-    const r = recommendations[recommendations.length - 1];  // most recent
-    // Rebuild the card only when the recommendation identity or status
-    // changes — otherwise a live tick would wipe a half-filled quick-log
-    // form every bar. On an unchanged card, only the timer text refreshes.
+    const r = recommendations[recommendations.length - 1];
     const key = (r.id != null ? r.id : r.created_ts) + "|" + (r.status || "");
     if (key === lastPlanKey) {
       const t = el.plan.querySelector(".plan-timer");
@@ -209,107 +210,74 @@ const Panel = (function () {
     lastPlanKey = key;
     clear(el.plan);
     const head = elem("div", "plan-head");
-    head.appendChild(elem("span", "plan-strategy", r.strategy || "—"));
-    head.appendChild(elem("span",
-      "plan-dir " + (r.direction === "LONG" ? "long" : "short"),
-      r.direction || ""));
-    const status = r.status || "active";
-    head.appendChild(elem("span", "plan-status " + (STATUS_CLASS[status] || ""),
-      status));
-    if (typeof r.score === "number") {
-      head.appendChild(elem("span", "plan-score mono", "score " + num(r.score, 0)));
-    }
+    head.appendChild(elem("span", "plan-status " + statusClass(r.status || "active"), r.status || "active"));
+    const timer = invalidationTimer(r, r.status || "active");
+    if (timer) head.appendChild(elem("span", "plan-timer", timer));
     el.plan.appendChild(head);
-
-    // invalidation timer — only while the entry window is open (active)
-    const timer = invalidationTimer(r, status);
-    if (timer) el.plan.appendChild(elem("div", "plan-timer", timer));
 
     const rail = elem("div", "plan-rail");
     railRow(rail, "Entry", num(r.entry, 2));
-    railRow(rail, "Stop", num(r.sl, 2), "stop");
-    railRow(rail, "TP1", num(r.tp1, 2), "tp");
-    if (r.tp2 !== null && r.tp2 !== undefined) railRow(rail, "TP2", num(r.tp2, 2), "tp");
-    railRow(rail, "Qty", num(r.qty, 4) + " (suggested)");
-    railRow(rail, "Risk", num(r.risk_amt, 2));
-    railRow(rail, "Net RR", num(r.net_rr_tp1, 2) +
-      (r.net_rr_tp2 !== null && r.net_rr_tp2 !== undefined
-        ? " / " + num(r.net_rr_tp2, 2) : ""));
+    railRow(rail, "Stop Loss", num(r.sl, 2), "stop");
+    railRow(rail, "Target 1", num(r.tp1, 2), "tp");
+    if (r.tp2 !== null && r.tp2 !== undefined) railRow(rail, "Target 2", num(r.tp2, 2), "tp");
+    const rr = elem("div", "rail-row");
+    rr.appendChild(elem("span", "rail-label", "Risk : Reward"));
+    rr.appendChild(elem("span", "rail-rr", "1 : " + num(r.net_rr_tp1, 2)));
+    rail.appendChild(rr);
     el.plan.appendChild(rail);
 
-    // hypothetical outcome (once the lifecycle evaluated/expired it)
     if (r.eval_outcome !== undefined && r.eval_outcome !== null) {
       const ev = elem("div", "plan-eval");
       ev.appendChild(elem("span", "eval-label", "Hypothetical"));
-      ev.appendChild(elem("span",
-        "eval-outcome " + (r.eval_r >= 0 ? "tp" : "stop"),
-        r.eval_outcome.toUpperCase()));
-      ev.appendChild(elem("span", "eval-r mono",
-        (r.eval_r >= 0 ? "+" : "") + num(r.eval_r, 2) + "R"));
+      ev.appendChild(elem("span", "eval-outcome " + (r.eval_r >= 0 ? "tp" : "stop"), r.eval_outcome.toUpperCase()));
+      ev.appendChild(elem("span", "eval-r mono", (r.eval_r >= 0 ? "+" : "") + num(r.eval_r, 2) + "R"));
       el.plan.appendChild(ev);
     }
-
     if (r.guidance && r.guidance.length) {
       const g = elem("div", "plan-guidance");
       g.appendChild(elem("div", "guidance-head", "Suggested management"));
       for (const line of r.guidance) g.appendChild(elem("div", "guidance-line", line));
       el.plan.appendChild(g);
     }
-    el.plan.appendChild(elem("div", "plan-disclaimer",
-      "Display only — you place any order manually on your exchange."));
-
-    // P4.7 quick-log — only when the row id is known (live) and a submit
-    // callback is wired (app.js owns the network; panel.js never fetches)
+    el.plan.appendChild(elem("div", "plan-disclaimer", "Display only — you place any order manually on your exchange."));
     if (r.id != null && onQuickLog) el.plan.appendChild(quickLogForm(r));
   }
 
-  // The one-tap manual journal form (§8: Taken/Skipped, Win/Loss/BE,
-  // actual entry/exit, notes, tags). It PATCHes /journal/{id} via the
-  // app.js-provided callback; panel.js only builds inputs + reads them.
+  function statusClass(s) {
+    return { active: "st-active", evaluated: "st-evaluated",
+      invalidated: "st-invalidated", expired: "st-expired" }[s] || "";
+  }
+
+  /* ---- quick-log form (§8 manual outcome; PATCHes via the app.js callback) ---- */
   function quickLogForm(r) {
     const form = elem("div", "quicklog");
     form.appendChild(elem("div", "quicklog-head", "Quick log"));
     const state = { taken: null, result: null };
-
     const takenRow = elem("div", "ql-row");
     const takenBtns = {};
     for (const [label, val] of [["Taken", true], ["Skipped", false]]) {
-      const b = elem("button", "ql-toggle", label);
-      b.type = "button";
+      const b = elem("button", "ql-toggle", label); b.type = "button";
       b.onclick = () => {
         state.taken = val;
-        for (const k in takenBtns) takenBtns[k].classList.toggle(
-          "on", takenBtns[k] === b);
+        for (const k in takenBtns) takenBtns[k].classList.toggle("on", takenBtns[k] === b);
         resultRow.style.display = val ? "flex" : "none";
       };
-      takenBtns[label] = b;
-      takenRow.appendChild(b);
+      takenBtns[label] = b; takenRow.appendChild(b);
     }
     form.appendChild(takenRow);
-
-    const resultRow = elem("div", "ql-row");
-    resultRow.style.display = "none";
+    const resultRow = elem("div", "ql-row"); resultRow.style.display = "none";
     const resultBtns = {};
     for (const val of ["win", "loss", "be"]) {
-      const b = elem("button", "ql-result r-" + val, val.toUpperCase());
-      b.type = "button";
-      b.onclick = () => {
-        state.result = val;
-        for (const k in resultBtns) resultBtns[k].classList.toggle(
-          "on", resultBtns[k] === b);
-      };
-      resultBtns[val] = b;
-      resultRow.appendChild(b);
+      const b = elem("button", "ql-result r-" + val, val.toUpperCase()); b.type = "button";
+      b.onclick = () => { state.result = val; for (const k in resultBtns) resultBtns[k].classList.toggle("on", resultBtns[k] === b); };
+      resultBtns[val] = b; resultRow.appendChild(b);
     }
     form.appendChild(resultRow);
-
     const entryIn = qlInput(form, "Actual entry", "number");
     const exitIn = qlInput(form, "Actual exit", "number");
     const notesIn = qlInput(form, "Notes", "text");
     const tagsIn = qlInput(form, "Tags (comma-separated)", "text");
-
-    const submit = elem("button", "ql-submit", "Log outcome");
-    submit.type = "button";
+    const submit = elem("button", "ql-submit", "Log outcome"); submit.type = "button";
     const status = elem("span", "ql-status", "");
     submit.onclick = async () => {
       const fields = { taken: state.taken };
@@ -317,51 +285,31 @@ const Panel = (function () {
       if (entryIn.value !== "") fields.actual_entry = Number(entryIn.value);
       if (exitIn.value !== "") fields.actual_exit = Number(exitIn.value);
       if (notesIn.value !== "") fields.notes = notesIn.value;
-      if (tagsIn.value.trim() !== "") {
-        fields.tags = tagsIn.value.split(",").map((t) => t.trim())
-          .filter((t) => t);
-      }
+      if (tagsIn.value.trim() !== "") fields.tags = tagsIn.value.split(",").map((t) => t.trim()).filter((t) => t);
       status.textContent = "saving…";
-      try {
-        await onQuickLog(r.id, fields);
-        status.textContent = "logged ✓";
-      } catch (err) {
-        status.textContent = "error — retry";
-      }
+      try { await onQuickLog(r.id, fields); status.textContent = "logged ✓"; }
+      catch (err) { status.textContent = "error — retry"; }
     };
-    const foot = elem("div", "ql-foot");
-    foot.appendChild(submit);
-    foot.appendChild(status);
+    const foot = elem("div", "ql-foot"); foot.appendChild(submit); foot.appendChild(status);
     form.appendChild(foot);
     return form;
   }
-
   function qlInput(form, placeholder, type) {
     const row = elem("div", "ql-field");
     const input = document.createElement("input");
-    input.type = type;
-    input.placeholder = placeholder;
-    input.className = "ql-input mono";
+    input.type = type; input.placeholder = placeholder; input.className = "ql-input mono";
     if (type === "number") input.step = "any";
-    row.appendChild(input);
-    form.appendChild(row);
-    return input;
+    row.appendChild(input); form.appendChild(row); return input;
   }
 
-  // Display-only countdown: candles remaining in the entry window. The
-  // window length is the backend's own invalid_after_bars; "elapsed" is
-  // the whole minutes between the rec's created_ts and the latest closed
-  // candle — pure formatting of two backend timestamps, no trade logic.
   function invalidationTimer(r, status) {
     if (status !== "active" || !lastCandleTs || !r.created_ts) return null;
     const window = r.invalid_after_bars || INVALID_AFTER_DEFAULT;
-    const elapsed = Math.floor(
-      (Date.parse(lastCandleTs) - Date.parse(r.created_ts)) / 60000);
+    const elapsed = Math.floor((Date.parse(lastCandleTs) - Date.parse(r.created_ts)) / 60000);
     const left = window - elapsed;
     if (left <= 0) return "entry window elapsed";
     return "entry window: " + left + " candle" + (left === 1 ? "" : "s") + " left";
   }
-
   function railRow(rail, label, value, cls) {
     const row = elem("div", "rail-row");
     row.appendChild(elem("span", "rail-label", label));
@@ -369,28 +317,5 @@ const Panel = (function () {
     rail.appendChild(row);
   }
 
-  function renderReasons(reasons, signals) {
-    clear(el.reasons);
-    if (signals.length) {
-      const s = signals[signals.length - 1];
-      const head = elem("div", "reason-signal");
-      head.appendChild(elem("span", "reason-strategy", s.strategy || ""));
-      head.appendChild(elem("span",
-        "reason-dir " + (s.direction === "LONG" ? "long" : "short"),
-        s.direction || ""));
-      el.reasons.appendChild(head);
-      for (const fact of (s.facts || [])) {
-        el.reasons.appendChild(elem("div", "reason-fact", "• " + fact));
-      }
-    }
-    for (const line of reasons) {
-      const cls = line.charAt(0) === "✗" ? "reason-line fail" : "reason-line pass";
-      el.reasons.appendChild(elem("div", cls, line));
-    }
-    if (!signals.length && !reasons.length) {
-      el.reasons.appendChild(elem("div", "reason-empty", "No rule trace yet."));
-    }
-  }
-
-  return { init, setStructure };
+  return { init, setStructure, setContextMode };
 })();

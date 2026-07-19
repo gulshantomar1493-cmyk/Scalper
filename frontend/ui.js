@@ -34,7 +34,7 @@
     });
   }
 
-  // ---- Replay & Tools drawer (closed by default -> clean live home) ----
+  // ---- Replay & Tools drawer (legacy; only present on the old layout) ----
   const drawer = document.getElementById("tools-drawer");
   const toolsBtn = document.getElementById("tools-toggle");
   if (drawer && toolsBtn) {
@@ -44,4 +44,14 @@
       toolsBtn.textContent = (open ? "▴ " : "▾ ") + "Replay & Tools";
     });
   }
+
+  // ---- last-selected timeframe persistence (app.js is storage-banned, so it
+  //      lives here — the theme/beginner-pref pattern). Exposed to app.js. ----
+  var TF_KEY = "ms_tf", TFS = ["1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"];
+  var savedTf = "1m";
+  try { var v = window.localStorage.getItem(TF_KEY); if (TFS.indexOf(v) >= 0) savedTf = v; } catch (e) {}
+  window.__msTf = savedTf;
+  window.__msSaveTf = function (tf) {
+    if (TFS.indexOf(tf) >= 0) { try { window.localStorage.setItem(TF_KEY, tf); } catch (e) {} }
+  };
 })();

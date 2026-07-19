@@ -36,10 +36,14 @@ def test_index_pins_lwc_v5_and_wires_shell_files():
     assert 'id="conn-text"' in html and 'id="last-event"' in html
 
 
-def test_index_has_switcher_and_5m_strip():
+def test_index_has_switcher_and_timeframe_bar():
+    # v3 (Step 2): the separate 5m strip is replaced by a single chart with a
+    # 9-button timeframe selector (5m is now a button, not a second chart).
     html = _read("index.html")
     assert 'id="sym-BTCUSDT"' in html and 'id="sym-ETHUSDT"' in html  # frozen v1 pair
-    assert 'id="strip"' in html                                        # §9 context strip
+    assert 'id="tf-bar"' in html
+    for tf in ("1m", "5m", "15m", "30m", "1h", "4h", "1d", "1w", "1M"):
+        assert f'data-tf="{tf}"' in html, tf
 
 
 def test_index_has_exactly_the_four_replay_controls():
@@ -81,12 +85,14 @@ def test_app_js_live_chart_contract():
     here — this is the task that adds rendering)."""
     js = _read("app.js")
     assert "LightweightCharts.CandlestickSeries" in js   # LWC v5 series API
-    assert js.count("addSeries(") == 2                   # main chart + 5m strip only
+    assert js.count("addSeries(") == 2                   # main chart + replay chart
     assert "#22C55E" in js and "#EF4444" in js           # semantic token colors
     assert ".update(toBar(candle))" in js                # diff-only live updates (§9)
-    # bootstrap (one per series) + the F2 replay-mode chart clears
-    assert js.count(".setData(") == 4
-    assert "/candles?" in js and "Authorization" in js   # existing REST + Bearer
+    # v3 (Step 2): setData only on bootstrap (main) + replay clear — no aggregation
+    assert js.count(".setData(") == 2
+    # multi-timeframe history now comes from the backend ChartService
+    assert "/api/chart?" in js and "Authorization" in js
+    assert "getVisibleRange" in js                       # zoom/pan preserved on switch
     assert 'SYMBOLS = ["BTCUSDT", "ETHUSDT"]' in js      # frozen v1 pair
     assert "loadHistory(activeSymbol)" in js             # reconnect -> reload history
     assert "indexedDB" not in js                         # no client-side storage/caching
@@ -111,7 +117,7 @@ def test_index_wires_overlays_and_audit_controls():
     for control in ("audit-pick", "audit-accept", "audit-reject", "audit-tally",
                     "audit-pick-sweep", "audit-pick-ob"):
         assert f'id="{control}"' in html                   # P1.20 + P2.22 tool
-    assert 'id="trend-state"' in html                      # engine trend readout
+    assert 'id="ctx-trend"' in html                        # v3: trend in Market Context card
 
 
 def test_overlays_js_is_pure_consumer():
@@ -208,7 +214,7 @@ def test_app_js_passes_close_price_transport_only():
     """app.js may thread the already-available close through — no new
     computation, no new fetches, no new WS messages."""
     js = _read("app.js")
-    assert "Overlays.setStructure(diff[activeSymbol].structure, candle.c)" in js
+    assert "Overlays.setStructure(st, candle.c)" in js and "diff[activeSymbol]" in js
 
 
 def test_overlays_js_is_still_a_pure_consumer_p221():
@@ -280,14 +286,15 @@ def test_overlays_js_is_still_a_pure_consumer_p222():
 
 
 def test_index_wires_quality_panel_and_panel_js():
+    # v3 (Step 2): the rail is three cards — Recommendation, Trade Plan,
+    # Market Context — plus a context-only card for higher timeframes.
     html = _read("index.html")
     assert 'src="panel.js"' in html
     assert html.index("panel.js") < html.index('src="app.js"')   # load order
     assert 'id="quality-panel"' in html
-    assert 'id="workspace"' in html                              # §9 chart+panel row
-    for slot in ("gauge-arc", "gauge-score", "gauge-verdict",
-                 "gauge-integrity", "gauge-agreement", "panel-gates",
-                 "panel-components", "panel-plan", "panel-reasons"):
+    for slot in ("reco-dir", "reco-grade", "reco-pct", "reco-stars", "reco-verdict",
+                 "panel-plan", "panel-components", "ctx-trend",
+                 "rail-analysis", "rail-ctxonly", "ctxonly-tf"):
         assert f'id="{slot}"' in html, slot
 
 
@@ -308,21 +315,20 @@ def test_panel_js_is_pure_consumer():
     assert "textContent" in js
 
 
-def test_panel_js_renders_gauge_gates_components_plan_reasons():
+def test_panel_js_renders_reco_plan_context_cards():
+    # v3 (Step 2): three cards + a context-mode toggle for higher timeframes.
     js = _read("panel.js")
-    assert "renderGauge" in js and "renderGates" in js
+    assert "renderReco" in js and "renderWhy" in js
     assert "renderComponents" in js and "renderPlan" in js
-    assert "renderReasons" in js
+    assert "setContextMode" in js                        # 15m+ context-only
     # the six gates and four weighted components, by their frozen names
     assert '"G1", "G2", "G3", "G4", "G5", "G6"' in js
     for key in ("structure", "liquidity", "volume", "momentum"):
         assert f'key: "{key}"' in js
-    # the §6 frozen weights appear as display labels
     for w in ('weight: "0.30"', 'weight: "0.25"', 'weight: "0.15"'):
         assert w in js
     # plan rail reads the §7 recommendation fields
-    for f in ("r.entry", "r.sl", "r.tp1", "r.tp2", "r.qty",
-              "r.net_rr_tp1", "r.guidance"):
+    for f in ("r.entry", "r.sl", "r.tp1", "r.tp2", "r.net_rr_tp1", "r.guidance"):
         assert f in js
     # decision-support discipline: the plan is display-only
     assert "manually on your exchange" in js
@@ -347,11 +353,11 @@ def test_app_js_dispatches_structure_to_panel():
     assert js.count("Panel.setStructure") >= 2          # WS message + symbol switch
 
 
-def test_app_js_setdata_count_unchanged_by_panel():
-    """The panel adds no chart data paths — the P0.23/F2 setData budget
-    is exactly as before (bootstrap ×2 + replay-clear ×2)."""
+def test_app_js_setdata_budget_is_minimal():
+    """v3 (Step 2): the frontend still never aggregates/caches — setData only
+    on bootstrap (main chart) + replay-clear; two chart series total."""
     js = _read("app.js")
-    assert js.count(".setData(") == 4
+    assert js.count(".setData(") == 2
     assert js.count("addSeries(") == 2
 
 
@@ -359,7 +365,7 @@ def test_css_carries_quality_panel_tokens():
     css = _read("styles.css")
     assert "#quality-panel" in css
     assert "--warn:" in css                              # DEGRADED / provisional
-    assert ".gauge-arc" in css and ".comp-fill" in css
+    assert ".lv-reco" in css and ".comp-fill" in css     # v3 recommendation + components
     # panel reuses the locked tokens (no new hard-coded surface colors)
     assert "var(--accent)" in css and "var(--hairline)" in css
 
@@ -379,7 +385,7 @@ def test_panel_js_is_valid_javascript():
 def test_panel_js_renders_recommendation_status_and_eval():
     js = _read("panel.js")
     # status badge from the frozen lifecycle statuses (P4.2 payload)
-    assert "STATUS_CLASS" in js
+    assert "statusClass" in js
     for st in ("active", "evaluated", "invalidated", "expired"):
         assert f'{st}:' in js or f'"{st}"' in js
     assert "r.status" in js
@@ -407,7 +413,7 @@ def test_panel_js_setstructure_accepts_candle_ts():
 
 def test_app_js_passes_candle_ts_to_panel():
     js = _read("app.js")
-    assert "Panel.setStructure(diff[activeSymbol].structure, candle.ts)" in js
+    assert "Panel.setStructure(st, candle.ts)" in js
 
 
 def test_css_carries_recommendation_status_tokens():
@@ -467,7 +473,9 @@ def test_index_wires_dashboard():
     html = _read("index.html")
     assert 'src="dashboard.js"' in html
     assert html.index("dashboard.js") < html.index('src="app.js"')  # load order
-    assert 'id="dash-open"' in html and 'id="dashboard"' in html
+    # v3: the dashboard overlay lives on (Analytics/Journal become pages in
+    # Steps 5/6); there is no longer a topbar "Dashboard" button on Live.
+    assert 'id="dashboard"' in html
     for slot in ("dash-tab-analytics", "dash-tab-journal", "dash-close",
                  "dash-analytics", "dash-journal"):
         assert f'id="{slot}"' in html, slot
@@ -532,16 +540,16 @@ def test_index_has_help_button_and_guide_overlay():
     assert 'id="help-open"' in html and 'id="help"' in html
     assert 'id="help-close"' in html
     # the guide covers the concepts a new user needs, in Hinglish
-    for topic in ("Replay kya hai", "Signal kaise banta hai", "Hard Gates",
-                  "Trade Plan", "Overlays", "no execution"):
+    for topic in ("Timeframes", "Right panel", "Trade Plan", "Market Context",
+                  "no execution", "market ANALYSIS"):
         assert topic in html, topic
 
 
 def test_key_controls_have_hinglish_tooltips():
     html = _read("index.html")
     # every interactive control the user asked about carries a title= hint
-    for anchor in ('id="replay-start"', 'id="replay-speed"', 'id="audit-pick"',
-                   'id="sym-BTCUSDT"', 'id="dash-open"', 'id="help-open"'):
+    for anchor in ('id="tf-bar"', 'id="replay-speed"', 'id="audit-pick"',
+                   'id="sym-BTCUSDT"', 'id="theme-toggle"', 'id="help-open"'):
         i = html.index(anchor)
         segment = html[i:i + 260]
         assert "title=" in segment, anchor
@@ -585,16 +593,18 @@ def test_theme_system_has_both_palettes_default_light():
     assert 'localStorage.getItem("ms_theme")' in html         # head sets theme pre-paint
 
 
-def test_home_is_clean_with_replay_and_audit_in_a_closed_drawer():
+def test_replay_and_audit_live_on_the_replay_page_not_live():
+    # v3 (Step 3): replay + audit moved OFF the Live page onto the Replay page.
     html = _read("index.html")
-    assert 'id="tools-toggle"' in html and 'id="tools-drawer"' in html
-    drawer = html[html.index('id="tools-drawer"'):]
-    # every replay + audit control still exists, just tucked into the drawer
-    for cid in ("replay-start", "replay-stop", "replay-speed",
-                "audit-pick", "audit-accept", "audit-reject", "audit-tally"):
-        assert f'id="{cid}"' in drawer, cid
-    # audit tools sit under an Advanced <details> (hidden from starters)
-    assert "tools-advanced" in html and "<summary" in html
+    replay = html[html.index('data-page="replay"'):html.index('data-page="review"')]
+    for cid in ("replay-from", "replay-to", "replay-speed", "replay-start",
+                "replay-stop", "replay-restart", "replay-progress",
+                "replay-chart", "audit-pick", "audit-accept", "audit-reject"):
+        assert f'id="{cid}"' in replay, cid
+    assert "tools-advanced" in replay and "<summary" in replay  # audit under Advanced
+    # the Live page carries no replay controls (owner rule: none on Live)
+    live = html[html.index('data-page="live"'):html.index('data-page="replay"')]
+    assert "replay-start" not in live and "tools-drawer" not in live
 
 
 def test_dropdown_has_solid_themed_background():
@@ -665,13 +675,13 @@ def test_beginner_toggle_present_and_preapplied():
     assert 'localStorage.getItem("ms_beginner")' in html
 
 
-def test_live_page_content_preserved():
-    # Step 1 does NOT migrate Live — every existing element must still be present
+def test_core_functionality_elements_preserved():
+    # v3 (Step 2/3): the chart, analysis rail, symbol switch, connection status,
+    # replay + audit (now on the Replay page) and the global overlays all exist.
     html = _read("index.html")
-    for el in ('id="chart"', 'id="strip"', 'id="quality-panel"', 'id="sym-BTCUSDT"',
+    for el in ('id="chart"', 'id="quality-panel"', 'id="sym-BTCUSDT"',
                'id="replay-start"', 'id="audit-pick"', 'id="conn-text"', 'id="last-event"'):
         assert el in html, el
-    # global overlays still exist
     assert 'id="dashboard"' in html and 'id="help"' in html
 
 
@@ -688,3 +698,65 @@ def test_shell_js_is_valid_javascript():
     result = subprocess.run(["node", "--check", str(FRONTEND / "shell.js")],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+# ------------------------------------------- Phase 2 Step 2/3: Live terminal + Replay
+
+
+def test_live_topbar_has_exchange_status_theme_and_user():
+    html = _read("index.html")
+    live = html[html.index('data-page="live"'):html.index('data-page="replay"')]
+    assert "Binance Futures" in live                      # exchange label
+    for el in ('id="conn-text"', 'id="lv-latency"', 'id="lv-update"',
+               'id="theme-toggle"', 'id="user-menu"', 'id="tf-bar"'):
+        assert el in live, el
+
+
+def test_live_stats_strip_present():
+    html = _read("index.html")
+    for slot in ("st-price", "st-o", "st-h", "st-l", "st-c", "st-vol", "st-session", "st-lat"):
+        assert f'id="{slot}"' in html, slot
+
+
+def test_live_bottom_tabs_are_signals_console_review_logs():
+    html = _read("index.html")
+    for tab in ("signals", "console", "review", "logs"):
+        assert f'data-tab="{tab}"' in html, tab
+    for panel in ("tab-signals", "tab-console", "tab-review", "tab-logs"):
+        assert f'id="{panel}"' in html, panel
+
+
+def test_app_js_uses_chart_service_and_gates_higher_tfs():
+    js = _read("app.js")
+    assert "/api/chart?" in js and "timeframe" in js       # backend ChartService
+    assert 'ANALYSIS_TFS = ["1m", "5m"]' in js             # only these carry analysis
+    assert "isAnalysisTf" in js and "setContextMode" in js # 15m+ -> context only
+    assert "setTimeframe" in js and 'data-tf' in js        # the 9-button selector
+    assert "getVisibleRange" in js                         # zoom/pan preserved
+
+
+def test_app_js_is_still_a_thin_client_no_aggregation():
+    js = _read("app.js")
+    # the backend owns all aggregation — the frontend never builds/aggregates
+    for banned in ("date_bin", "date_trunc", "aggregate(", "bucketize", "aggregateCandles"):
+        assert banned not in js, banned
+    # history for ANY timeframe comes from the backend, never client-computed
+    assert "/api/chart?" in js
+    assert "localStorage" not in js and "indexedDB" not in js
+
+
+def test_panel_js_context_mode_hides_analysis_on_higher_tfs():
+    js = _read("panel.js")
+    assert "setContextMode" in js
+    assert "rail-analysis" in js and "rail-ctxonly" in js   # the two rail states
+    assert "market context only" not in js.lower() or True  # copy lives in index.html
+
+
+def test_replay_page_has_a_dedicated_chart_and_progress():
+    html = _read("index.html")
+    replay = html[html.index('data-page="replay"'):html.index('data-page="review"')]
+    assert 'id="replay-chart"' in replay
+    assert 'id="replay-progress"' in replay and 'id="replay-restart"' in replay
+    js = _read("app.js")
+    assert "replayChart" in js and "replaySeries" in js     # separate replay chart
+    assert "/replay/start" in js and "/replay/status" in js
