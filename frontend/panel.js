@@ -22,14 +22,16 @@ const Panel = (function () {
     { key: "momentum", label: "Momentum", weight: "0.15" },
   ];
   const GATE_NAMES = ["G1", "G2", "G3", "G4", "G5", "G6"];
-  // Plain-English meaning of each hard gate (all must pass or there's no trade).
+  // Each hard gate, explained in Hinglish (all six must pass or there's no
+  // trade). `hi` is the plain-language meaning shown under every gate; the
+  // backend's specific reason (g.detail) is shown in full below it on a fail.
   const GATE_INFO = {
-    G1: { label: "Data", desc: "Live, gap-free candles — recent data, clock in sync." },
-    G2: { label: "Spread", desc: "Bid/ask spread tight enough to trade (under 0.05%)." },
-    G3: { label: "Session", desc: "Active trading hours — the quiet late session is skipped." },
-    G4: { label: "News", desc: "No high-impact news blackout in effect." },
-    G5: { label: "Risk", desc: "Risk budget OK — no revenge / over-trading block." },
-    G6: { label: "Reward", desc: "Reward-to-risk meets the minimum floor." },
+    G1: { label: "Data", hi: "Data taaza aur bina gap ka ho — recent candles, clock sync." },
+    G2: { label: "Spread", hi: "Bid/ask spread itna tight ho ki trade ho sake (0.05% se kam)." },
+    G3: { label: "Session", hi: "Active trading hours ho — dheeme LATE session (raat) mein skip." },
+    G4: { label: "News", hi: "Koi bada news blackout na chal raha ho." },
+    G5: { label: "Risk", hi: "Risk budget theek ho — revenge / over-trading block na ho." },
+    G6: { label: "Reward", hi: "Reward-to-risk minimum floor se upar ho (kam-se-kam 1:1)." },
   };
   const VERDICT_CLASS = {
     A_PLUS: "v-aplus", TRADEABLE: "v-tradeable",
@@ -180,25 +182,35 @@ const Panel = (function () {
     renderWhy(q, structure.signals || []);
   }
 
-  // Gates + §8 rule-trace, folded into the collapsible "Why?" (kept accessible
-  // but out of the beginner's default view).
+  // Safety-check gates (Hinglish) + §8 rule-trace, in the collapsible "Why?".
+  // Each gate is a readable card: icon + label + status chip, the Hinglish
+  // meaning, and — on a fail — the backend's exact reason shown IN FULL (it
+  // wraps; nothing is truncated). Kept out of the beginner's default view.
   function renderWhy(q, signals) {
     if (!el.recoWhy) return;
     clear(el.recoWhy);
     const byName = {};
     for (const g of (q.gates || [])) byName[g.name] = g;
     const gates = elem("div", "why-gates");
-    gates.appendChild(elem("div", "why-gates-h", "Safety checks — all must pass"));
+    gates.appendChild(elem("div", "why-gates-h", "Safety checks — sabhi paas hone chahiye"));
     for (const name of GATE_NAMES) {
       const g = byName[name];
       const info = GATE_INFO[name];
       const pass = !!(g && g.passed);
-      const row = elem("div", "why-gate " + (pass ? "pass" : "fail"));
-      row.appendChild(elem("span", "wg-icon", pass ? "✓" : "✗"));
-      row.appendChild(elem("span", "wg-label", info.label));
-      if (g && g.detail && (!pass || g.flagged)) row.appendChild(elem("span", "wg-detail", g.detail));
-      if (g && g.flagged) row.appendChild(elem("span", "wg-prov", "not enforced yet"));
-      row.title = name + " — " + info.desc + (g && g.detail ? " (" + g.detail + ")" : "");
+      const flagged = !!(g && g.flagged);
+      const state = pass ? (flagged ? "soft" : "pass") : "fail";
+      const row = elem("div", "wg-row " + state);
+      row.appendChild(elem("span", "wg-icon", pass ? (flagged ? "◑" : "✓") : "✗"));
+      const main = elem("div", "wg-main");
+      const top = elem("div", "wg-top");
+      top.appendChild(elem("span", "wg-label", name + " · " + info.label));
+      top.appendChild(elem("span", "wg-chip",
+        pass ? (flagged ? "abhi enforce nahi" : "OK") : "FAIL"));
+      main.appendChild(top);
+      main.appendChild(elem("div", "wg-hi", info.hi));         // Hinglish meaning (wraps)
+      if (g && g.detail && (!pass || flagged))                 // exact reason, full text (wraps)
+        main.appendChild(elem("div", "wg-reason", "↳ " + g.detail));
+      row.appendChild(main);
       gates.appendChild(row);
     }
     el.recoWhy.appendChild(gates);

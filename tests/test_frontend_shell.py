@@ -391,7 +391,10 @@ def test_panel_js_handles_gate_fail_and_flagged():
     for label in ('"Data"', '"Spread"', '"Session"', '"News"', '"Risk"', '"Reward"'):
         assert label in js, label
     assert "Safety checks" in js                         # user-facing header
-    assert "wg-prov" in js                               # provisional badge
+    # Hinglish explanations + a full (non-truncated) reason line per gate
+    assert "hi:" in js and "wg-hi" in js                 # Hinglish meaning, shown always
+    assert "wg-reason" in js                             # backend reason, full text (wraps)
+    assert "abhi enforce nahi" in js                     # Hinglish "not enforced yet" badge
     # verdict/integrity are backend-driven display states
     assert "VERDICT_CLASS" in js
     assert '"PASS"' in js                                # data-integrity badge

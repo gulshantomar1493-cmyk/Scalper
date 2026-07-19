@@ -303,47 +303,67 @@ def create_app(
     async def get_settings() -> dict:
         _require_settings()
         return {"notifications": settings.notifications(),
-                "telegram": settings.telegram_public()}
+                "telegram": settings.telegram_public(),        # legacy first-bot view
+                "telegram_bots": settings.telegram_bots_public()}
 
     @app.put("/settings/notifications", dependencies=[Depends(require_token)])
     async def put_notifications(payload: dict = Body(...)) -> dict:
         _require_settings()
         return {"notifications": settings.set_notifications(payload or {})}
 
+    # Verify a bot token, auto-detect its chat id, and ADD it to the list —
+    # multiple bots are supported and every verified bot receives every alert.
     @app.post("/settings/telegram/verify", dependencies=[Depends(require_token)])
     async def telegram_verify(payload: dict = Body(...)) -> dict:
         _require_settings()
         token = (payload.get("token") or "").strip()
+        label = (payload.get("label") or "").strip()
         if not token:
             raise HTTPException(status_code=400, detail="token required")
         result = await telegram.verify_and_detect(token)
         if not result.get("ok"):
             return {"ok": False, "error": result.get("error", "verification failed"),
                     "bot_username": result.get("bot_username", "")}
-        settings.set_telegram(token=token, chat_id=result["chat_id"],
-                              bot_username=result["bot_username"], verified=True)
+        settings.add_telegram_bot(token=token, chat_id=result["chat_id"],
+                                  bot_username=result["bot_username"],
+                                  verified=True, label=label)
         await telegram.send_message(
             token, result["chat_id"],
             "✅ <b>MarketScalper connected</b> — you'll receive trade & system "
             "alerts here.")
-        return {"ok": True, **settings.telegram_public()}
+        return {"ok": True, "chat_id": result["chat_id"],
+                "bot_username": result["bot_username"],
+                "telegram_bots": settings.telegram_bots_public()}
 
     @app.post("/settings/telegram/test", dependencies=[Depends(require_token)])
     async def telegram_test() -> dict:
         _require_settings()
-        tg = settings.telegram()
-        if not (tg.get("token") and tg.get("chat_id")):
+        targets = settings.telegram_targets()          # all verified bots
+        if not targets:
             raise HTTPException(status_code=400, detail="telegram not configured")
-        ok = await telegram.send_message(
-            tg["token"], tg["chat_id"],
-            "🔔 <b>Test alert</b> from MarketScalper — notifications are working.")
-        return {"ok": ok}
+        results = await asyncio.gather(*[               # fire to every bot at once
+            telegram.send_message(
+                tok, chat,
+                "🔔 <b>Test alert</b> from MarketScalper — notifications are working.")
+            for tok, chat in targets])
+        sent = sum(1 for ok in results if ok)
+        return {"ok": sent > 0, "sent": sent, "total": len(targets)}
+
+    # Remove ONE bot by id (multi-bot); the id-less route clears them all.
+    @app.delete("/settings/telegram/{bot_id}", dependencies=[Depends(require_token)])
+    async def telegram_remove(bot_id: int) -> dict:
+        _require_settings()
+        removed = settings.remove_telegram_bot(bot_id)
+        if not removed:
+            raise HTTPException(status_code=404, detail="bot not found")
+        return {"ok": True, "telegram_bots": settings.telegram_bots_public()}
 
     @app.delete("/settings/telegram", dependencies=[Depends(require_token)])
     async def telegram_clear() -> dict:
         _require_settings()
         settings.clear_telegram()
-        return {"ok": True, **settings.telegram_public()}
+        return {"ok": True, **settings.telegram_public(),
+                "telegram_bots": settings.telegram_bots_public()}
 
     @app.get("/candles", dependencies=[Depends(require_token)])
     async def candles(symbol: str, tf: str, start: datetime, end: datetime) -> list[dict]:

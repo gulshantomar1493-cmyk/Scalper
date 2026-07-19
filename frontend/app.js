@@ -82,12 +82,22 @@ function chartTheme() {
     },
   };
 }
+// Bigger, TradingView-sized candles: a fixed bar spacing + a small right gap,
+// set ONCE at creation (chartTheme() is re-applied on theme toggle and must NOT
+// carry barSpacing, or a theme switch would reset the user's zoom).
+const BAR_SPACING = 9, RIGHT_OFFSET = 4;
 function makeChart(el) {
-  return LightweightCharts.createChart(el, Object.assign({ autoSize: true }, chartTheme()));
+  const opts = Object.assign({ autoSize: true }, chartTheme());
+  opts.timeScale = Object.assign({}, opts.timeScale,
+    { barSpacing: BAR_SPACING, rightOffset: RIGHT_OFFSET, minBarSpacing: 1.5 });
+  return LightweightCharts.createChart(el, opts);
 }
 
 const mainChart = makeChart($("chart"));
 const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERIES_OPTS);
+// Tight price-scale margins so candles fill the pane (kills the dead band the
+// default 0.2/0.1 margins left at top+bottom); volume tucks into the lowest 14%.
+mainChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.16 } });
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
 Dashboard.init();
@@ -169,22 +179,34 @@ async function fetchChart(symbol, tf) {
   return await resp.json();                         // full body {candles, indicators, ...}
 }
 
-// Preserve the visible time window (zoom + pan) across a setData — keeps the
-// user looking at the same period when reloading or switching timeframe.
-function preserveView(chart, fn) {
-  const ts = chart.timeScale();
-  let range = null;
-  try { range = ts.getVisibleRange(); } catch (e) { /* empty chart */ }
-  fn();
-  if (range) { try { ts.setVisibleRange(range); } catch (e) { /* snap failed */ } }
+// Show the most recent N bars at a comfortable width (like TradingView) — the
+// rest of history stays scrollable to the left. Used for a FRESH view (first
+// load, timeframe/symbol switch) instead of cramming ~1440 bars into <1px each
+// (which is what fitContent does and why candles looked like thin lines).
+const RECENT_BARS = 130;
+function showRecent(chart, n) {
+  if (!n) return;
+  try { chart.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - RECENT_BARS), to: n + RIGHT_OFFSET }); }
+  catch (e) { try { chart.timeScale().fitContent(); } catch (e2) { /* empty */ } }
 }
-
-async function loadHistory(symbol) {
+let hasView = false;   // false until the first successful history load
+async function loadHistory(symbol, opts) {
+  // A fresh recent-window view on the first load and on every timeframe/symbol
+  // switch; the user's zoom is only preserved on a same-tf reconnect/indicator
+  // refetch. Preserving a 1m window onto sparse 5m/1h data (the old bug) produced
+  // 2 giant blocks — so a stale/degenerate range falls back to the recent window.
+  const resetView = !!(opts && opts.resetView) || !hasView;
   try {
     const body = await fetchChart(symbol, activeTf);
     const candles = body.candles || [];
     const bars = candles.map(toBar);
-    preserveView(mainChart, () => mainSeries.setData(bars));
+    const ts = mainChart.timeScale();
+    let keep = null;
+    if (!resetView) { try { keep = ts.getVisibleRange(); } catch (e) { /* empty */ } }
+    mainSeries.setData(bars);                          // single bootstrap setData (§9)
+    if (keep) { try { ts.setVisibleRange(keep); } catch (e) { showRecent(mainChart, bars.length); } }
+    else showRecent(mainChart, bars.length);
+    hasView = true;
     liveBar = bars.length ? bars[bars.length - 1] : null;   // baseline for forming
     Indicators.render(body);                                // EMA/SMA/RSI/Volume
     Panel.setContext(body.context);                         // HTF context (item 9)
@@ -221,7 +243,7 @@ function setTimeframe(tf) {
   for (const b of document.querySelectorAll(".lv-tf")) {
     b.classList.toggle("on", b.getAttribute("data-tf") === tf);
   }
-  loadHistory(activeSymbol);      // fetch the tf via /api/chart (view preserved)
+  loadHistory(activeSymbol, { resetView: true });   // fresh recent-window per tf
   applyAnalysisMode();
 }
 
@@ -241,7 +263,7 @@ function setSymbol(symbol) {
     const el = $(`sym-${s}`);
     if (el) el.classList.toggle("active", s === symbol);
   }
-  loadHistory(symbol);
+  loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
 for (const s of SYMBOLS) {
@@ -373,7 +395,7 @@ function exitReplayMode(text) {
   if (replayPoll) { clearInterval(replayPoll); replayPoll = null; }
   setRpStatus("idle");
   note(text);
-  loadHistory(activeSymbol);         // re-bootstrap the live chart
+  loadHistory(activeSymbol, { resetView: true });   // re-bootstrap the live chart
 }
 function setRpStatus(s) {
   const st = $("rp-status"); if (st) st.textContent = s;
@@ -641,40 +663,59 @@ bindSwitch("ntf-desktop", "desktop"); bindSwitch("ntf-telegram", "telegram");
 bindSwitch("ntf-trade", "trade_alerts"); bindSwitch("ntf-system", "system_alerts");
 if ($("ntf-enable")) $("ntf-enable").addEventListener("click", () => Notify.request().then(paintNotifUI));
 
-function paintTgStatus(tg) {
-  const st = $("tg-status"); if (!st) return;
-  if (tg && tg.verified) st.textContent = "connected"
-    + (tg.bot_username ? " · @" + tg.bot_username : "") + (tg.chat_id ? " · chat " + tg.chat_id : "");
-  else if (tg && tg.has_token) st.textContent = "token saved — not verified";
-  else st.textContent = "not configured";
+// Multiple Telegram bots — a verified bot list; alerts fan out to all of them
+// at once (backend), reaching every device/chat the owner adds. Each row can be
+// removed independently.
+function renderTgList(bots) {
+  const st = $("tg-status"), list = $("tg-list");
+  bots = bots || [];
+  if (st) st.textContent = bots.length
+    ? bots.length + " bot" + (bots.length === 1 ? "" : "s") + " connected"
+    : "not configured";
+  if (!list) return;
+  list.textContent = "";
+  for (const b of bots) {
+    const row = document.createElement("div"); row.className = "tg-bot";
+    const info = document.createElement("span"); info.className = "tg-bot-info mono";
+    info.textContent = (b.label ? b.label + " · " : "")
+      + (b.bot_username ? "@" + b.bot_username : "bot")
+      + (b.chat_id ? " · chat " + b.chat_id : "")
+      + (b.verified ? "" : " · unverified");
+    const rm = document.createElement("button");
+    rm.className = "chrome-btn tg-rm"; rm.type = "button"; rm.textContent = "Remove";
+    rm.addEventListener("click", async () => {
+      try { const r = await api("/settings/telegram/" + b.id, { method: "DELETE" });
+        renderTgList(r.telegram_bots); tgMsg("Removed.", true); }
+      catch (e) { tgMsg(e.message, false); }
+    });
+    row.appendChild(info); row.appendChild(rm); list.appendChild(row);
+  }
 }
 function tgMsg(text, ok) {
   const m = $("tg-msg"); if (m) { m.textContent = text || ""; m.className = "tg-msg" + (ok === true ? " ok" : ok === false ? " bad" : ""); }
 }
 if ($("tg-verify")) $("tg-verify").addEventListener("click", async () => {
   const t = $("tg-token"), token = (t && t.value || "").trim();
+  const lbl = $("tg-label"), label = (lbl && lbl.value || "").trim();
   if (!token) { tgMsg("Paste your bot token first.", false); return; }
   tgMsg("Verifying…");
   try {
-    const r = await api("/settings/telegram/verify", { method: "POST", body: JSON.stringify({ token }) });
-    if (r.ok) { paintTgStatus(r); tgMsg("Connected — check Telegram for a confirmation message.", true); if (t) t.value = ""; }
+    const r = await api("/settings/telegram/verify", { method: "POST", body: JSON.stringify({ token, label }) });
+    if (r.ok) { renderTgList(r.telegram_bots); tgMsg("Bot added — check Telegram for a confirmation message.", true); if (t) t.value = ""; if (lbl) lbl.value = ""; }
     else tgMsg(r.error || "Verification failed.", false);
   } catch (e) { tgMsg(e.message, false); }
 });
 if ($("tg-test")) $("tg-test").addEventListener("click", async () => {
   tgMsg("Sending…");
-  try { const r = await api("/settings/telegram/test", { method: "POST", body: "{}" }); tgMsg(r.ok ? "Test sent — check Telegram." : "Send failed.", r.ok); }
-  catch (e) { tgMsg(e.message, false); }
-});
-if ($("tg-clear")) $("tg-clear").addEventListener("click", async () => {
-  try { const r = await api("/settings/telegram", { method: "DELETE" }); paintTgStatus(r); tgMsg("Removed.", true); }
+  try { const r = await api("/settings/telegram/test", { method: "POST", body: "{}" });
+    tgMsg(r.ok ? ("Test sent to " + r.sent + "/" + r.total + " — check Telegram.") : "Send failed.", r.ok); }
   catch (e) { tgMsg(e.message, false); }
 });
 (async function loadSettings() {
   try {
     const s = await api("/settings");
     notifPrefs = Object.assign(notifPrefs, s.notifications || {});
-    paintTgStatus(s.telegram);
+    renderTgList(s.telegram_bots);
   } catch (e) { /* settings unavailable — keep defaults */ }
   paintNotifUI();
 })();

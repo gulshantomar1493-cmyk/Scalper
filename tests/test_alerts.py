@@ -23,6 +23,12 @@ class _Settings:
     def telegram(self) -> dict:
         return dict(self._t)
 
+    def telegram_targets(self) -> list:
+        t = self._t
+        if t.get("verified") and t.get("token") and t.get("chat_id"):
+            return [(t["token"], t["chat_id"])]
+        return []
+
 
 def _configured(n_over=None, t_over=None) -> _Settings:
     n = {"telegram": True, "trade_alerts": True, "system_alerts": True,

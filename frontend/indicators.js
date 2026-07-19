@@ -52,19 +52,31 @@
     if (!S.sma) S.sma = chart.addSeries(LC().LineSeries, lineOpts(cfg.sma.color));
     if (!S.volume) {
       S.volume = chart.addSeries(LC().HistogramSeries, { priceFormat: { type: "volume" }, priceScaleId: "vol", lastValueVisible: false, priceLineVisible: false });
-      S.volume.priceScale().applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
-    }
-    if (!S.rsi) {
-      S.rsi = chart.addSeries(LC().LineSeries, Object.assign(lineOpts(cfg.rsi.color), { priceScaleId: "rsi" }), 1);
-      obLine = S.rsi.createPriceLine({ price: cfg.rsi.ob, color: "rgba(239,68,68,0.55)", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "OB" });
-      osLine = S.rsi.createPriceLine({ price: cfg.rsi.os, color: "rgba(34,197,94,0.55)", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "OS" });
+      S.volume.priceScale().applyOptions({ scaleMargins: { top: 0.86, bottom: 0 } });
     }
     applyVisibility();
   }
+  // RSI lives in its OWN bottom pane (paneIndex 1). Create it LAZILY, only when
+  // enabled — an always-present empty RSI pane otherwise steals ~30% of the
+  // chart height (that was the dead band under the candles). removeSeries()
+  // drops the now-empty pane (LWC v5), giving the space back to the candles.
+  function ensureRsi() {
+    if (S.rsi) return;
+    S.rsi = chart.addSeries(LC().LineSeries, Object.assign(lineOpts(cfg.rsi.color), { priceScaleId: "rsi" }), 1);
+    obLine = S.rsi.createPriceLine({ price: cfg.rsi.ob, color: "rgba(239,68,68,0.55)", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "OB" });
+    osLine = S.rsi.createPriceLine({ price: cfg.rsi.os, color: "rgba(34,197,94,0.55)", lineStyle: 2, lineWidth: 1, axisLabelVisible: true, title: "OS" });
+  }
+  function removeRsi() {
+    if (!S.rsi) return;
+    try { chart.removeSeries(S.rsi); } catch (e) { /* already gone */ }
+    S.rsi = null; obLine = null; osLine = null; lastV.rsi = null;
+  }
+  function syncRsi() { if (cfg.rsi.on) ensureRsi(); else removeRsi(); }
   function applyVisibility() {
     SLOTS.forEach(i => S["ema" + i].applyOptions({ visible: cfg.ema[i].on, color: cfg.ema[i].color }));
     S.sma.applyOptions({ visible: cfg.sma.on, color: cfg.sma.color });
-    S.rsi.applyOptions({ visible: cfg.rsi.on, color: cfg.rsi.color });
+    syncRsi();
+    if (S.rsi) S.rsi.applyOptions({ visible: true, color: cfg.rsi.color });
     S.volume.applyOptions({ visible: cfg.volume.on });
     renderLegend();
   }
@@ -107,8 +119,9 @@
     });
     const sp = cfg.sma.on && ind.sma ? (ind.sma[String(cfg.sma.len)] || []) : [];
     S.sma.setData(sp); lastV.sma = lastPoint(sp);
+    syncRsi();                                         // create/drop the RSI pane
     const rp = cfg.rsi.on && ind.rsi ? (ind.rsi[String(cfg.rsi.len)] || []) : [];
-    S.rsi.setData(rp); lastV.rsi = lastPoint(rp);
+    if (S.rsi) { S.rsi.setData(rp); lastV.rsi = lastPoint(rp); }
     renderLegend();
   }
 
@@ -122,7 +135,7 @@
       const v = fi["ema" + cfg.ema[i].len];
       if (cfg.ema[i].on && v != null) { S["ema" + i].update({ time: t, value: v }); lastV["ema" + i] = v; }
     });
-    if (cfg.rsi.on && fi.rsi != null) { S.rsi.update({ time: t, value: fi.rsi }); lastV.rsi = fi.rsi; }
+    if (cfg.rsi.on && S.rsi && fi.rsi != null) { S.rsi.update({ time: t, value: fi.rsi }); lastV.rsi = fi.rsi; }
     if (cfg.volume.on) S.volume.update({ time: t, value: f.v, color: f.c >= f.o ? VUP : VDN });
     renderLegend();
   }

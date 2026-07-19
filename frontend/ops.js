@@ -43,6 +43,12 @@
     var label = el("span", "ops-pill-label",
       running ? "Scanner running" : (data ? "Scanner idle" : "Connecting…"));
     target.appendChild(label);
+    if (running) {
+      // micro "actively working" loader — 3 animated equalizer bars
+      var bars = el("span", "scan-bars");
+      bars.appendChild(el("i")); bars.appendChild(el("i")); bars.appendChild(el("i"));
+      target.appendChild(bars);
+    }
     if (running && activityText) {
       target.appendChild(el("span", "ops-pill-act", "· " + activityText));
     }

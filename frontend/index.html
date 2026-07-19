@@ -229,7 +229,7 @@
             <div id="ops-dashboard" class="ops-dash"><div class="ops-empty">Loading operations…</div></div>
           </div>
           <div class="set-card">
-            <div class="set-row"><div><b>Theme</b><small data-beginner-text>Dark terminal or light cream.</small></div>
+            <div class="set-row"><div><b>Theme</b><small data-beginner-text>Dark terminal or light.</small></div>
               <div class="set-seg"><button id="set-theme-dark" type="button">🌙 Dark</button><button id="set-theme-light" type="button">☀️ Light</button></div></div>
             <div class="set-row"><div><b>Beginner mode</b><small data-beginner-text>Show helper text under each section.</small></div>
               <button id="set-beginner" class="sb-switch" type="button" role="switch"></button></div>
@@ -260,11 +260,13 @@
               <li>Open your new bot and send it any message (e.g. “hi”).</li>
               <li>Paste the token below and click <b>Verify</b> — your chat is detected automatically (no chat ID to type).</li>
             </ol>
-            <div class="set-row tg-row"><input id="tg-token" class="set-input" type="password" placeholder="Bot token — 123456:ABC-DEF…" autocomplete="off" />
-              <button id="tg-verify" class="chrome-btn" type="button">Verify</button></div>
-            <div class="set-row"><div><b>Status</b></div><span class="mono" id="tg-status">not configured</span></div>
+            <div class="set-row tg-row"><input id="tg-label" class="set-input tg-label-in" type="text" placeholder="Label (optional) — e.g. Phone" autocomplete="off" />
+              <input id="tg-token" class="set-input" type="password" placeholder="Bot token — 123456:ABC-DEF…" autocomplete="off" />
+              <button id="tg-verify" class="chrome-btn" type="button">Add bot</button></div>
+            <div class="set-row"><div><b>Connected bots</b><small>alerts fire to every bot at the same time — add as many as you like</small></div><span class="mono" id="tg-status">not configured</span></div>
+            <div id="tg-list" class="tg-list"></div>
             <div class="set-row"><span id="tg-msg" class="tg-msg"></span>
-              <span class="tg-actions"><button id="tg-test" class="chrome-btn" type="button">Send test</button><button id="tg-clear" class="chrome-btn" type="button">Remove</button></span></div>
+              <span class="tg-actions"><button id="tg-test" class="chrome-btn" type="button">Send test to all</button></span></div>
           </div>
           <div class="set-card set-note" data-beginner-text>MarketScalper is decision-support only — it never places or executes trades.</div>
         </div>

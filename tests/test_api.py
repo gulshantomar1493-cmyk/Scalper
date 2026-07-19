@@ -189,6 +189,55 @@ async def test_settings_and_telegram_endpoints(monkeypatch, tmp_path):
         await _stop(server, task)
 
 
+async def test_multiple_telegram_bots_endpoints(monkeypatch, tmp_path):
+    # Verify two bots -> both listed; test fires to ALL; remove one by id.
+    from marketscalper.settings_store import SettingsStore
+
+    async def fake_verify(token):
+        return {"ok": True, "bot_username": "bot_" + token[0],
+                "chat_id": "chat_" + token[0]}
+
+    sent = []
+
+    async def fake_send(token, chat_id, text):
+        sent.append((token, chat_id))
+        return True
+
+    monkeypatch.setattr("marketscalper.telegram.verify_and_detect", fake_verify)
+    monkeypatch.setattr("marketscalper.telegram.send_message", fake_send)
+    settings = SettingsStore(path=tmp_path / "s.json")
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN, settings=settings)
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            for tok in ("A:tok", "B:tok"):
+                async with s.post(f"http://{addr}/settings/telegram/verify",
+                                  headers=AUTH, json={"token": tok, "label": tok[0]}) as r:
+                    d = await r.json()
+                    assert d["ok"] is True
+            async with s.get(f"http://{addr}/settings", headers=AUTH) as r:
+                bots = (await r.json())["telegram_bots"]
+                assert len(bots) == 2
+                assert all("token" not in b for b in bots)      # never exposed
+            # a test alert fans out to BOTH bots at once
+            sent.clear()
+            async with s.post(f"http://{addr}/settings/telegram/test", headers=AUTH, json={}) as r:
+                d = await r.json()
+                assert d["ok"] is True and d["sent"] == 2 and d["total"] == 2
+            assert len(sent) == 2
+            # remove one bot by id -> one remains
+            rm_id = bots[0]["id"]
+            async with s.delete(f"http://{addr}/settings/telegram/{rm_id}", headers=AUTH) as r:
+                d = await r.json()
+                assert d["ok"] is True and len(d["telegram_bots"]) == 1
+                assert d["telegram_bots"][0]["id"] != rm_id
+            async with s.delete(f"http://{addr}/settings/telegram/99999", headers=AUTH) as r:
+                assert r.status == 404                          # unknown id
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_requires_bearer_token():
     _, _, app = _pipeline()
     server, task, addr = await _serve(app)
