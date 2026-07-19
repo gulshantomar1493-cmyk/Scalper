@@ -437,10 +437,14 @@ function connect() {
     const msg = JSON.parse(event.data);
     const diff = msg.state_diff || {};
     for (const sym of Object.keys(diff)) {
-      if (diff[sym].structure) lastStructure[sym] = diff[sym].structure;
+      if (diff[sym].structure) {
+        detectActivity(sym, diff[sym].structure);       // activity feed + notifications
+        lastStructure[sym] = diff[sym].structure;
+      }
     }
     const candle = msg.candle;
     if (!candle) return;
+    if (candle.tf === "1m") Ops.pushActivity("Scanning " + candle.symbol);   // item 4
     if (candle.symbol === activeSymbol) updateStats(candle);
     if (candle.symbol !== activeSymbol) return;
 
@@ -470,6 +474,48 @@ function connect() {
   };
   ws.onerror = () => ws.close();
 }
+
+/* ------------------------------------- operations status + activity feed */
+/* app.js owns the network (§9): it polls GET /ops and derives activity from the
+ * live stream; ops.js only renders. Notifications (window.Notify) are wired in
+ * a later file and called guardedly here. */
+Ops.initActivity($("activity-feed"));
+let opsData = null, opsActIdx = 0, lastFeedConnected = null;
+const seenRec = {};                                    // last announced rec per symbol
+
+function detectActivity(sym, st) {
+  const recs = (st && st.recommendations) || [];
+  if (!recs.length) return;
+  const r = recs[recs.length - 1];                     // newest recommendation
+  if (!r || !r.created_ts) return;
+  const key = sym + "|" + r.strategy + "|" + r.created_ts;
+  if (seenRec[sym] === key) return;                    // already announced
+  seenRec[sym] = key;
+  const high = r.verdict === "A_PLUS";
+  Ops.pushActivity((high ? "⚡ High-conviction setup: " : "⚡ Trade setup: ")
+    + sym + " " + r.direction + " (" + r.strategy + ")", "setup");
+  if (window.Notify) window.Notify.tradeSetup(sym, r);   // notifications (guarded)
+}
+
+async function pollOps() {
+  try {
+    opsData = await api("/ops");
+    Ops.renderPill($("ops-pill"), opsData, Ops.ACTIVITIES[opsActIdx % Ops.ACTIVITIES.length]);
+    Ops.renderDashboard($("ops-dashboard"), opsData);
+    const conn = opsData.feed && opsData.feed.connected;
+    if (lastFeedConnected !== null && conn !== lastFeedConnected) {
+      Ops.pushActivity(conn ? "Feed reconnected" : "Feed disconnected", conn ? "up" : "down");
+      if (window.Notify) window.Notify.feed(conn);       // notifications (guarded)
+    }
+    lastFeedConnected = conn;
+  } catch (e) { /* transient — keep the last good pill/dashboard */ }
+}
+setInterval(pollOps, 8000); pollOps();
+// rotate the pill's live activity so the app never appears idle (items 3/4)
+setInterval(function () {
+  opsActIdx++;
+  if (opsData) Ops.renderPill($("ops-pill"), opsData, Ops.ACTIVITIES[opsActIdx % Ops.ACTIVITIES.length]);
+}, 3000);
 
 applyAnalysisMode();   // set the initial rail mode before the first payload
 connect();

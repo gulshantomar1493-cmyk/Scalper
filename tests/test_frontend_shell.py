@@ -765,12 +765,43 @@ def test_live_stats_strip_present():
         assert f'id="{slot}"' in html, slot
 
 
-def test_live_bottom_tabs_are_signals_console_review_logs():
+def test_live_bottom_tabs_are_signals_console_review_activity():
+    # the former "Logs" tab now hosts the live Activity feed (pre-prod item 4)
     html = _read("index.html")
-    for tab in ("signals", "console", "review", "logs"):
+    for tab in ("signals", "console", "review", "activity"):
         assert f'data-tab="{tab}"' in html, tab
-    for panel in ("tab-signals", "tab-console", "tab-review", "tab-logs"):
+    for panel in ("tab-signals", "tab-console", "tab-review", "tab-activity"):
         assert f'id="{panel}"' in html, panel
+
+
+def test_ops_status_and_activity_pure_and_wired():
+    """Operational status: Live status pill (items 3/5), Activity feed (item 4),
+    Operations dashboard (items 9/10). ops.js is a pure renderer; app.js owns
+    the GET /ops fetch (§9)."""
+    js = _read("ops.js")
+    assert "window.Ops" in js
+    assert "renderPill" in js and "renderDashboard" in js and "pushActivity" in js
+    for banned in ("fetch(", "WebSocket", "localStorage", "sessionStorage",
+                   "innerHTML", "Math.log", "addSeries"):
+        assert banned not in js, banned                  # pure renderer, XSS-safe
+    assert "window.IST" in js                            # times via IST
+    html = _read("index.html")
+    assert 'src="ops.js"' in html
+    assert html.index("ops.js") < html.index('src="app.js"')
+    assert 'id="ops-pill"' in html                       # top-bar scanner status
+    assert 'id="activity-feed"' in html                  # live activity feed
+    assert 'id="ops-dashboard"' in html                  # operations dashboard
+    app = _read("app.js")
+    assert '"/ops"' in app                               # app.js owns the fetch
+    assert "Ops.pushActivity" in app and "Ops.renderPill" in app
+    assert "detectActivity" in app                       # trade-setup activity
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_ops_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "ops.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
 
 
 def test_app_js_uses_chart_service_and_gates_higher_tfs():

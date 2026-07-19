@@ -41,6 +41,7 @@
             <button id="sym-ETHUSDT" type="button" title="Ethereum">ETHUSDT</button>
           </div>
           <span class="lv-exch mono" title="Exchange">Binance Futures</span>
+          <div class="ops-pill mono" id="ops-pill" title="Scanner status — the app scans continuously"><span class="dot"></span><span class="ops-pill-label">Connecting…</span></div>
           <div class="lv-tfs mono" id="tf-bar" title="Timeframe — 1m &amp; 5m carry analysis; higher TFs are market context">
             <button class="lv-tf" type="button" data-tf="1m">1m</button>
             <button class="lv-tf" type="button" data-tf="5m">5m</button>
@@ -117,13 +118,13 @@
             <button class="lv-tab active" type="button" data-tab="signals">Signals</button>
             <button class="lv-tab" type="button" data-tab="console">Console</button>
             <button class="lv-tab" type="button" data-tab="review">Trade Review</button>
-            <button class="lv-tab" type="button" data-tab="logs">Logs</button>
+            <button class="lv-tab" type="button" data-tab="activity" title="Live activity — what the scanner is doing now">Activity</button>
           </div>
           <div class="lv-tbody">
             <div class="lv-tab-panel" data-tabpanel="signals" id="tab-signals"><div class="lv-tab-empty">No signals yet — waiting for the engine.</div></div>
             <div class="lv-tab-panel" data-tabpanel="console" id="tab-console" hidden><span id="ws-target"></span> <span id="last-event">last event: —</span></div>
             <div class="lv-tab-panel" data-tabpanel="review" id="tab-review" hidden><div class="lv-tab-empty">Open the <b>Trade Review</b> page for full performance.</div></div>
-            <div class="lv-tab-panel" data-tabpanel="logs" id="tab-logs" hidden><div class="lv-tab-empty" id="logs-body">—</div></div>
+            <div class="lv-tab-panel" data-tabpanel="activity" id="tab-activity" hidden><div class="ops-activity" id="activity-feed"></div></div>
           </div>
         </div>
       </section>
@@ -190,6 +191,10 @@
         <header class="pg-head"><div class="pg-title"><b>Settings</b><span data-beginner-text>Theme, helper text, symbols and connection.</span></div></header>
         <div class="pg-body">
           <div class="set-card">
+            <div class="set-cardhead"><b>Operations</b><small>live system status · feed, scanner, database, backfill, uptime</small></div>
+            <div id="ops-dashboard" class="ops-dash"><div class="ops-empty">Loading operations…</div></div>
+          </div>
+          <div class="set-card">
             <div class="set-row"><div><b>Theme</b><small data-beginner-text>Dark terminal or light cream.</small></div>
               <div class="set-seg"><button id="set-theme-dark" type="button">🌙 Dark</button><button id="set-theme-light" type="button">☀️ Light</button></div></div>
             <div class="set-row"><div><b>Beginner mode</b><small data-beginner-text>Show helper text under each section.</small></div>
@@ -241,6 +246,7 @@
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
   <script src="dashboard.js"></script>
+  <script src="ops.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

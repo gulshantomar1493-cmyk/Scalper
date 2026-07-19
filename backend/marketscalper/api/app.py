@@ -117,6 +117,9 @@ def create_app(
     replay_wiring=None,
     psych_guard=None,
     chart_service=None,
+    feed_status=None,
+    started_at=None,
+    ops_symbols=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -207,6 +210,82 @@ def create_app(
         except Exception:
             raise HTTPException(status_code=503, detail="database unavailable")
         return {"status": "ready", "db": "ok"}
+
+    @app.get("/ops", dependencies=[Depends(require_token)])
+    async def ops() -> dict:
+        """Operational status for the Live status pill + Operations dashboard
+        (pre-prod items 3/5/9/10). Read-only: feed/scanner/DB health, per-symbol
+        last candle + data coverage, and uptime. Never touches the engine bus
+        or the analysis payload — this is pure introspection.
+
+        `feed_status`/`started_at`/`ops_symbols` are injected by main() (live
+        only); replay/tests leave them None and the fields degrade gracefully."""
+        now = datetime.now(timezone.utc)
+        symbols = list(ops_symbols or _REPLAY_SYMBOLS)
+        connected = bool(feed_status()) if feed_status is not None else None
+
+        db_ok = True
+        try:
+            async with pool.acquire() as conn:
+                await conn.fetchval("SELECT 1")
+        except Exception:
+            db_ok = False
+
+        last_candle: dict = {}
+        coverage: dict = {}
+        latest_seen = None
+        for sym in symbols:
+            st = store.snapshot(sym)
+            c = getattr(st, "last_candle_1m", None) if st is not None else None
+            ts = c.ts if c is not None else None
+            last_candle[sym] = ts.isoformat() if ts is not None else None
+            if ts is not None and (latest_seen is None or ts > latest_seen):
+                latest_seen = ts
+            coverage[sym] = None
+            if db_ok:
+                try:
+                    async with pool.acquire() as conn:
+                        row = await db.select_candle_coverage(conn, sym, "1m")
+                    coverage[sym] = {
+                        "earliest": row["earliest"].isoformat() if row["earliest"] else None,
+                        "latest": row["latest"].isoformat() if row["latest"] else None,
+                        "count": row["n"],
+                    }
+                except Exception:
+                    coverage[sym] = None
+
+        # Scanner is "running" whenever the feed is live (the analysis loop is
+        # active and building candles) OR a candle closed recently (<180s) —
+        # so it never reads idle during the first minute after startup while
+        # the first live candle is still forming.
+        last_scan_age = (now - latest_seen).total_seconds() if latest_seen else None
+        scanner_running = bool(connected) or (
+            last_scan_age is not None and last_scan_age < 180)
+        # Backfill "active": a symbol's stored latest is well behind now — the
+        # reconnect gap-fill (or the one-time bootstrap) is still catching up.
+        backfill_active = False
+        for sym in symbols:
+            cov = coverage.get(sym)
+            if cov and cov.get("latest"):
+                if (now - datetime.fromisoformat(cov["latest"])).total_seconds() > 180:
+                    backfill_active = True
+        uptime_s = int((now - started_at).total_seconds()) if started_at is not None else None
+
+        return {
+            "now": now.isoformat(),
+            "feed": {"connected": connected, "symbols": symbols},
+            "scanner": {
+                "running": bool(scanner_running),
+                "last_scan": latest_seen.isoformat() if latest_seen else None,
+                "last_scan_age_s": last_scan_age,
+                "symbols_scanned": symbols,
+            },
+            "database": {"ok": db_ok},
+            "last_candle": last_candle,
+            "data_coverage": coverage,
+            "backfill": {"active": backfill_active},
+            "uptime_s": uptime_s,
+        }
 
     @app.get("/candles", dependencies=[Depends(require_token)])
     async def candles(symbol: str, tf: str, start: datetime, end: datetime) -> list[dict]:

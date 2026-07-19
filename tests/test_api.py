@@ -119,6 +119,32 @@ async def test_health_ready_503_when_db_unreachable():
         await _stop(server, task)
 
 
+async def test_ops_endpoint(db_conn):
+    # Operations status (items 3/5/9/10): feed/scanner/db + coverage + uptime.
+    started = datetime(2026, 7, 19, 10, 0, tzinfo=UTC)
+    bus = EventBus()
+    store = StateStore(bus)
+    app = create_app(bus, store, TxPool(db_conn), TOKEN,
+                     feed_status=lambda: True, started_at=started,
+                     ops_symbols=["BTCUSDT"])
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/ops") as r:
+                assert r.status == 401                     # auth required
+            async with s.get(f"http://{addr}/ops", headers=AUTH) as r:
+                assert r.status == 200
+                d = await r.json()
+                assert d["feed"]["connected"] is True
+                assert d["scanner"]["running"] is True     # feed connected => running
+                assert d["database"]["ok"] is True
+                assert "BTCUSDT" in d["data_coverage"]
+                assert d["uptime_s"] >= 0
+                assert d["backfill"]["active"] in (True, False)
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_requires_bearer_token():
     _, _, app = _pipeline()
     server, task, addr = await _serve(app)

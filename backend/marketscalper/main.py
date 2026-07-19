@@ -540,6 +540,7 @@ def main() -> int:
 
 async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                equity: float = DEFAULT_EQUITY_USD) -> None:
+    started_at = datetime.now(tz=timezone.utc)         # uptime for GET /ops
     pool = await db.create_pool(config.database.dsn)
     async with pool.acquire() as conn:
         created = await db.ensure_partitions(conn)         # D2: startup
@@ -598,7 +599,9 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                          _wire_structure_engines, regime_cfg=regime_cfg,
                          shift_accel_atr_ratio=shift_accel),
                      psych_guard=psych_guard,                 # D23.5 (P4.9)
-                     chart_service=chart_service)             # D26 (Phase 1)
+                     chart_service=chart_service,             # D26 (Phase 1)
+                     feed_status=lambda: feed.connected,      # GET /ops (items 3/5/9)
+                     started_at=started_at, ops_symbols=config.symbols)
 
     await feed.start()
     await sampler.start()

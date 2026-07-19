@@ -924,3 +924,36 @@ body {
 .set-seg button { padding:6px 12px; border:1px solid var(--hairline); border-radius:8px; background:transparent; color:var(--text-dim); cursor:pointer; font:inherit; font-size:12px; }
 .set-seg button:hover { color:var(--text); }
 .set-note { padding:14px 16px; color:var(--text-dim); font-size:12px; max-width:620px; }
+
+/* ==================== operations status + activity feed (pre-prod) ==================== */
+.ops-pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border:1px solid var(--hairline); border-radius:999px; font-size:11px; color:var(--text-dim); white-space:nowrap; }
+.ops-pill .dot { width:7px; height:7px; }
+.ops-pill-label { color:var(--text); font-weight:600; }
+.ops-pill-act { color:var(--accent); }
+.ops-pill-scan { color:var(--text-dim); }
+.dot.down { background:var(--down); box-shadow:0 0 6px var(--down); }
+
+.set-cardhead { padding:4px 4px 10px; border-bottom:1px solid var(--hairline); margin-bottom:10px; }
+.set-cardhead b { font-size:14px; } .set-cardhead small { display:block; font-size:11px; color:var(--text-dim); margin-top:2px; }
+.ops-dash { padding:2px 0 6px; }
+.ops-grid { display:grid; grid-template-columns:auto 1fr; gap:8px 16px; align-items:center; margin-bottom:10px; }
+.ops-k { font-size:12px; color:var(--text-dim); }
+.ops-v { font-size:12px; color:var(--text); }
+.ops-badge { display:inline-block; padding:2px 9px; border-radius:6px; font-size:11px; font-weight:600; }
+.ops-badge.ok  { background:color-mix(in srgb, var(--up) 16%, transparent); color:var(--up); }
+.ops-badge.bad { background:color-mix(in srgb, var(--down) 16%, transparent); color:var(--down); }
+.ops-badge.warn{ background:color-mix(in srgb, var(--warn) 16%, transparent); color:var(--warn); }
+.ops-symcard { border-top:1px solid var(--hairline); padding:8px 0; }
+.ops-sym { font-weight:650; font-size:12px; margin-bottom:4px; }
+.ops-symline { display:flex; justify-content:space-between; gap:12px; font-size:11px; padding:2px 0; }
+.ops-k2 { color:var(--text-dim); } .ops-v2 { color:var(--text); }
+.ops-empty { color:var(--text-dim); font-size:12px; padding:8px 0; }
+
+.ops-activity { display:flex; flex-direction:column; gap:1px; height:100%; overflow-y:auto; font-size:11px; }
+.act-line { display:flex; gap:8px; padding:2px 4px; border-radius:4px; }
+.act-time { color:var(--text-dim); flex:0 0 auto; }
+.act-msg { color:var(--text); }
+.act-setup { background:color-mix(in srgb, var(--accent) 9%, transparent); }
+.act-setup .act-msg { color:var(--accent); font-weight:600; }
+.act-down .act-msg { color:var(--down); }
+.act-up .act-msg { color:var(--up); }

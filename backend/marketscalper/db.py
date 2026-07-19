@@ -95,6 +95,18 @@ async def select_candles(
     )
 
 
+async def select_candle_coverage(
+    conn: asyncpg.Connection, symbol: str, tf: str
+) -> asyncpg.Record:
+    """Earliest/latest stored candle + row count for a symbol/tf — the ops
+    dashboard's data-coverage / backfill readout. Read-only."""
+    return await conn.fetchrow(
+        "SELECT min(ts) AS earliest, max(ts) AS latest, count(*) AS n"
+        " FROM candles WHERE symbol = $1 AND tf = $2",
+        symbol, tf,
+    )
+
+
 # ------------------------------------------------------------------- pivots (002)
 
 
