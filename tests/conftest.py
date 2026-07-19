@@ -62,6 +62,12 @@ timeframes:
   - 5m
 database:
   dsn: ""
+regime:
+  compression_ratio: 0.6
+  expansion_ratio: 1.5
+  median_window_bars: 240
+momentum:
+  shift_accel_atr_ratio: 0.1
 """
 
 

@@ -30,6 +30,7 @@ import os
 import signal
 from collections import deque
 from datetime import datetime, timedelta, timezone
+from functools import partial
 from math import exp
 
 import uvicorn
@@ -48,7 +49,7 @@ from marketscalper.engines.fvg import FvgEngine
 from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
 from marketscalper.engines.orderblock import OrderBlockEngine
 from marketscalper.engines.momentum import (IncrementalATR, MomentumState,
-                                            RegimeClassifier)
+                                            RegimeClassifier, RegimeConfig)
 from marketscalper.analytics import compute_analytics
 from marketscalper.engines.lifecycle import RecommendationLifecycle
 from marketscalper.engines.psychology import PsychologyGuard
@@ -91,7 +92,8 @@ class _StructurePipeline:
 
     def __init__(self, symbol: str, store: StateStore,
                  clock_provider=None, volume_seed=None,
-                 equity=DEFAULT_EQUITY_USD, psych_guard=None) -> None:
+                 equity=DEFAULT_EQUITY_USD, psych_guard=None,
+                 regime_cfg=None, shift_accel_atr_ratio=0.1) -> None:
         self._symbol = symbol
         self._psych_guard = psych_guard            # D23 (P4.9), live-only
         self._store = store
@@ -100,8 +102,12 @@ class _StructurePipeline:
         self._equity = equity                      # D21.5 (display scaling)
         self._atr = IncrementalATR()
         self._atr_5m = IncrementalATR()            # regime input (D16.5)
-        self._momentum = MomentumState(self._atr)
-        self._regime = RegimeClassifier(symbol, self._atr, self._atr_5m)
+        # D9 config-plumbing: regime_cfg / shift_accel default to the frozen
+        # §4.2 literals, so replay/tests (which pass neither) stay byte-
+        # identical; live main() and the P5.3 sweep pass calibrated values.
+        self._momentum = MomentumState(self._atr, shift_accel_atr_ratio)
+        self._regime = RegimeClassifier(symbol, self._atr, self._atr_5m,
+                                        regime_cfg or RegimeConfig())
         self._volume = VolumeEngine(symbol, self._atr)
         if volume_seed:                            # D19.2: 20-day bucket seed
             self._volume.seed(volume_seed)
@@ -440,7 +446,8 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
                             symbols, clock_provider=None,
                             seed_candles=None, recorder=None,
                             equity=DEFAULT_EQUITY_USD,
-                            psych_guard=None) -> None:
+                            psych_guard=None, regime_cfg=None,
+                            shift_accel_atr_ratio=0.1) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
@@ -455,7 +462,9 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
         symbol: _StructurePipeline(
             symbol, store, clock_provider,
             volume_seed=(seed_candles or {}).get(symbol),
-            equity=equity, psych_guard=psych_guard)
+            equity=equity, psych_guard=psych_guard,
+            regime_cfg=regime_cfg,
+            shift_accel_atr_ratio=shift_accel_atr_ratio)
         for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
@@ -562,16 +571,27 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      symbol, len(rows), seed_start, seed_end)
     recorder = SignalRecorder(pool, engine_version_stamp())   # D21.6 (live)
     psych_guard = PsychologyGuard()                # D23 (P4.9), live-only
+    # D9 config-plumbing: bridge the validated config layer to the engine's
+    # RegimeConfig once, then apply it to BOTH the live pipelines and the
+    # replay wiring so an in-app replay reproduces live under calibration.
+    regime_cfg = RegimeConfig(
+        compression_ratio=config.regime.compression_ratio,
+        expansion_ratio=config.regime.expansion_ratio,
+        median_window_bars=config.regime.median_window_bars)
+    shift_accel = config.momentum.shift_accel_atr_ratio
     _wire_structure_engines(
         bus, store, config.symbols,
         clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
         seed_candles=seed_candles, recorder=recorder, equity=equity,
-        psych_guard=psych_guard)
+        psych_guard=psych_guard, regime_cfg=regime_cfg,
+        shift_accel_atr_ratio=shift_accel)
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
     app = create_app(bus, store, pool, token, replay_provider=ReplayFeed,
-                     replay_wiring=_wire_structure_engines,   # F2: full chain
+                     replay_wiring=partial(                   # F2: full chain
+                         _wire_structure_engines, regime_cfg=regime_cfg,
+                         shift_accel_atr_ratio=shift_accel),
                      psych_guard=psych_guard)                 # D23.5 (P4.9)
 
     await feed.start()

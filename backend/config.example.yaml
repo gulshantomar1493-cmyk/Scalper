@@ -20,3 +20,15 @@ timeframes:              # env: MARKETSCALPER_TIMEFRAMES (comma-separated)
 
 database:
   dsn: ""                # SECRET — env: MARKETSCALPER_DB_DSN (PostgreSQL 16)
+
+# Decision D9 (P1.3) regime + momentum-shift constants. Defaults EQUAL the
+# frozen §4.2 literals, so leaving this untouched is byte-identical to the
+# engines' built-in defaults. They exist for the P5.3 calibration sweep and
+# are explicitly UNCALIBRATED — do not tune outside a P5 campaign.
+regime:
+  compression_ratio: 0.6   # env: MARKETSCALPER_REGIME_COMPRESSION_RATIO   (coil: atr_1m < r * atr_5m)
+  expansion_ratio: 1.5     # env: MARKETSCALPER_REGIME_EXPANSION_RATIO     (expansion: atr_1m > r * median)
+  median_window_bars: 240  # env: MARKETSCALPER_REGIME_MEDIAN_WINDOW_BARS  (rolling ATR-median window)
+
+momentum:
+  shift_accel_atr_ratio: 0.1  # env: MARKETSCALPER_MOMENTUM_SHIFT_ACCEL_ATR_RATIO  (|accel| > r * ATR)

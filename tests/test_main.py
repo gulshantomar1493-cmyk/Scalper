@@ -134,6 +134,28 @@ async def test_structure_pipeline_wiring_publishes_payload():
     assert "XRPUSDT" not in str(structure)
 
 
+def test_d9_config_plumbing_propagates_to_engines():
+    """D9: non-default regime_cfg / shift_accel reach the per-symbol engines
+    (the plumbing is real, not cosmetic); the default path stays the frozen
+    §4.2 literals (the byte-identical contract replay/tests rely on)."""
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.engines.momentum import RegimeConfig
+    from marketscalper.main import _StructurePipeline
+
+    store = StateStore(EventBus())
+    cfg = RegimeConfig(compression_ratio=0.4, expansion_ratio=2.0,
+                       median_window_bars=120)
+    tuned = _StructurePipeline("BTCUSDT", store, regime_cfg=cfg,
+                               shift_accel_atr_ratio=0.33)
+    assert tuned._regime._cfg is cfg
+    assert tuned._momentum._ratio == 0.33
+
+    default = _StructurePipeline("ETHUSDT", store)          # no D9 args
+    assert default._regime._cfg == RegimeConfig(0.6, 1.5, 240)
+    assert default._momentum._ratio == 0.1
+
+
 async def test_pipeline_g5_reflects_psychology_guard():
     """P4.9/D23.5: a locked psychology guard threads through to G5 in the
     payload — the whole bar goes NO_SIGNAL (behavioral circuit-breaker)."""
