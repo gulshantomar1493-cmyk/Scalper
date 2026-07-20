@@ -153,6 +153,38 @@ def test_chart_loading_overlay_present_and_wired():
     assert 'loadEl.textContent = ""' in app                            # cleared after
 
 
+def test_htf_js_pure_renderer_and_wired():
+    """HTF V1.1 panel: a PURE renderer fed by app.js's /api/htf fetch. It never
+    fetches / streams / aggregates / touches storage — the backend owns the
+    analysis; this file only draws it. XSS-safe (textContent)."""
+    js = _read("htf.js")
+    assert "window.Htf" in js and "render:" in js and "init:" in js
+    for banned in ("fetch(", "WebSocket", "localStorage", "sessionStorage",
+                   "Math.log", "Math.exp", "slope", "intercept", "ATR",
+                   "tolerance", ".reduce(", "aggregate", "innerHTML"):
+        assert banned not in js, banned
+    assert "textContent" in js
+    # render surface: overall bias + market story + per-tf cards + signal alignment
+    assert "Higher-Timeframe" in js and "market_story" in js and "timeframes" in js
+    assert "alignment" in js and "aligned" in js
+    # index loads htf.js after panel.js, before app.js; the panel container exists
+    html = _read("index.html")
+    assert 'src="htf.js"' in html and 'id="htf-panel"' in html
+    assert html.index('src="htf.js"') < html.index('src="app.js"')
+    # app.js owns the network (pure-renderer boundary) + wires init / poll / render
+    app = _read("app.js")
+    assert "Htf.init" in app and "Htf.render" in app
+    assert "/api/htf?symbol=" in app and "loadHtf" in app and "HTF_POLL_MS" in app
+    assert ".htf-panel" in _read("styles.css")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_htf_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "htf.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_timefmt_js_is_valid_javascript():
     result = subprocess.run(

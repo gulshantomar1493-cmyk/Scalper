@@ -1138,3 +1138,31 @@ body {
 .wg-hi { color:var(--text-dim); font-size:10.5px; line-height:1.5; margin-top:3px; }   /* WRAPS — full text */
 .wg-reason { color:var(--text); font-family:var(--mono); font-size:10px; line-height:1.45; margin-top:4px; word-break:break-word; }
 .wg-row.fail .wg-reason { color:var(--down); }
+
+/* HTF V1.1 panel — higher-timeframe intelligence (context only). */
+.htf-panel { display:flex; flex-direction:column; gap:8px; padding:11px 12px; margin-bottom:10px;
+  background:var(--surface-raised); border:1px solid var(--hairline); border-radius:10px; }
+.htf-panel:empty { display:none; }
+.htf-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+.htf-title { font-size:11px; font-weight:700; letter-spacing:.02em; color:var(--text); }
+.htf-badge { font-size:11px; font-weight:800; padding:2px 9px; border-radius:6px; letter-spacing:.03em; }
+.htf-bull { background:color-mix(in srgb, var(--up) 22%, transparent); color:var(--up); }
+.htf-bear { background:color-mix(in srgb, var(--down) 22%, transparent); color:var(--down); }
+.htf-neu  { background:color-mix(in srgb, var(--text-dim) 20%, transparent); color:var(--text-dim); }
+.htf-meta { display:flex; gap:10px; align-items:baseline; }
+.htf-score { font-size:17px; font-weight:800; color:var(--text); font-variant-numeric:tabular-nums; }
+.htf-conf { font-size:10.5px; color:var(--text-dim); }
+.htf-align { font-size:10.5px; font-weight:600; padding:4px 8px; border-radius:6px; }
+.htf-align.ok  { background:color-mix(in srgb, var(--up) 16%, transparent); color:var(--up); }
+.htf-align.bad { background:color-mix(in srgb, var(--warn) 20%, transparent); color:var(--warn); }
+.htf-story { font-size:10.5px; line-height:1.5; color:var(--text-dim); }
+.htf-grid { display:grid; grid-template-columns:1fr 1fr; gap:6px; }
+.htf-card { background:var(--surface); border:1px solid var(--hairline); border-radius:8px;
+  padding:7px 8px; display:flex; flex-direction:column; gap:3px; }
+.htf-card-top { display:flex; align-items:center; justify-content:space-between; gap:6px; }
+.htf-tf { font-size:11px; font-weight:700; color:var(--text); }
+.htf-cbadge { font-size:9px; font-weight:800; padding:1px 6px; border-radius:5px; }
+.htf-card-line { display:flex; justify-content:space-between; gap:6px; font-size:10px; }
+.htf-card-line .htf-k { color:var(--text-dim); }
+.htf-card-line .htf-v { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
+.htf-card-line.htf-dim { color:var(--text-dim); font-style:italic; }

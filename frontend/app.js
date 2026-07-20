@@ -114,6 +114,7 @@ const mainSeries = mainChart.addSeries(LightweightCharts.CandlestickSeries, SERI
 mainChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 0.16 } });
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
+if (window.Htf) Htf.init($("htf-panel"));            // HTF V1.1 panel (pure renderer)
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
@@ -285,6 +286,8 @@ function setSymbol(symbol) {
     if (el) el.classList.toggle("active", s === symbol);
   }
   clearMarketStructure();          // Step 6: box streams the active symbol only
+  renderHtf();                     // show cached HTF for the new symbol, then refresh
+  loadHtf();
   loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
@@ -582,6 +585,7 @@ function connect() {
     if (st) {
       renderSignalsTab(st);
       detectStructureEvents(activeSymbol, st);         // Step 6: stream to Market Structure box
+      renderHtf();                                     // HTF alignment tracks the live signal
       if (!replayMode && isAnalysisTf(activeTf)) {
         Overlays.setStructure(st, candle.c);
         Overlays.setSetup(activeRec(st));              // Step 6: setup-only chart annotations
@@ -639,6 +643,37 @@ function activeRec(st) {
   const r = recs[recs.length - 1];
   return (!r.status || r.status === "active") ? r : null;    // draw only an active setup
 }
+/* ---------------------------------------------------------- HTF panel (V1.1) */
+// Higher-timeframe intelligence from GET /api/htf (the isolated HtfService).
+// Polled slowly (the analysis only changes when an HTF candle closes); the
+// alignment badge re-renders on every live signal via the cached result.
+const HTF_POLL_MS = 45000;
+let lastHtf = {};
+function htfDirection() {
+  const st = lastStructure[activeSymbol];
+  const recs = (st && st.recommendations) || [];
+  if (recs.length) return recs[recs.length - 1].direction;
+  const sigs = (st && st.signals) || [];
+  return sigs.length ? sigs[sigs.length - 1].direction : null;
+}
+function renderHtf() {
+  if (window.Htf) Htf.render(lastHtf[activeSymbol] || null, htfDirection());
+}
+async function loadHtf() {
+  if (!window.Htf) return;
+  try {
+    const resp = await fetch(`${HTTP_BASE}/api/htf?symbol=${encodeURIComponent(activeSymbol)}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    if (resp.status === 401) { onAuthFail(); return; }
+    if (!resp.ok) return;
+    const data = await resp.json();
+    lastHtf[data.symbol] = data;
+    if (data.symbol === activeSymbol) renderHtf();
+  } catch (e) { /* transient — the next poll retries */ }
+}
+setInterval(loadHtf, HTF_POLL_MS);
+
 function detectStructureEvents(sym, st) {
   if (!st || sym !== activeSymbol) return;             // stream the active symbol only
   const seen = (key, id, msg, cls) => {
@@ -869,6 +904,7 @@ function boot() {
   connect();          // WebSocket (its onopen bootstraps history)
   _startOps();        // /ops polling + activity pill
   loadSettings();     // notifications + telegram (settings page)
+  loadHtf();          // HTF V1.1 panel (then polled every HTF_POLL_MS)
 }
 function resetToLogin() {
   if (window.__msToken) window.__msToken.clear();
