@@ -42,6 +42,7 @@ from marketscalper.core.bus import EventBus
 from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.candle_writer import CandleWriter
 from marketscalper.core.chart_service import ChartService
+from marketscalper.core.htf import HtfService
 from marketscalper.core.live_bar import LiveBarTracker, LiveIndicatorTracker
 from marketscalper.core.reconciler import KlineReconciler
 from marketscalper.core.recorder import SignalRecorder, engine_version_stamp
@@ -611,6 +612,10 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     # The live feed is injected only as the gap-fill provider (fetches canonical
     # 1m; ChartService itself imports no concrete provider — P0.19).
     chart_service = ChartService(pool, provider=feed)
+    # HTF V1.1: higher-timeframe intelligence, compute-on-read over ChartService.
+    # Isolated from the engine bus / structure payload / determinism (like the
+    # ChartService it reads through); display-only context for the 1m/5m engine.
+    htf_service = HtfService(chart_service)
     # Username/password login (single-user tool): credentials live in the env
     # (git-ignored .env). None set -> /login answers 503 and the frontend falls
     # back to a token in the URL (dev). The API token stays the data-route gate.
@@ -624,6 +629,7 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                          shift_accel_atr_ratio=shift_accel),
                      psych_guard=psych_guard,                 # D23.5 (P4.9)
                      chart_service=chart_service,             # D26 (Phase 1)
+                     htf_service=htf_service,                 # HTF V1.1
                      feed_status=lambda: feed.connected,      # GET /ops (items 3/5/9)
                      started_at=started_at, ops_symbols=config.symbols,
                      settings=settings,                       # items 7/8 (live)

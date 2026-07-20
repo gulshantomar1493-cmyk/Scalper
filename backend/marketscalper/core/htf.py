@@ -22,8 +22,10 @@ Execution stays 1m/5m: HTF only adds context, bias and confidence.
 
 from __future__ import annotations
 
+import asyncio
 import math
-from datetime import datetime
+import time
+from datetime import datetime, timedelta, timezone
 
 from marketscalper.core import indicators as ind
 from marketscalper.engines.liquidity import LiquidityEngine, SweepEvent
@@ -399,3 +401,53 @@ def analyze(symbol: str, candles_by_tf: dict[str, list[dict]]) -> dict:
     for a in per_tf.values():
         a.pop("_signed", None)          # internal weight, never surfaced
     return {"symbol": symbol, "timeframes": per_tf, "overall": overall}
+
+
+# Fetch a little more than the analysis window per tf so the last LOOKBACK_BARS
+# are dense (closed-bucket exclusion / partial edges).
+_FETCH_BARS = LOOKBACK_BARS + 60
+_TF_MINUTES = {"15m": 15, "1h": 60, "4h": 240, "1d": 1440}
+
+
+class HtfService:
+    """Compute-on-read HTF read-model: fetch the aggregated HTF candles through
+    the engine-isolated ChartService, run analyze(), and cache per symbol for a
+    short TTL (the analysis only changes when a new HTF candle closes, >= 15 min).
+
+    Isolated exactly like ChartService — it touches no EventBus, no persistence,
+    and never the `structure` payload; so it cannot move the determinism hash.
+    Only RECENT ranges are fetched (ending now), so ChartService never triggers a
+    deep historical gap-fill."""
+
+    def __init__(self, chart_service, ttl_seconds: float = 30.0) -> None:
+        self._cs = chart_service
+        self._ttl = ttl_seconds
+        self._cache: dict[str, tuple[float, dict]] = {}
+        self._locks: dict[str, asyncio.Lock] = {}
+
+    def _lock(self, symbol: str) -> asyncio.Lock:
+        lock = self._locks.get(symbol)
+        if lock is None:
+            lock = self._locks[symbol] = asyncio.Lock()
+        return lock
+
+    async def analyze(self, symbol: str, now: datetime | None = None) -> dict:
+        hit = self._cache.get(symbol)
+        if hit is not None and time.monotonic() - hit[0] < self._ttl:
+            return hit[1]
+        async with self._lock(symbol):
+            hit = self._cache.get(symbol)               # re-check under the lock
+            if hit is not None and time.monotonic() - hit[0] < self._ttl:
+                return hit[1]
+            result = await self._compute(symbol, now)
+            self._cache[symbol] = (time.monotonic(), result)
+            return result
+
+    async def _compute(self, symbol: str, now: datetime | None) -> dict:
+        end = now or datetime.now(timezone.utc)
+        candles_by_tf: dict[str, list[dict]] = {}
+        for tf in HTF_TIMEFRAMES:
+            start = end - timedelta(minutes=_TF_MINUTES[tf] * _FETCH_BARS)
+            chart = await self._cs.get_chart(symbol, tf, start, end)
+            candles_by_tf[tf] = chart["candles"]
+        return analyze(symbol, candles_by_tf)

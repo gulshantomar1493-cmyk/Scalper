@@ -1038,6 +1038,63 @@ def test_chart_service_htf_context_pure():
     assert cs._context("1h", candles[:10]) is None         # too few candles
 
 
+# ------------------------------------------------ /api/htf (HTF V1.1)
+
+
+class _FakeHtf:
+    """A canned HtfService (the candle-fetching + analysis are unit-tested in
+    test_htf.py); the endpoint test only proves the route + auth + shape."""
+
+    async def analyze(self, symbol, now=None):
+        return {"symbol": symbol, "timeframes": {},
+                "overall": {"bias": "BULLISH", "score": 70.0, "confidence": 100,
+                            "market_story": "story", "explanation": "why"}}
+
+
+def _htf_app(with_service=True):
+    bus = EventBus()
+    store = StateStore(bus)
+    return create_app(bus, store, None, TOKEN,
+                      htf_service=_FakeHtf() if with_service else None)
+
+
+async def test_api_htf_requires_token():
+    server, task, addr = await _serve(_htf_app())
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/htf",
+                             params={"symbol": "BTCUSDT"}) as r:
+                assert r.status == 401
+    finally:
+        await _stop(server, task)
+
+
+async def test_api_htf_503_when_not_configured():
+    server, task, addr = await _serve(_htf_app(with_service=False))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/htf",
+                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
+                assert r.status == 503
+    finally:
+        await _stop(server, task)
+
+
+async def test_api_htf_returns_analysis():
+    server, task, addr = await _serve(_htf_app())
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/htf",
+                             params={"symbol": "ETHUSDT"}, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+    finally:
+        await _stop(server, task)
+    assert set(body) == {"symbol", "timeframes", "overall"}
+    assert body["symbol"] == "ETHUSDT"
+    assert body["overall"]["bias"] == "BULLISH"
+
+
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
     # regression: /candles stays a BARE array with the pinned tf in {1m,5m}
     await _seed_candles(db_conn, n=5)

@@ -120,6 +120,7 @@ def create_app(
     replay_wiring=None,
     psych_guard=None,
     chart_service=None,
+    htf_service=None,
     feed_status=None,
     started_at=None,
     ops_symbols=None,
@@ -434,6 +435,17 @@ def create_app(
                 ema=ema_lens or None, sma=_period(sma), rsi=_period(rsi))
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
+
+    # ------------------------------------------------------ HTF (V1.1)
+    # Higher-timeframe intelligence: 15m/1h/4h/1d SMC analysis + overall
+    # bias/confidence/market-story. ADDITIVE and ISOLATED (like /api/chart) —
+    # off the engine bus / structure payload / determinism stream. Display-only:
+    # execution stays 1m/5m; HTF only adds context and confidence.
+    @app.get("/api/htf", dependencies=[Depends(require_token)])
+    async def api_htf(symbol: str) -> dict:
+        if htf_service is None:
+            raise HTTPException(status_code=503, detail="htf service not configured")
+        return await htf_service.analyze(symbol)
 
     # ------------------------------------------------------ journal (P4.8)
     # The recommendation core + the AUTO journal context (reason_text,

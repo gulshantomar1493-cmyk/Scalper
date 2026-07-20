@@ -126,3 +126,48 @@ def test_missing_timeframe_handled():
     assert r["timeframes"]["1d"]["ready"] is False
     assert r["timeframes"]["1h"]["ready"] is True
     assert r["overall"]["bias"] in ("BULLISH", "BEARISH", "NEUTRAL")
+
+
+# ------------------------------------------------------------- HtfService
+
+class _FakeChart:
+    """Stand-in for ChartService.get_chart — counts fetches, returns preset
+    candles per tf (ignores the range, like a warm cache would)."""
+
+    def __init__(self, candles_by_tf: dict) -> None:
+        self._cbt = candles_by_tf
+        self.calls = 0
+
+    async def get_chart(self, symbol, tf, start, end, **kw):
+        self.calls += 1
+        return {"candles": self._cbt.get(tf, [])}
+
+
+def _cbt():
+    return {tf: _wave(300, 100.0, 0.5, 4.0) for tf in htf.HTF_TIMEFRAMES}
+
+
+async def test_service_caches_within_ttl():
+    fake = _FakeChart(_cbt())
+    svc = htf.HtfService(fake, ttl_seconds=999.0)
+    r1 = await svc.analyze("BTCUSDT", now=_BASE)
+    r2 = await svc.analyze("BTCUSDT", now=_BASE)
+    assert r1 == r2 and r1["overall"]["bias"] == "BULLISH"
+    assert fake.calls == len(htf.HTF_TIMEFRAMES)          # fetched once, then cache hit
+
+
+async def test_service_recomputes_after_ttl():
+    fake = _FakeChart(_cbt())
+    svc = htf.HtfService(fake, ttl_seconds=0.0)           # always stale
+    await svc.analyze("BTCUSDT", now=_BASE)
+    await svc.analyze("BTCUSDT", now=_BASE)
+    assert fake.calls == 2 * len(htf.HTF_TIMEFRAMES)      # recomputed both times
+
+
+async def test_service_isolates_symbols():
+    fake = _FakeChart(_cbt())
+    svc = htf.HtfService(fake, ttl_seconds=999.0)
+    a = await svc.analyze("BTCUSDT", now=_BASE)
+    b = await svc.analyze("ETHUSDT", now=_BASE)
+    assert a["symbol"] == "BTCUSDT" and b["symbol"] == "ETHUSDT"
+    assert fake.calls == 2 * len(htf.HTF_TIMEFRAMES)      # a per-symbol cache each
