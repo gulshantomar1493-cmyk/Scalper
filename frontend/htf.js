@@ -55,6 +55,12 @@
       l3.appendChild(el("span", "htf-k", "S/R"));
       l3.appendChild(el("span", "htf-v", fmt(a.support) + " / " + fmt(a.resistance)));
       card.appendChild(l3);
+      var l4 = el("div", "htf-card-line");
+      l4.appendChild(el("span", "htf-k", "Momentum"));
+      var mom = (a.momentum && a.momentum.direction) || "flat";
+      var ev = a.choch ? "CHOCH " + a.choch.direction : (a.bos ? "BOS " + a.bos.direction : "");
+      l4.appendChild(el("span", "htf-v", mom + (ev ? " · " + ev : "")));
+      card.appendChild(l4);
     } else {
       top.appendChild(el("span", "htf-cbadge htf-neu", "—"));
       card.appendChild(top);
