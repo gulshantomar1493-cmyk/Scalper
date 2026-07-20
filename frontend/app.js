@@ -104,6 +104,10 @@ function makeChart(el) {
   // kinetic scroll is OFF by default — enabling it gives drag momentum/inertia
   // (the "momentum drag" feel). handleScroll/handleScale are already enabled.
   opts.kineticScroll = { mouse: true, touch: true };
+  // Crosshair follows the cursor EXACTLY (Normal), not snapping to the nearest
+  // OHLC (Magnet is the LWC default) — so the price under the pointer is the
+  // exact price you point at, like Delta / TradingView.
+  opts.crosshair = { mode: (LightweightCharts.CrosshairMode ? LightweightCharts.CrosshairMode.Normal : 0) };
   return LightweightCharts.createChart(el, opts);
 }
 
@@ -122,8 +126,8 @@ Drawing.init(mainChart, mainSeries);                 // display-only drawing too
 // Crosshair OHLC readout (item 12) — reads the hovered bar from LWC, no caching.
 mainChart.subscribeCrosshairMove((param) => {
   const box = $("crosshair-box"); if (!box) return;
-  const d = (param.time && param.seriesData) ? param.seriesData.get(mainSeries) : null;
-  if (!d) { box.hidden = true; return; }
+  if (!param.point) { box.hidden = true; return; }
+  const d = param.seriesData ? param.seriesData.get(mainSeries) : null;
   box.hidden = false; box.textContent = "";
   const put = (k, v, cls) => {
     const w = document.createElement("span"); w.className = "cx-item " + (cls || "");
@@ -131,8 +135,10 @@ mainChart.subscribeCrosshairMove((param) => {
     const b = document.createElement("span"); b.textContent = v; w.appendChild(b);
     box.appendChild(w);
   };
-  put("", window.IST.dateTime((typeof param.time === "number" ? param.time : 0) * 1000), "cx-time");
-  put("O", fmt(d.open)); put("H", fmt(d.high)); put("L", fmt(d.low)); put("C", fmt(d.close));
+  const px = mainSeries.coordinateToPrice(param.point.y);   // EXACT price under the pointer
+  if (px != null) put("@", fmt(px), "cx-price");
+  if (typeof param.time === "number") put("", window.IST.dateTime(param.time * 1000), "cx-time");
+  if (d) { put("O", fmt(d.open)); put("H", fmt(d.high)); put("L", fmt(d.low)); put("C", fmt(d.close)); }
   const vs = Indicators.volumeSeries && Indicators.volumeSeries();
   const vd = (vs && param.seriesData) ? param.seriesData.get(vs) : null;   // item 12: volume
   if (vd && vd.value != null) put("V", fmt(vd.value));
@@ -504,6 +510,7 @@ const paperApi = {
   close: (b) => api("/api/paper/close", { method: "POST", body: JSON.stringify(b) }),
   cancel: (b) => api("/api/paper/order/cancel", { method: "POST", body: JSON.stringify(b) }),
   wallet: (b) => api("/api/paper/wallet", { method: "POST", body: JSON.stringify(b) }),
+  sltp: (b) => api("/api/paper/sltp", { method: "POST", body: JSON.stringify(b) }),
 };
 if (window.Paper) Paper.init(paperApi);
 
@@ -599,10 +606,7 @@ async function updatePaperMarkers() {
     const st = await paperApi.state();
     clearPaperLines();
     const here = (st.positions || []).filter((p) => p.symbol === activeSymbol);
-    here.forEach((p) => {
-      paperLines.push(mainSeries.createPriceLine({ price: p.avg_entry,
-        color: p.side === "LONG" ? "#22c55e" : "#ef4444", lineWidth: 1,
-        lineStyle: 0, axisLabelVisible: true, title: p.side + " " + p.qty }));
+    here.forEach((p) => {                                 // LIQ tag on the price axis; entry/SL/TP are the draggable HTML overlay
       if (p.liq_price) paperLines.push(mainSeries.createPriceLine({ price: p.liq_price,
         color: "#f59e0b", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "LIQ" }));
     });
@@ -661,6 +665,7 @@ function syncTradeWidget() {
   if (mode !== tradeMode || (paperPos && w.__pid !== paperPos.id)) {
     tradeMode = mode; w.__pid = paperPos ? paperPos.id : null;
     buildTradeWidget(w);
+    olBuild();                                            // (re)build the on-chart entry / SL / TP lines
   }
   updateTradePnl(livePrice());
 }
@@ -670,6 +675,91 @@ function updateTradePnl(price) {
   el.textContent = money2(pnl);
   el.className = "ct-pnl " + (pnl > 0 ? "up" : pnl < 0 ? "down" : "");
 }
+
+/* -------- draggable on-chart order lines (Delta-style): entry + P&L, drag SL / TP --------
+   HTML rows positioned each animation frame by priceToCoordinate; SL/TP drag to a price
+   and commit via /api/paper/sltp. Pointer math only — no engine math, no network here
+   beyond the paperApi callback (app.js owns the call; the modules stay pure). */
+const olEls = {};                         // { entry, sl, tp } row elements
+let olRAF = null;
+let olDrag = null;                        // { kind:"sl"|"tp", price } while dragging
+
+function olClear() {
+  const c = $("chart-orders"); if (c) c.textContent = "";
+  olEls.entry = olEls.sl = olEls.tp = null;
+  if (olRAF) { cancelAnimationFrame(olRAF); olRAF = null; }
+}
+function olMakeRow(kind, sideCls) {
+  const c = $("chart-orders"); if (!c) return null;
+  const row = document.createElement("div");
+  row.className = "ol-row ol-" + kind + (sideCls ? " " + sideCls : "");
+  const label = document.createElement("span"); label.className = "ol-label";
+  row.appendChild(label);
+  if (kind === "sl" || kind === "tp") {
+    row.classList.add("ol-drag");
+    row.title = "Drag to set " + (kind === "sl" ? "stop-loss" : "take-profit");
+    row.addEventListener("mousedown", (e) => { e.preventDefault(); e.stopPropagation(); olDrag = { kind, price: null }; });
+  }
+  c.appendChild(row);
+  return row;
+}
+function olSet(row, price, text, labelCls) {
+  if (!row) return;
+  const y = price == null ? null : mainSeries.priceToCoordinate(price);
+  if (y == null) { row.style.display = "none"; return; }
+  row.style.display = ""; row.style.top = y + "px";
+  const l = row.querySelector(".ol-label");
+  if (l) { l.textContent = text; l.className = "ol-label" + (labelCls ? " " + labelCls : ""); }
+}
+function olDefault(kind) {                 // suggested bracket when none is set yet (±1% / ±2% of entry)
+  const p = paperPos; if (!p) return null;
+  const d = kind === "sl" ? 0.01 : 0.02;
+  const long = p.side === "LONG";
+  return (long === (kind === "tp")) ? p.avg_entry * (1 + d) : p.avg_entry * (1 - d);
+}
+function olTick() {
+  if (!paperPos) { olClear(); return; }
+  const p = paperPos, price = livePrice();
+  const pnl = price != null ? (p.side === "LONG" ? price - p.avg_entry : p.avg_entry - price) * p.qty : 0;
+  olSet(olEls.entry, p.avg_entry, "ENTRY " + fmt(p.avg_entry) + "   " + money2(pnl),
+        pnl > 0 ? "up" : pnl < 0 ? "down" : "");
+  if (!(olDrag && olDrag.kind === "sl")) {
+    const v = p.sl != null ? p.sl : olDefault("sl");
+    olSet(olEls.sl, v, (p.sl != null ? "SL " : "SL · drag ") + fmt(v));
+    if (olEls.sl) olEls.sl.classList.toggle("ol-unset", p.sl == null);
+  }
+  if (!(olDrag && olDrag.kind === "tp")) {
+    const v = p.tp != null ? p.tp : olDefault("tp");
+    olSet(olEls.tp, v, (p.tp != null ? "TP " : "TP · drag ") + fmt(v));
+    if (olEls.tp) olEls.tp.classList.toggle("ol-unset", p.tp == null);
+  }
+  olRAF = requestAnimationFrame(olTick);
+}
+function olBuild() {
+  olClear();
+  if (!paperPos || !$("chart-orders")) return;
+  olEls.entry = olMakeRow("entry", paperPos.side === "LONG" ? "up" : "down");
+  olEls.sl = olMakeRow("sl");
+  olEls.tp = olMakeRow("tp");
+  olTick();
+}
+document.addEventListener("mousemove", (e) => {
+  if (!olDrag || !paperPos) return;
+  const c = $("chart-orders"); if (!c) return;
+  const price = mainSeries.coordinateToPrice(e.clientY - c.getBoundingClientRect().top);
+  if (price == null || price <= 0) return;
+  olDrag.price = price;
+  const row = olEls[olDrag.kind];
+  if (row) { row.classList.remove("ol-unset"); olSet(row, price, (olDrag.kind === "sl" ? "SL " : "TP ") + fmt(price)); }
+});
+document.addEventListener("mouseup", () => {
+  const d = olDrag; olDrag = null;
+  if (!d || !paperPos || d.price == null) return;
+  const body = { position_id: paperPos.id, sl: paperPos.sl, tp: paperPos.tp };
+  body[d.kind] = d.price;
+  paperApi.sltp(body).then(() => updatePaperMarkers())
+    .catch((err) => note("sl/tp: " + (err.message || err)));
+});
 
 /* -------------------------------------------------- settings (Step 7) */
 {

@@ -1301,3 +1301,27 @@ body {
 .ct-at { font-size:11px; color:var(--text-dim); }
 .ct-pnl { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; min-width:62px; text-align:right; }
 .ct-pnl.up { color:var(--up); } .ct-pnl.down { color:var(--down); }
+/* crosshair — exact price under the pointer (Delta-style) */
+.crosshair-box .cx-price b { color:var(--accent); }
+.crosshair-box .cx-price span { color:var(--accent); font-weight:800; }
+
+/* draggable on-chart order lines: entry (with live P&L) + drag SL / TP */
+.chart-orders { position:absolute; inset:0; z-index:6; pointer-events:none; overflow:hidden; }
+.ol-row { position:absolute; left:0; right:0; height:0; border-top:1.5px dashed var(--hairline); transform:translateY(-50%); }
+.ol-label { position:absolute; left:8px; top:0; transform:translateY(-50%); padding:1px 8px; border-radius:5px;
+  font-size:11px; font-weight:700; font-variant-numeric:tabular-nums; white-space:nowrap;
+  background:color-mix(in srgb, var(--surface-raised) 92%, transparent); border:1px solid var(--hairline); }
+.ol-entry { border-top-style:solid; }
+.ol-entry.up { border-top-color:var(--up); } .ol-entry.down { border-top-color:var(--down); }
+.ol-entry .ol-label { border-color:var(--text-dim); }
+.ol-entry .ol-label.up { color:var(--up); border-color:var(--up); }
+.ol-entry .ol-label.down { color:var(--down); border-color:var(--down); }
+.ol-sl { border-top-color:var(--down); }
+.ol-sl .ol-label { color:var(--down); border-color:var(--down); }
+.ol-tp { border-top-color:var(--up); }
+.ol-tp .ol-label { color:var(--up); border-color:var(--up); }
+.ol-drag { pointer-events:auto; cursor:ns-resize; }
+.ol-drag::after { content:""; position:absolute; left:0; right:0; top:-6px; height:12px; }  /* fat grab strip */
+.ol-drag .ol-label { cursor:ns-resize; }
+.ol-unset { opacity:.55; }
+.ol-unset .ol-label { font-style:italic; font-weight:600; }

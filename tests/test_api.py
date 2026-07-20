@@ -1179,6 +1179,47 @@ async def test_api_paper_trading_flow(db_conn):
         await _stop(server, task)
 
 
+async def test_api_paper_sltp_and_trigger(db_conn):
+    bus = EventBus()
+    store = StateStore(bus)
+    await bus.publish(Candle(symbol="BTCUSDT", tf="1m", ts=M0, o=64000.0, h=64000.0,
+                             l=64000.0, c=64000.0, v=1.0, qv=64000.0, n_trades=1, taker_buy_v=0.5))
+    app = create_app(bus, store, TxPool(db_conn), TOKEN, ops_symbols=["BTCUSDT", "ETHUSDT"])
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"http://{addr}/api/paper/wallet", json={"balance": 10000}, headers=AUTH) as r:
+                assert r.status == 200
+            async with s.post(f"http://{addr}/api/paper/order",
+                              json={"symbol": "BTCUSDT", "side": "BUY", "type": "market", "qty": 0.1, "leverage": 10},
+                              headers=AUTH) as r:
+                assert r.status == 200
+            async with s.get(f"http://{addr}/api/paper", headers=AUTH) as r:
+                pid = (await r.json())["positions"][0]["id"]
+            # set SL 63000 / TP 65000 (the draggable chart brackets)
+            async with s.post(f"http://{addr}/api/paper/sltp",
+                              json={"position_id": pid, "sl": 63000, "tp": 65000}, headers=AUTH) as r:
+                assert r.status == 200
+                pos = await r.json()
+                assert pos["sl"] == 63000.0 and pos["tp"] == 65000.0
+            async with s.post(f"http://{addr}/api/paper/sltp",
+                              json={"position_id": pid, "sl": -5}, headers=AUTH) as r:
+                assert r.status == 400                          # bad SL
+            # the mark drops below the SL -> the sync (on GET) closes the position at the SL
+            await bus.publish(Candle(symbol="BTCUSDT", tf="1m", ts=M0 + timedelta(minutes=1),
+                                     o=62000.0, h=62000.0, l=62000.0, c=62000.0, v=1.0, qv=62000.0,
+                                     n_trades=1, taker_buy_v=0.5))
+            async with s.get(f"http://{addr}/api/paper", headers=AUTH) as r:
+                st = await r.json()
+                assert len(st["positions"]) == 0                # closed by the stop
+                assert st["history"][0]["price"] == 63000.0     # filled at the SL, not the mark
+            async with s.post(f"http://{addr}/api/paper/sltp",
+                              json={"position_id": 999999, "sl": 100}, headers=AUTH) as r:
+                assert r.status == 404
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
     # regression: /candles stays a BARE array with the pinned tf in {1m,5m}
     await _seed_candles(db_conn, n=5)

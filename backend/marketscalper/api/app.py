@@ -778,6 +778,23 @@ def create_app(
         async with pool.acquire() as conn:
             return await paper_service.reset_wallet(conn, float(bal))
 
+    @app.post("/api/paper/sltp", dependencies=[Depends(require_token)])
+    async def api_paper_sltp(payload: dict = Body(...)) -> dict:
+        pid = payload.get("position_id")
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            _bad("position_id (integer) required")
+        vals = {}
+        for k in ("sl", "tp"):
+            v = payload.get(k)
+            if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0):
+                _bad(f"{k} must be a positive number or null")
+            vals[k] = float(v) if v is not None else None
+        async with pool.acquire() as conn:
+            pos = await paper_service.set_sltp(conn, pid, vals["sl"], vals["tp"])
+        if pos is None:
+            raise HTTPException(status_code=404, detail="position not found or closed")
+        return pos
+
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
         supplied = websocket.query_params.get("token")

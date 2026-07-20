@@ -16,7 +16,7 @@ from marketscalper.core import papertrade as pt
 
 DEFAULT_BALANCE = 10000.0
 _POS_COLS = ("id, symbol, side, qty, avg_entry, leverage, margin, liq_price,"
-             " realized_pnl, fees_paid, opened_at")
+             " realized_pnl, fees_paid, sl, tp, opened_at")
 
 
 def _f(v):
@@ -30,6 +30,7 @@ def _pos_dict(row) -> dict:
             "liq_price": _f(row["liq_price"]) or 0.0,
             "realized_pnl": float(row["realized_pnl"] or 0),
             "fees_paid": float(row["fees_paid"] or 0),
+            "sl": _f(row["sl"]), "tp": _f(row["tp"]),
             "opened_at": row["opened_at"].isoformat() if row["opened_at"] else None}
 
 
@@ -120,15 +121,29 @@ async def _sync(conn, acct, marks: dict):
                           reduce_only=o["reduce_only"], order_id=o["id"])
         await conn.execute("UPDATE paper_orders SET status='filled', fill_price=$2, filled_at=now() WHERE id=$1",
                            o["id"], fill_price)
-    # 2) liquidate positions whose loss reached the margin
+    # 2) close positions whose SL / TP / liquidation was hit (at the trigger price)
     for row in await conn.fetch(f"SELECT {_POS_COLS} FROM paper_positions WHERE status='open' ORDER BY id"):
         pos = _pos_dict(row)
         mark = marks.get(pos["symbol"])
-        if mark is not None and pt.is_liquidated(pos, mark):
+        if mark is None:
+            continue
+        hit = None
+        if pos["side"] == "LONG":
+            if pos["sl"] is not None and mark <= pos["sl"]:
+                hit = pos["sl"]
+            elif pos["tp"] is not None and mark >= pos["tp"]:
+                hit = pos["tp"]
+        else:
+            if pos["sl"] is not None and mark >= pos["sl"]:
+                hit = pos["sl"]
+            elif pos["tp"] is not None and mark <= pos["tp"]:
+                hit = pos["tp"]
+        if hit is None and pt.is_liquidated(pos, mark):
+            hit = pos["liq_price"] or mark
+        if hit is not None:
             side = "SELL" if pos["side"] == "LONG" else "BUY"
             await _apply_fill(conn, acct, symbol=pos["symbol"], side=side,
-                              qty=pos["qty"], price=pos["liq_price"] or mark,
-                              leverage=pos["leverage"], reduce_only=True)
+                              qty=pos["qty"], price=hit, leverage=pos["leverage"], reduce_only=True)
 
 
 async def get_state(conn, marks: dict) -> dict:
@@ -193,3 +208,12 @@ async def close_position(conn, position_id: int, marks: dict) -> dict:
     return await _apply_fill(conn, acct, symbol=pos["symbol"], side=side,
                              qty=pos["qty"], price=mark, leverage=pos["leverage"],
                              reduce_only=True)
+
+
+async def set_sltp(conn, position_id: int, sl, tp) -> dict | None:
+    """Set / modify a position's stop-loss and take-profit (dragging the chart
+    lines). NULL clears a bracket. None if the position is not open."""
+    row = await conn.fetchrow(
+        f"UPDATE paper_positions SET sl=$2, tp=$3 WHERE id=$1 AND status='open'"
+        f" RETURNING {_POS_COLS}", position_id, sl, tp)
+    return _pos_dict(row) if row else None

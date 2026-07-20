@@ -871,6 +871,37 @@ def test_chart_trade_widget_present_and_wired():
     assert ".chart-trade" in _read("styles.css")
 
 
+def test_crosshair_follows_exact_pointer_price():
+    """Part A/B: the crosshair reads the EXACT price under the pointer (not the
+    snapped candle close) and shows the hovered candle's full OHLC."""
+    app = _read("app.js")
+    assert "CrosshairMode" in app and "Normal" in app       # not Magnet (which snaps to the close)
+    assert "coordinateToPrice(param.point.y)" in app        # exact cursor price
+    assert 'put("@", fmt(px), "cx-price")' in app
+    for k in ('put("O"', 'put("H"', 'put("L"', 'put("C"'):  # full OHLC of the hovered candle
+        assert k in app, k
+    assert ".cx-price" in _read("styles.css")
+
+
+def test_chart_draggable_sltp_order_lines():
+    """Part C (Delta-style): entry line with running P&L + draggable SL / TP lines
+    on the chart, committed to /api/paper/sltp; positioned by priceToCoordinate,
+    dragged via coordinateToPrice."""
+    html = _read("index.html")
+    assert 'id="chart-orders"' in html
+    app = _read("app.js")
+    for fn in ("olBuild", "olTick", "olDrag", "olMakeRow", "olDefault"):
+        assert fn in app, fn
+    assert "priceToCoordinate" in app and "coordinateToPrice(e.clientY" in app
+    assert "requestAnimationFrame(olTick)" in app           # live reposition + P&L each frame
+    assert "paperApi.sltp" in app and "/api/paper/sltp" in app
+    assert 'sltp: (b) =>' in app                             # the API callback
+    assert "olBuild()" in app                                # (re)built on a position state change
+    css = _read("styles.css")
+    for sel in (".chart-orders", ".ol-row", ".ol-entry", ".ol-sl", ".ol-tp", ".ol-drag", ".ol-unset"):
+        assert sel in css, sel
+
+
 def test_router_has_six_pages_live_default_active():
     html = _read("index.html")
     for pg in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):
