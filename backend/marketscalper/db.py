@@ -368,3 +368,81 @@ async def select_journal(
         " FROM journal WHERE recommendation_id = $1",
         recommendation_id,
     )
+
+
+# --------------------------------------------------------- journal_entries (P5)
+# The STANDALONE user journal (migration 003): full CRUD, owner-editable, kept
+# separate from the append-only recommendation `journal` above. All SQL is
+# parameterised (injection-safe); validation lives in the API layer.
+
+_JE_COLS = (
+    "id", "created_at", "updated_at", "title", "symbol", "direction", "entry",
+    "exit_px", "sl", "tp", "risk_pct", "confidence", "emotion", "mistakes",
+    "lessons", "strategy", "notes", "screenshot", "tags", "recommendation_id")
+# columns a caller may set (id/created_at/updated_at are managed here)
+_JE_FIELDS = _JE_COLS[3:]
+_JE_SELECT = ", ".join(_JE_COLS)
+
+
+async def insert_journal_entry(conn: asyncpg.Connection, fields: dict) -> asyncpg.Record:
+    """Create a journal entry from a dict of settable fields; returns the row."""
+    cols = [c for c in _JE_FIELDS if c in fields]
+    if not cols:
+        return await conn.fetchrow(
+            f"INSERT INTO journal_entries DEFAULT VALUES RETURNING {_JE_SELECT}")
+    placeholders = ", ".join(f"${i + 1}" for i in range(len(cols)))
+    return await conn.fetchrow(
+        f"INSERT INTO journal_entries ({', '.join(cols)}) VALUES ({placeholders})"
+        f" RETURNING {_JE_SELECT}",
+        *[fields[c] for c in cols])
+
+
+async def update_journal_entry(
+    conn: asyncpg.Connection, entry_id: int, fields: dict
+) -> asyncpg.Record | None:
+    """Partial edit of any settable fields; bumps updated_at. None if not found."""
+    cols = [c for c in _JE_FIELDS if c in fields]
+    if not cols:
+        return await get_journal_entry(conn, entry_id)
+    sets = ", ".join(f"{c} = ${i + 2}" for i, c in enumerate(cols))
+    return await conn.fetchrow(
+        f"UPDATE journal_entries SET {sets}, updated_at = now()"
+        f" WHERE id = $1 RETURNING {_JE_SELECT}",
+        entry_id, *[fields[c] for c in cols])
+
+
+async def delete_journal_entry(conn: asyncpg.Connection, entry_id: int) -> bool:
+    """Delete one entry; True if a row was removed."""
+    res = await conn.execute("DELETE FROM journal_entries WHERE id = $1", entry_id)
+    return int(res.split()[-1]) > 0
+
+
+async def get_journal_entry(
+    conn: asyncpg.Connection, entry_id: int
+) -> asyncpg.Record | None:
+    return await conn.fetchrow(
+        f"SELECT {_JE_SELECT} FROM journal_entries WHERE id = $1", entry_id)
+
+
+async def list_journal_entries(
+    conn: asyncpg.Connection, *, search=None, symbol=None, direction=None,
+    strategy=None, limit=200,
+) -> list:
+    """Entries newest-first with optional case-insensitive text search + filters."""
+    where, args = [], []
+    if symbol:
+        args.append(symbol); where.append(f"symbol = ${len(args)}")
+    if direction:
+        args.append(direction); where.append(f"direction = ${len(args)}")
+    if strategy:
+        args.append(strategy); where.append(f"strategy = ${len(args)}")
+    if search:
+        args.append(f"%{search}%")
+        i = len(args)
+        where.append(f"(title ILIKE ${i} OR notes ILIKE ${i} OR lessons ILIKE ${i}"
+                     f" OR mistakes ILIKE ${i} OR strategy ILIKE ${i})")
+    args.append(min(max(int(limit), 1), 500))
+    clause = (" WHERE " + " AND ".join(where)) if where else ""
+    return await conn.fetch(
+        f"SELECT {_JE_SELECT} FROM journal_entries{clause}"
+        f" ORDER BY created_at DESC, id DESC LIMIT ${len(args)}", *args)

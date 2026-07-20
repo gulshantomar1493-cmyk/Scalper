@@ -801,6 +801,35 @@ def test_rail_order_htf_below_market_structure():
     assert rail.index("Market Structure") < rail.index('id="htf-panel"')
 
 
+def test_journal_js_crud_page_pure_and_wired():
+    """P5: the standalone user Journal page — full CRUD renderer. app.js owns the
+    network via callbacks; journal.js never fetches directly."""
+    js = _read("journal.js")
+    assert "window.Journal" in js and "init:" in js and "mount:" in js
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "Math.log", "innerHTML"):
+        assert banned not in js, banned
+    assert "New Entry" in js and "Delete" in js and "Edit" in js               # CRUD controls
+    assert "jr-search" in js and "jr-filter" in js                             # search + filter
+    for field in ("Trade Title", "Direction", "Entry", "Stop Loss", "Take Profit",
+                  "Risk %", "Confidence", "Emotion", "Mistakes", "Lessons Learned",
+                  "Screenshot", "Tags", "Strategy", "Notes"):
+        assert field in js, field                                              # all owner-requested fields
+    html = _read("index.html")
+    assert 'src="journal.js"' in html
+    assert html.index('src="journal.js"') < html.index('src="app.js"')
+    app = _read("app.js")
+    assert "/api/journal" in app and "journalApi" in app                        # CRUD network in app.js
+    assert "Journal.init" in app and "Journal.mount" in app
+    assert ".jr-card" in _read("styles.css")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_journal_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "journal.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_router_has_six_pages_live_default_active():
     html = _read("index.html")
     for pg in ("live", "replay", "review", "journal", "analytics", "settings"):

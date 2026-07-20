@@ -476,6 +476,23 @@ async function quickLogSubmit(recId, fields) {
   return api(`/journal/${recId}`, { method: "PATCH", body: JSON.stringify(fields) });
 }
 
+// P5: standalone user-journal CRUD network. app.js owns the fetch; journal.js
+// renders + calls these callbacks (the pure-consumer boundary).
+const journalApi = {
+  list: (f) => {
+    const q = new URLSearchParams();
+    if (f && f.search) q.set("search", f.search);
+    if (f && f.symbol) q.set("symbol", f.symbol);
+    if (f && f.direction) q.set("direction", f.direction);
+    const qs = q.toString();
+    return api("/api/journal" + (qs ? "?" + qs : ""), { method: "GET" });
+  },
+  create: (body) => api("/api/journal", { method: "POST", body: JSON.stringify(body) }),
+  update: (id, body) => api("/api/journal/" + id, { method: "PATCH", body: JSON.stringify(body) }),
+  remove: (id) => api("/api/journal/" + id, { method: "DELETE" }),
+};
+if (window.Journal) Journal.init(journalApi);
+
 function replayBody() {
   const from = $("replay-from").value, to = $("replay-to").value;
   const raw = $("replay-speed").value;
@@ -528,19 +545,23 @@ async function loadDataPages() {
     ]);
     Dashboard.renderAnalytics($("page-analytics"), analytics);
     Dashboard.renderReview($("page-review"), analytics, journal);
-    Dashboard.renderJournal($("page-journal"), journal);
   } catch (err) {
-    for (const id of ["page-analytics", "page-review", "page-journal"]) {
+    for (const id of ["page-analytics", "page-review"]) {
       const e = $(id); if (e) e.textContent = "Could not load: " + err.message;
     }
   }
 }
-const DATA_PAGES = ["review", "journal", "analytics"];
+// The Journal page is the standalone user journal (P5, full CRUD via journal.js);
+// Review + Analytics stay on the recommendation-performance dashboard.
 window.addEventListener("ms-page", (e) => {
-  if (DATA_PAGES.indexOf(e.detail) >= 0) loadDataPages();
+  if (e.detail === "journal") { if (window.Journal) Journal.mount($("page-journal")); }
+  else if (e.detail === "review" || e.detail === "analytics") loadDataPages();
 });
 for (const btn of document.querySelectorAll("[data-refresh]")) {
-  btn.addEventListener("click", loadDataPages);
+  btn.addEventListener("click", () => {
+    if (btn.getAttribute("data-refresh") === "journal" && window.Journal) Journal.reload();
+    else loadDataPages();
+  });
 }
 
 /* -------------------------------------------------- settings (Step 7) */

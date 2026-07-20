@@ -1095,6 +1095,47 @@ async def test_api_htf_returns_analysis():
     assert body["overall"]["bias"] == "BULLISH"
 
 
+# ------------------------------------------------ /api/journal (P5 user journal)
+
+
+def _je_app(db_conn):
+    bus = EventBus()
+    return create_app(bus, StateStore(bus), TxPool(db_conn), TOKEN)
+
+
+async def test_api_user_journal_crud(db_conn):
+    server, task, addr = await _serve(_je_app(db_conn))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/journal") as r:
+                assert r.status == 401                          # auth required
+            body = {"title": "T", "symbol": "BTCUSDT", "direction": "LONG",
+                    "entry": 64000, "confidence": 8, "tags": ["a", "b"], "notes": "n"}
+            async with s.post(f"http://{addr}/api/journal", json=body, headers=AUTH) as r:
+                assert r.status == 200
+                created = await r.json(); eid = created["id"]
+                assert created["direction"] == "LONG" and created["tags"] == ["a", "b"]
+                assert created["confidence"] == 8 and created["entry"] == 64000.0
+            async with s.get(f"http://{addr}/api/journal/{eid}", headers=AUTH) as r:
+                assert r.status == 200 and (await r.json())["notes"] == "n"
+            async with s.get(f"http://{addr}/api/journal?symbol=BTCUSDT", headers=AUTH) as r:
+                assert r.status == 200 and any(e["id"] == eid for e in await r.json())
+            async with s.patch(f"http://{addr}/api/journal/{eid}",
+                               json={"notes": "edited"}, headers=AUTH) as r:
+                assert r.status == 200 and (await r.json())["notes"] == "edited"
+            for bad in ({"direction": "UP"}, {"confidence": 99}, {"tags": "x"}):
+                async with s.post(f"http://{addr}/api/journal", json=bad, headers=AUTH) as r:
+                    assert r.status == 400, bad
+            async with s.delete(f"http://{addr}/api/journal/{eid}", headers=AUTH) as r:
+                assert r.status == 200
+            async with s.get(f"http://{addr}/api/journal/{eid}", headers=AUTH) as r:
+                assert r.status == 404
+            async with s.delete(f"http://{addr}/api/journal/999999999", headers=AUTH) as r:
+                assert r.status == 404
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
     # regression: /candles stays a BARE array with the pinned tf in {1m,5m}
     await _seed_candles(db_conn, n=5)

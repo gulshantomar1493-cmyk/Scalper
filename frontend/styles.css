@@ -1196,3 +1196,44 @@ body {
 .lv-rail .lv-note { font-size:10px; margin-top:6px; }
 .lv-rail .lv-pill { font-size:9.5px; padding:2px 8px; }
 .lv-rail .htf-panel { padding:9px 10px; margin-bottom:0; }
+
+/* P5: user Journal page — CRUD (toolbar / form / entry cards). */
+.jr-toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin-bottom:14px; }
+.jr-btn { border:1px solid var(--hairline); background:var(--surface-raised); color:var(--text);
+  padding:7px 12px; border-radius:8px; font:inherit; font-size:12px; font-weight:600; cursor:pointer; }
+.jr-btn:hover { border-color:var(--accent); }
+.jr-add { background:var(--accent); color:#04121a; border-color:var(--accent); }
+.jr-save { background:var(--up); color:#04121a; border-color:var(--up); }
+.jr-search { flex:1; min-width:180px; }
+.jr-search, .jr-filter, .jr-input { border:1px solid var(--hairline); background:var(--surface);
+  color:var(--text); padding:7px 10px; border-radius:8px; font:inherit; font-size:12px; }
+.jr-filter { max-width:140px; }
+.jr-form { border:1px solid var(--accent); border-radius:12px; padding:14px; margin-bottom:16px; background:var(--surface-raised); }
+.jr-form-title { font-size:13px; font-weight:700; color:var(--text); margin-bottom:10px; }
+.jr-form-grid { display:grid; grid-template-columns:repeat(auto-fill, minmax(220px, 1fr)); gap:10px; }
+.jr-field { display:flex; flex-direction:column; gap:4px; }
+.jr-flabel { font-size:10.5px; color:var(--text-dim); font-weight:600; }
+.jr-input { width:100%; }
+.jr-area { min-height:56px; resize:vertical; }
+.jr-form-actions { display:flex; gap:8px; margin-top:12px; }
+.jr-list { display:flex; flex-direction:column; gap:10px; }
+.jr-empty { color:var(--text-dim); font-size:12.5px; padding:24px; text-align:center; border:1px dashed var(--hairline); border-radius:10px; }
+.jr-card { border:1px solid var(--hairline); border-radius:10px; padding:11px 13px; background:var(--surface-raised); }
+.jr-card-head { display:flex; align-items:center; gap:8px; margin-bottom:7px; }
+.jr-title { font-size:13px; font-weight:700; color:var(--text); }
+.jr-dir { font-size:10px; font-weight:800; padding:1px 7px; border-radius:5px; }
+.jr-dir.up { background:color-mix(in srgb, var(--up) 20%, transparent); color:var(--up); }
+.jr-dir.down { background:color-mix(in srgb, var(--down) 20%, transparent); color:var(--down); }
+.jr-sym { font-family:var(--mono); font-size:11px; color:var(--text-dim); }
+.jr-spacer { flex:1; }
+.jr-mini { border:1px solid var(--hairline); background:transparent; color:var(--text-dim); padding:3px 9px; border-radius:6px; font:inherit; font-size:11px; cursor:pointer; }
+.jr-mini:hover { color:var(--text); border-color:var(--accent); }
+.jr-del:hover { color:var(--down); border-color:var(--down); }
+.jr-rail { display:flex; flex-wrap:wrap; gap:12px; margin-bottom:6px; font-size:11px; font-family:var(--mono); }
+.jr-kv b { color:var(--text-dim); font-weight:600; }
+.jr-line { font-size:11.5px; color:var(--text-dim); line-height:1.5; }
+.jr-line b { color:var(--text); }
+.jr-tags { display:flex; flex-wrap:wrap; gap:5px; margin-top:6px; }
+.jr-tag { font-size:10px; background:var(--subtle); color:var(--text-dim); padding:2px 8px; border-radius:10px; }
+.jr-shot { display:inline-block; margin-top:6px; font-size:11px; color:var(--accent); }
+.jr-date { font-size:10px; color:var(--text-dim); margin-top:6px; }

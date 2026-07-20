@@ -283,3 +283,34 @@ async def test_create_pool_is_bounded(monkeypatch):
     assert captured["min_size"] <= 2                     # low idle floor
     assert 2 <= captured["max_size"] <= 20               # modest burst cap
     assert captured["min_size"] <= captured["max_size"]
+
+
+async def test_journal_entries_crud(db_conn):
+    # P5: standalone user journal — create / get / update / list+search+filter / delete
+    row = await db.insert_journal_entry(db_conn, {
+        "title": "BTC long scalp", "symbol": "BTCUSDT", "direction": "LONG",
+        "entry": 64000.0, "exit_px": 64500.0, "sl": 63800.0, "tp": 64600.0,
+        "risk_pct": 0.5, "confidence": 7, "emotion": "calm",
+        "mistakes": "entered early", "lessons": "wait for confirm",
+        "strategy": "S1", "notes": "clean sweep", "screenshot": "http://x/y.png",
+        "tags": ["A+", "sweep"]})
+    eid = row["id"]
+    assert row["title"] == "BTC long scalp" and row["direction"] == "LONG"
+    assert float(row["entry"]) == 64000.0 and row["confidence"] == 7
+    assert list(row["tags"]) == ["A+", "sweep"] and row["created_at"] is not None
+    got = await db.get_journal_entry(db_conn, eid)
+    assert got["id"] == eid and got["notes"] == "clean sweep"
+    upd = await db.update_journal_entry(db_conn, eid, {"notes": "edited", "confidence": 9})
+    assert upd["notes"] == "edited" and upd["confidence"] == 9
+    assert upd["title"] == "BTC long scalp"              # untouched by the partial edit
+    await db.insert_journal_entry(db_conn, {
+        "title": "ETH short", "symbol": "ETHUSDT", "direction": "SHORT", "strategy": "S2"})
+    assert len(await db.list_journal_entries(db_conn)) >= 2
+    btc = await db.list_journal_entries(db_conn, symbol="BTCUSDT")
+    assert btc and all(e["symbol"] == "BTCUSDT" for e in btc)
+    shorts = await db.list_journal_entries(db_conn, direction="SHORT")
+    assert shorts and all(e["direction"] == "SHORT" for e in shorts)
+    assert any(e["id"] == eid for e in await db.list_journal_entries(db_conn, search="edited"))
+    assert await db.delete_journal_entry(db_conn, eid) is True
+    assert await db.get_journal_entry(db_conn, eid) is None
+    assert await db.delete_journal_entry(db_conn, 999999999) is False

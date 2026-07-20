@@ -148,7 +148,7 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET", "POST", "PATCH"],   # PATCH: the P4.8 journal
+        allow_methods=["GET", "POST", "PATCH", "DELETE"],   # PATCH/DELETE: journals
         allow_headers=["Authorization", "Content-Type"],
     )
     clients: dict[WebSocket, asyncio.Queue] = {}   # F4: per-client queues
@@ -585,6 +585,106 @@ def create_app(
         limit = max(1, min(limit, 500))               # bounded
         async with pool.acquire() as conn:
             return await journal_list(conn, limit)
+
+    # ------------------------------------------ user journal (P5, full CRUD)
+    # The STANDALONE user journal (migration 003) — create / edit / delete /
+    # search / filter. Namespaced under /api/* (covered by the reverse-proxy
+    # matcher). Separate from the append-only recommendation `journal` above.
+    _JE_TEXT = ("title", "symbol", "emotion", "mistakes", "lessons", "strategy",
+                "notes", "screenshot")
+    _JE_NUM = ("entry", "exit_px", "sl", "tp", "risk_pct")
+
+    def _je_json(row) -> dict:
+        d = dict(row)
+        for k in ("created_at", "updated_at"):
+            if d.get(k) is not None:
+                d[k] = d[k].isoformat()
+        for k in _JE_NUM:
+            if d.get(k) is not None:
+                d[k] = float(d[k])
+        d["tags"] = list(d.get("tags") or [])
+        return d
+
+    def _bad(msg):
+        raise HTTPException(status_code=400, detail=msg)
+
+    def _validate_journal_entry(payload: dict) -> dict:
+        if not isinstance(payload, dict):
+            _bad("body must be an object")
+        fields = {}
+        for k in _JE_TEXT:
+            if k in payload:
+                if payload[k] is not None and not isinstance(payload[k], str):
+                    _bad(f"{k} must be text")
+                fields[k] = payload[k]
+        for k in _JE_NUM:
+            if k in payload:
+                v = payload[k]
+                if v is not None and (isinstance(v, bool) or not isinstance(v, (int, float))):
+                    _bad(f"{k} must be a number")
+                fields[k] = v
+        if "direction" in payload:
+            if payload["direction"] not in ("LONG", "SHORT", None):
+                _bad("direction must be LONG or SHORT")
+            fields["direction"] = payload["direction"]
+        if "confidence" in payload:
+            v = payload["confidence"]
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int) or not 1 <= v <= 10):
+                _bad("confidence must be an int 1..10")
+            fields["confidence"] = v
+        if "tags" in payload:
+            v = payload["tags"]
+            if v is not None and not (isinstance(v, list) and all(isinstance(t, str) for t in v)):
+                _bad("tags must be a list of strings")
+            fields["tags"] = v
+        if "recommendation_id" in payload:
+            v = payload["recommendation_id"]
+            if v is not None and (isinstance(v, bool) or not isinstance(v, int)):
+                _bad("recommendation_id must be an integer")
+            fields["recommendation_id"] = v
+        return fields
+
+    @app.get("/api/journal", dependencies=[Depends(require_token)])
+    async def api_journal_list(
+        search: str | None = None, symbol: str | None = None,
+        direction: str | None = None, strategy: str | None = None,
+        limit: int = 200,
+    ) -> list:
+        async with pool.acquire() as conn:
+            rows = await db.list_journal_entries(
+                conn, search=search, symbol=symbol, direction=direction,
+                strategy=strategy, limit=limit)
+        return [_je_json(r) for r in rows]
+
+    @app.post("/api/journal", dependencies=[Depends(require_token)])
+    async def api_journal_create(payload: dict = Body(...)) -> dict:
+        async with pool.acquire() as conn:
+            row = await db.insert_journal_entry(conn, _validate_journal_entry(payload))
+        return _je_json(row)
+
+    @app.get("/api/journal/{entry_id}", dependencies=[Depends(require_token)])
+    async def api_journal_get(entry_id: int) -> dict:
+        async with pool.acquire() as conn:
+            row = await db.get_journal_entry(conn, entry_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="journal entry not found")
+        return _je_json(row)
+
+    @app.patch("/api/journal/{entry_id}", dependencies=[Depends(require_token)])
+    async def api_journal_update(entry_id: int, payload: dict = Body(...)) -> dict:
+        async with pool.acquire() as conn:
+            row = await db.update_journal_entry(conn, entry_id, _validate_journal_entry(payload))
+        if row is None:
+            raise HTTPException(status_code=404, detail="journal entry not found")
+        return _je_json(row)
+
+    @app.delete("/api/journal/{entry_id}", dependencies=[Depends(require_token)])
+    async def api_journal_delete(entry_id: int) -> dict:
+        async with pool.acquire() as conn:
+            ok = await db.delete_journal_entry(conn, entry_id)
+        if not ok:
+            raise HTTPException(status_code=404, detail="journal entry not found")
+        return {"deleted": entry_id}
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:
