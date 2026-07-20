@@ -206,26 +206,60 @@ function showRecent(chart, n) {
   catch (e) { try { chart.timeScale().fitContent(); } catch (e2) { /* empty */ } }
 }
 let hasView = false;   // false until the first successful history load
+let loadSeq = 0;       // P2-A3: monotonic token so out-of-order loads can't clobber
+
+// Price-axis auto-fit, shared by the toolbar "Auto" button and every symbol/TF
+// switch (P3). LWC turns the right scale to manual (autoScale=false) the moment
+// the user drags the price axis and keeps it off across setData — so a symbol
+// switch must re-enable it or ETH (~1800) renders inside BTC's (~70000) band.
+let priceAutoScale = true;
+function setPriceAutoScale(on) {
+  priceAutoScale = on;
+  try { mainChart.priceScale("right").applyOptions({ autoScale: on }); } catch (e) { /* empty */ }
+  const b = $("tb-autoscale"); if (b) b.classList.toggle("on", on);
+}
+// Force an immediate price re-fit. LWC recomputes the range only on a data op
+// (setData/update), never on a bare applyOptions once the scale is manual — so
+// enable autoScale THEN nudge the current bar. Used by the Auto toggle.
+function refitPrice() {
+  setPriceAutoScale(true);
+  if (liveBar) { try { mainSeries.update(liveBar); } catch (e) { /* empty */ } }
+}
+
 async function loadHistory(symbol, opts) {
-  // A fresh recent-window view on the first load and on every timeframe/symbol
-  // switch; the user's zoom is only preserved on a same-tf reconnect/indicator
-  // refetch. Preserving a 1m window onto sparse 5m/1h data (the old bug) produced
-  // 2 giant blocks — so a stale/degenerate range falls back to the recent window.
+  // Fresh recent-window view on first load + every symbol/TF switch (which also
+  // re-fits the price axis, P3). The exact view is preserved ONLY for an
+  // indicator refetch (preserveView); a reconnect snaps to the live edge (P2-A2).
   const resetView = !!(opts && opts.resetView) || !hasView;
+  const preserveView = !!(opts && opts.preserveView);
   const loadEl = $("chart-loading");
   if (loadEl) loadEl.textContent = `Loading ${symbol} ${activeTf}…`;
+  const seq = ++loadSeq;
   try {
     const body = await fetchChart(symbol, activeTf);
+    if (seq !== loadSeq || symbol !== activeSymbol) return;   // P2-A3: superseded / symbol changed mid-fetch
     const candles = body.candles || [];
     const bars = candles.map(toBar);
     const ts = mainChart.timeScale();
     let keep = null;
-    if (!resetView) { try { keep = ts.getVisibleRange(); } catch (e) { /* empty */ } }
+    if (preserveView && !resetView) { try { keep = ts.getVisibleRange(); } catch (e) { /* empty */ } }
+    // P3: re-enable price autoScale BEFORE setData on a symbol/TF switch so the
+    // new symbol's range is recomputed (LWC re-fits on the data op, not on a
+    // bare applyOptions once the scale is manual from a user price-drag).
+    if (resetView) setPriceAutoScale(true);
     mainSeries.setData(bars);                          // single bootstrap setData (§9)
+    // P2-A1: setData replaces the whole series and each closed candle is
+    // broadcast once — so re-apply the live edge that arrived over WS during the
+    // fetch (same symbol/TF only; a symbol/TF switch resets it to the REST tail).
+    if (!resetView && liveBar && (!bars.length || liveBar.time >= bars[bars.length - 1].time)) {
+      try { mainSeries.update(liveBar); } catch (e) { /* empty */ }
+    } else {
+      liveBar = bars.length ? bars[bars.length - 1] : null;
+    }
     if (keep) { try { ts.setVisibleRange(keep); } catch (e) { showRecent(mainChart, bars.length); } }
-    else showRecent(mainChart, bars.length);
+    else if (resetView) showRecent(mainChart, bars.length);
+    else { try { ts.scrollToRealTime(); } catch (e) { showRecent(mainChart, bars.length); } }   // P2-A2: reconnect -> latest
     hasView = true;
-    liveBar = bars.length ? bars[bars.length - 1] : null;   // baseline for forming
     Indicators.render(body);                                // EMA/SMA/RSI/Volume
     Panel.setContext(body.context);                         // HTF context (item 9)
     setChartTitle(symbol, activeTf);
@@ -842,7 +876,7 @@ async function loadSettings() {           // called by boot() after login
   if (btn && panel) {
     Indicators.renderMenu(panel, function (needData) {
       window.__msSaveIndicators(Indicators.config());
-      if (needData) loadHistory(activeSymbol);       // refetch with new indicator params
+      if (needData) loadHistory(activeSymbol, { preserveView: true });   // keep the view on an indicator refetch
       else Indicators.applyVisibility();
     });
     btn.addEventListener("click", (e) => { e.stopPropagation(); panel.hidden = !panel.hidden; });
@@ -873,15 +907,11 @@ async function loadSettings() {           // called by boot() after login
     Overlays.setStructureVisible(structOn);          // advanced: full structure overlay
   });
   const reset = $("tb-reset");
-  if (reset) reset.addEventListener("click", () => mainChart.timeScale().fitContent());
-  let autoOn = true;
+  if (reset) reset.addEventListener("click", () => loadHistory(activeSymbol, { resetView: true }));   // fresh recent view + auto price
   const auto = $("tb-autoscale");
   if (auto) {
     auto.classList.add("on");
-    auto.addEventListener("click", () => {
-      autoOn = !autoOn; auto.classList.toggle("on", autoOn);
-      mainChart.priceScale("right").applyOptions({ autoScale: autoOn });
-    });
+    auto.addEventListener("click", () => { if (priceAutoScale) setPriceAutoScale(false); else refitPrice(); });
   }
   const shot = $("tb-screenshot");
   if (shot) shot.addEventListener("click", () => {

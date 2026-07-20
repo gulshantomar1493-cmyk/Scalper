@@ -153,6 +153,19 @@ def test_chart_loading_overlay_present_and_wired():
     assert 'loadEl.textContent = ""' in app                            # cleared after
 
 
+def test_chart_correctness_fixes_present():
+    """Regression pins for P2 (stale candles) + P3 (coin-switch price zoom)."""
+    app = _read("app.js")
+    # P2: out-of-order load token, reconnect-to-latest, indicator preserve-view
+    for t in ("loadSeq", "scrollToRealTime", "preserveView"):
+        assert t in app, t
+    # P3: price autoScale is re-enabled on a fresh view, BEFORE setData (LWC only
+    # re-fits on the data op once the scale is manual from a user price-drag).
+    for t in ("setPriceAutoScale", "refitPrice",
+              "re-enable price autoScale BEFORE setData"):
+        assert t in app, t
+
+
 def test_htf_js_pure_renderer_and_wired():
     """HTF V1.1 panel: a PURE renderer fed by app.js's /api/htf fetch. It never
     fetches / streams / aggregates / touches storage — the backend owns the
@@ -639,14 +652,17 @@ def test_help_js_exists_and_is_wired_before_app():
     assert html.index("help.js") < html.index('src="app.js"')  # loads first
 
 
-def test_index_has_help_button_and_guide_overlay():
+def test_index_has_help_center_with_all_topics():
     html = _read("index.html")
-    assert 'id="help-open"' in html and 'id="help"' in html
-    assert 'id="help-close"' in html
-    # the guide covers the concepts a new user needs, in Hinglish
-    for topic in ("Timeframes", "Right panel", "Trade Plan", "Market Context",
-                  "no execution", "market ANALYSIS"):
+    assert 'id="help-open"' in html and 'id="help"' in html and 'id="help-close"' in html
+    assert 'id="sidebar-help"' in html                         # global Help button (every page)
+    assert "help-center" in html and "data-help-goto" in html  # sectioned Help Center
+    # every requested Help Center topic is present (Hinglish walkthrough)
+    for topic in ("Getting Started", "Scanner", "Chart", "Trade Setup",
+                  "Indicators", "Market Structure", "BOS", "CHOCH", "Liquidity",
+                  "HTF Signals", "Paper Trading", "Journal", "Settings", "FAQ"):
         assert topic in html, topic
+    assert "ANALYSIS tool" in html                             # core message preserved
 
 
 def test_key_controls_have_hinglish_tooltips():
@@ -666,6 +682,15 @@ def test_help_js_is_a_pure_ui_toggler():
                    "intercept", "ATR", "tolerance", "XMLHttpRequest"):
         assert banned not in js, banned
     assert "getElementById(\"help\")" in js
+
+
+def test_help_never_auto_opens_and_is_globally_reachable():
+    js = _read("help.js")
+    # the login-time auto-open was REMOVED (owner: no forced popup on login)
+    assert "ms_help_seen" not in js and "localStorage" not in js
+    # both the Live-header ❓ AND the GLOBAL sidebar button open it (every page)
+    assert 'getElementById("help-open")' in js and 'getElementById("sidebar-help")' in js
+    assert "data-help-goto" in js                              # topic navigation
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -759,8 +784,12 @@ def test_sidebar_has_six_grouped_nav_items():
         assert f'sb-group">{grp}' in html, grp
     for nav in ("live", "replay", "review", "journal", "analytics", "settings"):
         assert f'data-nav="{nav}"' in html, nav
-    # honest naming — never "Paper Trading"
-    assert "Trade Review" in html and "Paper Trading" not in html
+    # honest naming — the Trade Review nav (recommendation performance) is not
+    # mislabeled "Paper Trading"; the separate P6 simulator + its Help topic may
+    # legitimately use that name elsewhere.
+    assert "Trade Review" in html
+    _rev = html.index('data-nav="review"')
+    assert "Paper Trading" not in html[_rev:_rev + 140]
 
 
 def test_router_has_six_pages_live_default_active():

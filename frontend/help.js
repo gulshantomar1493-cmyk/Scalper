@@ -1,38 +1,36 @@
-/* MarketScalper — in-app Hinglish help/guide (P-help; §9 usability).
+/* MarketScalper — Help Center (Hinglish). PURE UI.
  *
- * Pure UI: the guide content is STATIC HTML in index.html; this file only
- * shows/hides that overlay. No data, no network, no engine math — it never
- * touches the payload, the live stream, or any computation. The overlay
- * auto-opens once for a first-time visitor (so a new user is not lost) and
- * is always reachable via the header "❓ Madad" button afterwards. */
+ * The guide content is STATIC HTML in index.html; this file only shows/hides
+ * that overlay and switches between topic sections. No data, no network, no
+ * engine math. Reachable from EVERY page via the global sidebar "Need help?"
+ * button (and the ❓ in the Live header). It NEVER auto-opens — the owner opens
+ * it on demand. */
 (function () {
   "use strict";
   const overlay = document.getElementById("help");
-  const openBtn = document.getElementById("help-open");
+  const headerBtn = document.getElementById("help-open");     // ❓ in the Live header
+  const sidebarBtn = document.getElementById("sidebar-help"); // global sidebar button (every page)
   const closeBtn = document.getElementById("help-close");
-  if (!overlay || !openBtn) return;
+  if (!overlay) return;
 
   function open() { overlay.classList.add("show"); }
   function close() { overlay.classList.remove("show"); }
 
-  openBtn.addEventListener("click", open);
+  if (headerBtn) headerBtn.addEventListener("click", open);
+  if (sidebarBtn) sidebarBtn.addEventListener("click", open);
   if (closeBtn) closeBtn.addEventListener("click", close);
   // click the dim backdrop (outside the panel) to dismiss
-  overlay.addEventListener("click", function (e) {
-    if (e.target === overlay) close();
-  });
+  overlay.addEventListener("click", function (e) { if (e.target === overlay) close(); });
   // Esc closes
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape") close();
-  });
+  document.addEventListener("keydown", function (e) { if (e.key === "Escape") close(); });
 
-  // First visit: auto-open once so a new user gets oriented. A UI-only flag
-  // (not sensitive — unlike the API token, which stays in memory). If
-  // localStorage is unavailable the button still works.
-  try {
-    if (!window.localStorage.getItem("ms_help_seen")) {
-      open();
-      window.localStorage.setItem("ms_help_seen", "1");
-    }
-  } catch (e) { /* storage blocked — ignore, guide still opens via the button */ }
+  // Topic nav: scroll the content pane to the clicked section + mark it active.
+  const navButtons = overlay.querySelectorAll("[data-help-goto]");
+  navButtons.forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      const target = document.getElementById(btn.getAttribute("data-help-goto"));
+      if (target) target.scrollIntoView({ behavior: "smooth", block: "start" });
+      navButtons.forEach(function (b) { b.classList.toggle("active", b === btn); });
+    });
+  });
 })();

@@ -295,16 +295,80 @@
   </div>
 
   <div id="help" class="help-overlay">
-    <div class="help-panel">
-      <div class="help-head"><h1>MarketScalper — Madad / Guide</h1><button id="help-close" type="button" class="help-close" title="Band karo (Esc)">✕</button></div>
+    <div class="help-panel help-center">
+      <div class="help-head"><h1>MarketScalper — Help Center / Madad</h1><button id="help-close" type="button" class="help-close" title="Band karo (Esc)">✕</button></div>
       <div class="help-body">
-        <div class="help-card intro"><h2>🎯 Ye tool kya hai?</h2><p>MarketScalper ek <b>market ANALYSIS tool</b> hai — ye khud trade <b>NAHI</b> karta. Ye tumhe batata hai ki <b>kab, kahan aur kyun</b> ek trade ka setup ban raha hai. Order tum khud lagate ho. (Isliye "no execution".)</p></div>
-        <div class="help-card"><h2>🧭 Pages (sidebar)</h2><ul><li><b>Live</b> — real-time chart + analysis (1m/5m).</li><li><b>Replay</b> — purane data ko chala ke practice.</li><li><b>Trade Review</b> — recommendations ne kaisa perform kiya (display-only).</li><li><b>Journal</b> — apne trades/notes/lessons log karo.</li><li><b>Analytics</b> — win-rate, PnL, expectancy.</li><li><b>Settings</b> — theme, token, symbols.</li></ul></div>
-        <div class="help-card"><h2>⏱️ Timeframes</h2><p>Upar <b>[1m][5m]…[1M]</b> buttons se timeframe badlo. <b>Sirf 1m aur 5m</b> pe analysis (recommendation/plan) dikhta hai — bade timeframes sirf <b>market context</b> ke liye hain (fake analysis kabhi nahi).</p></div>
-        <div class="help-card highlight"><h2>🎯 Right panel</h2><ul><li><b>Recommendation:</b> LONG/SHORT + grade (A+) + confidence % + stars.</li><li><b>Trade Plan:</b> Entry / Stop / Target 1&amp;2 / Risk:Reward — sirf SUGGESTION.</li><li><b>Market Context:</b> Trend + 4 engines (Structure/Liquidity/Volume/Momentum).</li></ul></div>
-        <div class="help-card"><h2>🎨 Theme &amp; 🔰 Beginner mode</h2><p>Top-right theme button (dark/light). Sidebar me <b>Beginner Mode</b> toggle — helper text on/off.</p></div>
-        <div class="help-card warn"><h2>⚠️ Zaroori</h2><ul><li>Tool khud trade <b>nahi</b> karta.</li><li>Koi strategy tab tak <b>TRUSTED nahi</b> jab tak 200+ recommendations pe fees ke baad positive na aaye. Signals blindly follow mat karo.</li></ul></div>
-        <p class="help-foot">Dobara kholne ke liye <b>❓</b> ya sidebar "Need help?". (Band: Esc ya bahar click)</p>
+        <nav class="help-nav" aria-label="Help topics">
+          <button type="button" data-help-goto="h-start" class="active">Getting Started</button>
+          <button type="button" data-help-goto="h-scanner">Scanner</button>
+          <button type="button" data-help-goto="h-chart">Chart</button>
+          <button type="button" data-help-goto="h-setup">Trade Setup</button>
+          <button type="button" data-help-goto="h-ind">Indicators</button>
+          <button type="button" data-help-goto="h-ms">Market Structure</button>
+          <button type="button" data-help-goto="h-bos">BOS</button>
+          <button type="button" data-help-goto="h-choch">CHOCH</button>
+          <button type="button" data-help-goto="h-liq">Liquidity</button>
+          <button type="button" data-help-goto="h-htf">HTF Signals</button>
+          <button type="button" data-help-goto="h-paper">Paper Trading</button>
+          <button type="button" data-help-goto="h-journal">Journal</button>
+          <button type="button" data-help-goto="h-settings">Settings</button>
+          <button type="button" data-help-goto="h-faq">FAQ</button>
+        </nav>
+        <div class="help-content">
+          <section id="h-start" class="help-sec"><h2>🎯 Getting Started</h2>
+            <p>MarketScalper ek <b>market ANALYSIS tool</b> hai — ye khud trade <b>NAHI</b> karta. Ye tumhe batata hai ki <b>kab, kahan aur kyun</b> ek setup ban raha hai. Order tum khud apne exchange par lagate ho.</p>
+            <p><b>Shuru kaise karein:</b> Left sidebar se pages badlo — <b>Live</b> (main screen), Replay, Trade Review, Journal, Analytics, Settings. Live screen par: beech mein candle chart, upar coin + timeframe, right side mein analysis panel.</p>
+            <p>Naye ho? Sidebar mein <b>Beginner Mode</b> ON rakho — har control ke neeche simple helper text dikhega.</p></section>
+          <section id="h-scanner" class="help-sec"><h2>📡 Scanner</h2>
+            <p>Upar green <b>"Scanner running"</b> pill dikhta hai — matlab tool continuously BTC aur ETH ko scan kar raha hai, har minute.</p>
+            <p>Status badalta rehta hai (jaise "Checking liquidity", "Searching trade setups") — ye bata raha hai abhi kya check ho raha hai. <b>"last scan HH:MM"</b> = aakhri scan ka time. Green dot = live connected.</p></section>
+          <section id="h-chart" class="help-sec"><h2>📈 Chart</h2>
+            <ul><li>Green candle = price upar gaya, red = neeche.</li>
+            <li>Upar <b>coin buttons</b> (BTCUSDT / ETHUSDT) — click karke coin badlo; chart apne aap naye coin ke price par fit ho jata hai.</li>
+            <li><b>Timeframe</b> (1m … 1M): 1m/5m par analysis milta hai; bade TF sirf context ke liye.</li>
+            <li>Mouse se zoom/pan karo. <b>Reset</b> = default view wapas. <b>Auto</b> = price auto-fit on/off.</li>
+            <li>Neeche-daayein <b>countdown</b> = current candle band hone mein kitna time.</li>
+            <li><b>Draw</b> menu se trendline / horizontal line / rectangle / fibonacci bana sakte ho.</li></ul></section>
+          <section id="h-setup" class="help-sec"><h2>🎯 Trade Setup</h2>
+            <p>Right side ka <b>Recommendation</b> card = current trade setup.</p>
+            <ul><li><b>LONG</b> (buy) ya <b>SHORT</b> (sell) + grade (A+ best, A, B) + confidence % + stars.</li>
+            <li>Verdict: <b>TRADEABLE</b> = achha setup; <b>BELOW THRESHOLD</b> = abhi kamzor.</li>
+            <li><b>"Why?"</b> par click karke saari safety checks (gates) + reasons dekho.</li>
+            <li><b>Trade Plan</b> card: Entry, Stop-loss, Target 1 &amp; 2, Risk:Reward — ye sirf <b>SUGGESTION</b> hai, order tum khud lagao.</li></ul>
+            <p>Yaad rakho: setup sirf <b>1m/5m</b> par milta hai.</p></section>
+          <section id="h-ind" class="help-sec"><h2>📊 Indicators</h2>
+            <p>Chart par <b>EMA</b> (moving average lines), <b>SMA</b>, <b>RSI</b> aur <b>Volume</b> laga sakte ho. Upar <b>"Indicators ▾"</b> menu se on/off karo aur period (jaise EMA 20/50/200) change karo.</p>
+            <p>Ye sab <b>backend mein</b> compute hote hain — har device par same value.</p></section>
+          <section id="h-ms" class="help-sec"><h2>🏗️ Market Structure</h2>
+            <p>Market kaise move kar raha hai: <b>HH</b> (higher high), <b>HL</b> (higher low), <b>LH</b> (lower high), <b>LL</b> (lower low).</p>
+            <p><b>HH + HL = Uptrend</b> (upar). <b>LH + LL = Downtrend</b> (neeche). Right side ka <b>Market Structure</b> box live events stream karta hai (swings, sweeps, BOS, CHOCH).</p></section>
+          <section id="h-bos" class="help-sec"><h2>⛓️ BOS (Break of Structure)</h2>
+            <p><b>BOS = trend continue</b> hone ka signal. Uptrend mein price last high ke <b>upar close</b> kare = BOS UP (trend aage badh raha). Downtrend mein last low ke <b>neeche</b> = BOS DOWN.</p></section>
+          <section id="h-choch" class="help-sec"><h2>🔄 CHOCH (Change of Character)</h2>
+            <p><b>CHOCH = trend palatne (reverse)</b> ka pehla signal. Uptrend mein price last low ke neeche toot jaye = CHOCH DOWN (uptrend kamzor). Ye ek <b>warning</b> hai — abhi confirm nahi; structure ka wait karo.</p></section>
+          <section id="h-liq" class="help-sec"><h2>💧 Liquidity</h2>
+            <p><b>Liquidity</b> = jahan bahut saare stop-loss orders pade hain — equal highs (<b>EQH</b>) / equal lows (<b>EQL</b>).</p>
+            <p><b>Sweep</b> = price un levels ko touch karke wapas palat jaana (stops hunt karke). <b>Sweep + CHOCH</b> = strong reversal setup.</p></section>
+          <section id="h-htf" class="help-sec"><h2>🔭 HTF Signals</h2>
+            <p>Right panel mein <b>"Higher-Timeframe Bias"</b> — 15m/1h/4h/1d ka overall direction (BULLISH / BEARISH / NEUTRAL) + score + confidence. Har TF ka card: trend, structure, momentum.</p>
+            <p><b>"✓ aligned / ✗ conflicting with your signal"</b> = HTF tumhare 1m/5m signal se agree karta hai ya nahi. Ye sirf <b>context</b> hai — execution 1m/5m par hi hota hai.</p></section>
+          <section id="h-paper" class="help-sec"><h2>🧪 Paper Trading</h2>
+            <p><b>(Aa raha hai / coming soon):</b> virtual paise se real-exchange jaisa practice trading — bina kisi asli order ke, sab kuch hamare apne database mein (100% simulation, safe).</p>
+            <p>Abhi ke liye: <b>Replay</b> page par purane data se practice karo, aur <b>Trade Review</b> mein dekho recommendations ne kaisa perform kiya.</p></section>
+          <section id="h-journal" class="help-sec"><h2>📓 Journal</h2>
+            <p>Apne trades, notes aur lessons <b>log karo</b> — kya socha, entry/exit/SL/TP, kya galti hui, kya seekha, emotion, tags.</p>
+            <p>Purane trades review karke apni mistakes se seekho — ek acha trader apna journal maintain karta hai.</p></section>
+          <section id="h-settings" class="help-sec"><h2>⚙️ Settings</h2>
+            <ul><li><b>Theme</b> (dark / light) aur <b>Beginner Mode</b> on/off.</li>
+            <li><b>Notifications:</b> Telegram + desktop alerts — naya setup aane par ping.</li>
+            <li>Symbols / timeframes / API host ki info.</li></ul></section>
+          <section id="h-faq" class="help-sec"><h2>❓ FAQ</h2>
+            <p><b>Q: Ye tool khud trade karta hai?</b><br>Nahi. Sirf analysis; order tum lagao.</p>
+            <p><b>Q: Signal kyun nahi mil raha?</b><br>Ya to safety gates pass nahi hue, ya score threshold se kam hai.</p>
+            <p><b>Q: Strategy TRUSTED kab hoti hai?</b><br>200+ recommendations par, fees ke baad positive result aane par. Tab tak signals blindly follow mat karo.</p>
+            <p><b>Q: Real paise lagte hain?</b><br>Nahi — ye decision-support tool hai, koi real order nahi.</p>
+            <p><b>Q: Bade timeframe par signal kyun nahi?</b><br>Execution sirf 1m/5m par; bade TF sirf context ke liye.</p></section>
+        </div>
       </div>
     </div>
   </div>
