@@ -792,6 +792,15 @@ def test_sidebar_has_six_grouped_nav_items():
     assert "Paper Trading" not in html[_rev:_rev + 140]
 
 
+def test_rail_order_htf_below_market_structure():
+    html = _read("index.html")
+    # P4: in the analysis rail, HTF (#htf-panel) sits AFTER the Market Structure
+    # card; the setup card is the honest "Trade Setup".
+    rail = html[html.index('id="rail-analysis"'):html.index('id="rail-ctxonly"')]
+    assert "Trade Setup" in rail and "Market Structure" in rail and 'id="htf-panel"' in rail
+    assert rail.index("Market Structure") < rail.index('id="htf-panel"')
+
+
 def test_router_has_six_pages_live_default_active():
     html = _read("index.html")
     for pg in ("live", "replay", "review", "journal", "analytics", "settings"):

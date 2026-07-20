@@ -116,13 +116,12 @@
             </div>
           </div>
 
-          <!-- RIGHT RAIL — 3 cards (1m/5m) or a context-only card (15m+) -->
+          <!-- RIGHT RAIL — compact terminal panel. Order: Trade Setup ->
+               Market Structure -> HTF -> Risk/Reward -> Market Context (P4). -->
           <aside id="quality-panel" class="lv-rail empty">
-            <!-- HTF V1.1 — higher-timeframe intelligence (always visible; context only) -->
-            <div id="htf-panel" class="htf-panel"></div>
             <div id="rail-analysis">
               <div class="lv-card">
-                <div class="lv-ch">Recommendation <span class="lv-q" title="Current suggested trade direction">?</span></div>
+                <div class="lv-ch">Trade Setup <span class="lv-q" title="Current suggested trade direction">?</span></div>
                 <div class="lv-reco"><span id="reco-dir" class="lv-dir">—</span><span id="reco-grade" class="lv-grade"></span><span id="reco-pct" class="lv-pct"></span></div>
                 <div id="reco-stars" class="lv-stars"></div>
                 <span id="reco-verdict" class="lv-pill"></span>
@@ -130,19 +129,20 @@
                 <details class="lv-why"><summary>Why?</summary><div id="reco-why"></div></details>
               </div>
               <div class="lv-card">
-                <div class="lv-ch">Trade Plan</div>
+                <div class="lv-ch">Market Structure</div>
+                <div id="ms-stream" class="ms-stream" title="Live structure events — HH/HL, sweeps, BOS/CHoCH, OB, FVG"><div class="ms-empty">Waiting for structure…</div></div>
+              </div>
+              <!-- HTF Signal — below Market Structure (P4) -->
+              <div id="htf-panel" class="htf-panel"></div>
+              <div class="lv-card">
+                <div class="lv-ch">Trade Plan · Risk / Reward</div>
                 <div id="panel-plan"></div>
               </div>
               <div class="lv-card">
                 <div class="lv-ch">Market Context</div>
-                <div class="lv-note" data-beginner-text>Overall market direction.</div>
                 <div class="lv-ctx-trend"><span class="k">Trend</span><span id="ctx-trend" class="lv-trend">—</span></div>
                 <div id="panel-components"></div>
                 <div class="lv-pos"><span class="dot live"></span>No open position</div>
-              </div>
-              <div class="lv-card">
-                <div class="lv-ch">Market Structure</div>
-                <div id="ms-stream" class="ms-stream" title="Live structure events — HH/HL, sweeps, BOS/CHoCH, OB, FVG"><div class="ms-empty">Waiting for structure…</div></div>
               </div>
             </div>
             <div id="rail-ctxonly" class="lv-card lv-ctxonly" hidden>

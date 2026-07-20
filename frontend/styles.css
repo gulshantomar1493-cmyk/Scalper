@@ -1184,3 +1184,15 @@ body {
 .htf-card-line .htf-k { color:var(--text-dim); }
 .htf-card-line .htf-v { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
 .htf-card-line.htf-dim { color:var(--text-dim); font-style:italic; }
+
+/* P4: compact terminal rail — tighter cards, denser type, less wasted space. */
+.lv-rail { padding:9px; gap:7px; }
+.lv-rail .lv-card { padding:8px 10px; border-radius:9px; }
+.lv-rail .lv-ch { font-size:9px; margin-bottom:6px; }
+.lv-rail .lv-dir { font-size:20px; }
+.lv-rail .lv-grade { font-size:12px; }
+.lv-rail .lv-pct { font-size:15px; }
+.lv-rail .lv-stars { font-size:12px; margin:5px 0; }
+.lv-rail .lv-note { font-size:10px; margin-top:6px; }
+.lv-rail .lv-pill { font-size:9.5px; padding:2px 8px; }
+.lv-rail .htf-panel { padding:9px 10px; margin-bottom:0; }
