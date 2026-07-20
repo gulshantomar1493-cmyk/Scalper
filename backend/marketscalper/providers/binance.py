@@ -78,6 +78,7 @@ BACKOFF_CAP_S = 30.0
 STABLE_RESET_S = 60.0            # connection older than this resets backoff
 HEARTBEAT_TIMEOUT_S = 30.0       # silence longer than this forces reconnect
 HEARTBEAT_CHECK_INTERVAL_S = 5.0
+BRIDGE_SETTLE_S = 2.0            # D33: settle after a minute closes before REST
 
 
 # ----------------------------------------------------------- pure helpers
@@ -254,6 +255,10 @@ class BinanceFeed(FeedProvider):
         self._watchdog: asyncio.Task | None = None
         self._last_msg_at = 0.0  # monotonic loop time of last received message
         self._last_closed_ts: dict[str, datetime] = {}  # per symbol, 1m closes
+        # D33 restart-gap bridge (live only; set by prime_last_closed()):
+        self._bridge_pending = False
+        self._bridge_task: asyncio.Task | None = None
+        self._now = lambda: datetime.now(tz=timezone.utc)   # injectable for tests
 
     # ------------------------------------------------- interface: contract
 
@@ -283,11 +288,12 @@ class BinanceFeed(FeedProvider):
     async def stop(self) -> None:
         """Stop publishing, cancel internal tasks, close the socket."""
         self._stopping = True
-        tasks = [t for t in (self._watchdog, self._runner) if t is not None]
+        tasks = [t for t in (self._watchdog, self._runner, self._bridge_task)
+                 if t is not None]
         for t in tasks:
             t.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
-        self._runner = self._watchdog = None
+        self._runner = self._watchdog = self._bridge_task = None
         ws, self._ws = self._ws, None
         if ws is not None:
             await ws.close()
@@ -330,6 +336,15 @@ class BinanceFeed(FeedProvider):
         out.sort(key=lambda c: c.ts)
         return out
 
+    def prime_last_closed(self, last_closed: dict[str, datetime]) -> None:
+        """D33: composition seeds the per-symbol last-stored 1m candle ts (from
+        the DB) so the FIRST connect backfills the restart teardown gap (the
+        frozen first-connection skip only makes sense before the DB era), and
+        arms the connect-minute bridge. Live only — replay/tests never call this,
+        so their first-connection behavior is byte-identical."""
+        self._last_closed_ts.update({s: t for s, t in last_closed.items() if t is not None})
+        self._bridge_pending = True
+
     # ---------------------------------------------------- internal: policy
 
     async def _run(self) -> None:
@@ -347,6 +362,12 @@ class BinanceFeed(FeedProvider):
                     self._last_msg_at = loop.time()
                     log.info("binance: connected (%d symbols)", len(self._symbols))
                     await self._backfill_gaps()  # BEFORE resuming live flow (§4.1)
+                    if self._bridge_pending:     # D33: bridge the restart gap
+                        self._bridge_pending = False
+                        connect_minute = self._now().replace(second=0, microsecond=0)
+                        self._bridge_task = asyncio.create_task(
+                            self._bridge_connect_minute(connect_minute),
+                            name="binance-bridge")
                     async for raw in ws:
                         self._last_msg_at = loop.time()
                         event = normalize_message(
@@ -380,8 +401,9 @@ class BinanceFeed(FeedProvider):
     async def _backfill_gaps(self) -> None:
         """Fetch and publish the closed 1m candles missed while disconnected,
         in chronological order, before live processing resumes. First
-        connection (no last-closed candle) -> nothing to do."""
-        now = datetime.now(tz=timezone.utc)
+        connection with no last-closed candle -> nothing to do (unless
+        prime_last_closed seeded it from the DB, D33)."""
+        now = self._now()
         for symbol in self._symbols:
             gap = compute_gap_range(self._last_closed_ts.get(symbol), now)
             if gap is None:
@@ -393,6 +415,46 @@ class BinanceFeed(FeedProvider):
                 self._last_closed_ts[candle.symbol] = candle.ts
                 await self._bus.publish(candle)
             log.info("binance: backfilled %d candles for %s", len(candles), symbol)
+
+    async def _bridge_connect_minute(self, connect_minute: datetime) -> None:
+        """D33: the minute the feed connects in is built partial (D7 discards it)
+        and _backfill_gaps at connect can't fetch it (still open) -> a
+        restart-boundary gap that otherwise poisons G1 for ~30 min. Once that
+        minute closes, fetch it from REST and publish it (truth -> bus, D5), so
+        the bus stream is contiguous across the restart AND the DB hole is filled.
+
+        Runs concurrently with the live loop. The builder's first live candle
+        lags a full minute (it closes on the next bucket's first trade), so this
+        publishes well before it; if it were ever late, the closed candle is just
+        dropped by the composition out-of-order guard -> graceful fallback to the
+        normal warm-up, never corruption or a duplicate."""
+        end = connect_minute + timedelta(minutes=1)
+        wait_s = (end - self._now()).total_seconds() + BRIDGE_SETTLE_S
+        if wait_s > 0:
+            await asyncio.sleep(wait_s)
+
+        async def _fetch(symbol):                          # per symbol, fail-soft
+            try:
+                return symbol, await self.fetch_historical_candles(
+                    symbol, "1m", connect_minute, end)
+            except Exception as exc:
+                log.warning("binance: connect-minute bridge fetch failed for %s: %s",
+                            symbol, exc)
+                return symbol, []
+
+        try:
+            # fetch symbols CONCURRENTLY so one slow REST call can't delay another
+            # past its first live candle (audit M1); publish sequentially in order.
+            results = await asyncio.gather(*(_fetch(s) for s in self._symbols))
+            for symbol, candles in results:
+                for candle in candles:
+                    self._last_closed_ts[candle.symbol] = candle.ts
+                    await self._bus.publish(candle)
+                if candles:
+                    log.info("binance: bridged connect-minute %s for %s (%d candle)",
+                             connect_minute, symbol, len(candles))
+        except Exception as exc:                # detached task — never die unretrieved
+            log.warning("binance: connect-minute bridge error: %s", exc)
 
     async def _heartbeat_watchdog(self) -> None:
         """Force-close a silent socket; the runner loop then reconnects."""

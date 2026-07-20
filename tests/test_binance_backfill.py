@@ -446,3 +446,90 @@ async def test_first_connection_makes_no_rest_calls():
         await rest_runner.cleanup()
 
     assert rest_requests == []                  # no previous candle -> no fetch
+
+
+# --------------------------------------------- D33 restart-gap bridge
+
+def _candle_at(symbol: str, dt: datetime) -> Candle:
+    return parse_kline_row(symbol, "1m", _row(dt))
+
+
+def test_prime_last_closed_seeds_tracker_and_arms_bridge():
+    feed = BinanceFeed(["BTCUSDT", "ETHUSDT"], EventBus())
+    feed.prime_last_closed({"BTCUSDT": M0, "ETHUSDT": None})   # None skipped
+    assert feed._last_closed_ts == {"BTCUSDT": M0}
+    assert feed._bridge_pending is True
+
+
+async def test_primed_first_connect_backfills_teardown_gap():
+    """A primed feed's first-connect _backfill_gaps fills the restart teardown
+    gap (unlike the frozen empty-tracker no-op)."""
+    bus = EventBus()
+    got: list[Candle] = []
+
+    async def _collect(c):
+        got.append(c)
+
+    bus.subscribe(Candle, _collect)
+    feed = BinanceFeed(["BTCUSDT"], bus)
+    feed.prime_last_closed({"BTCUSDT": M0})                    # DB-latest = M0
+    feed._now = lambda: M0 + timedelta(minutes=3, seconds=20)  # 2 closed candles since
+
+    async def fake_fetch(sym, tf, start, end):
+        assert (start, end) == (M0 + timedelta(minutes=1), M0 + timedelta(minutes=3))
+        return [_candle_at(sym, M0 + timedelta(minutes=i)) for i in (1, 2)]
+
+    feed.fetch_historical_candles = fake_fetch
+    await feed._backfill_gaps()
+    assert [c.ts for c in got] == [M0 + timedelta(minutes=1), M0 + timedelta(minutes=2)]
+    assert feed._last_closed_ts["BTCUSDT"] == M0 + timedelta(minutes=2)
+
+
+async def test_bridge_connect_minute_backfills_the_open_minute():
+    """The connect-minute (open at connect, discarded live) is fetched once it
+    closes and published to the bus -> contiguous across the restart + the DB
+    hole filled. Multi-symbol, exact single-minute range."""
+    bus = EventBus()
+    got: list[Candle] = []
+
+    async def _collect(c):
+        got.append(c)
+
+    bus.subscribe(Candle, _collect)
+    feed = BinanceFeed(["BTCUSDT", "ETHUSDT"], bus)
+    connect_minute = M0 + timedelta(minutes=5)
+    feed._now = lambda: connect_minute + timedelta(minutes=1, seconds=5)  # already closed
+
+    calls: list[tuple] = []
+
+    async def fake_fetch(sym, tf, start, end):
+        calls.append((sym, start, end))
+        return [_candle_at(sym, connect_minute)]
+
+    feed.fetch_historical_candles = fake_fetch
+    await feed._bridge_connect_minute(connect_minute)
+    assert all(start == connect_minute and end == connect_minute + timedelta(minutes=1)
+               for _, start, end in calls)
+    assert sorted(c.symbol for c in got) == ["BTCUSDT", "ETHUSDT"]
+    assert all(c.ts == connect_minute for c in got)
+
+
+async def test_bridge_connect_minute_rest_failure_is_graceful():
+    """A REST failure during the bridge never kills the feed (logged, skipped)."""
+    bus = EventBus()
+    got: list[Candle] = []
+
+    async def _collect(c):
+        got.append(c)
+
+    bus.subscribe(Candle, _collect)
+    feed = BinanceFeed(["BTCUSDT"], bus)
+    cm = M0 + timedelta(minutes=5)
+    feed._now = lambda: cm + timedelta(minutes=1, seconds=5)
+
+    async def boom(*a, **k):
+        raise RuntimeError("rest down")
+
+    feed.fetch_historical_candles = boom
+    await feed._bridge_connect_minute(cm)          # must not raise
+    assert got == []

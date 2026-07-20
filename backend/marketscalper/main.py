@@ -618,6 +618,13 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)
+    # D33: seed the feed's last-stored 1m candle ts (from the DB) so the first
+    # connect backfills the restart teardown gap AND bridges the connect-minute
+    # -> the bus stream stays contiguous across a restart (no G1-poisoning gap,
+    # no DB hole). Live only; ReplayFeed has no such method.
+    if hasattr(feed, "prime_last_closed"):
+        feed.prime_last_closed(
+            {sym: cs[-1].ts for sym, cs in seed_candles.items() if cs})
     # D26 multi-timeframe ChartService: read-only, isolated from the engine bus.
     # The live feed is injected only as the gap-fill provider (fetches canonical
     # 1m; ChartService itself imports no concrete provider — P0.19).
