@@ -1136,6 +1136,49 @@ async def test_api_user_journal_crud(db_conn):
         await _stop(server, task)
 
 
+# ------------------------------------------------ /api/paper (P6 paper trading)
+
+
+async def test_api_paper_trading_flow(db_conn):
+    bus = EventBus()
+    store = StateStore(bus)
+    await bus.publish(Candle(symbol="BTCUSDT", tf="1m", ts=M0, o=64000.0, h=64000.0,
+                             l=64000.0, c=64000.0, v=1.0, qv=64000.0, n_trades=1, taker_buy_v=0.5))
+    app = create_app(bus, store, TxPool(db_conn), TOKEN, ops_symbols=["BTCUSDT", "ETHUSDT"])
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/paper") as r:
+                assert r.status == 401                              # auth required
+            async with s.post(f"http://{addr}/api/paper/wallet", json={"balance": 10000}, headers=AUTH) as r:
+                assert r.status == 200 and (await r.json())["balance"] == 10000.0
+            async with s.post(f"http://{addr}/api/paper/order",
+                              json={"symbol": "BTCUSDT", "side": "BUY", "type": "market", "qty": 1, "leverage": 10},
+                              headers=AUTH) as r:
+                assert r.status == 200 and (await r.json())["filled"] == 1.0
+            async with s.get(f"http://{addr}/api/paper", headers=AUTH) as r:
+                st = await r.json()
+                assert len(st["positions"]) == 1
+                pos = st["positions"][0]
+                assert pos["side"] == "LONG" and pos["qty"] == 1.0 and pos["avg_entry"] == 64000.0
+                assert pos["mark"] == 64000.0 and pos["margin"] == 6400.0     # 1*64000/10
+                assert pos["liq_price"] == 57600.0                            # 64000*(1-0.1)
+                assert st["portfolio"]["open_positions"] == 1
+                pid = pos["id"]
+            for bad in ({"symbol": "BTCUSDT", "side": "UP", "qty": 1},
+                        {"symbol": "XRPUSDT", "side": "BUY", "qty": 1},
+                        {"symbol": "BTCUSDT", "side": "BUY", "qty": -1}):
+                async with s.post(f"http://{addr}/api/paper/order", json=bad, headers=AUTH) as r:
+                    assert r.status == 400, bad
+            async with s.post(f"http://{addr}/api/paper/close", json={"position_id": pid}, headers=AUTH) as r:
+                assert r.status == 200
+            async with s.get(f"http://{addr}/api/paper", headers=AUTH) as r:
+                st = await r.json()
+                assert len(st["positions"]) == 0 and len(st["history"]) == 2   # open + close
+    finally:
+        await _stop(server, task)
+
+
 async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
     # regression: /candles stays a BARE array with the pinned tf in {1m,5m}
     await _seed_candles(db_conn, n=5)

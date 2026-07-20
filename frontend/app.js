@@ -320,6 +320,8 @@ function setSymbol(symbol) {
     if (el) el.classList.toggle("active", s === symbol);
   }
   clearMarketStructure();          // Step 6: box streams the active symbol only
+  clearPaperLines();               // paper markers are per-symbol
+  updatePaperMarkers();
   renderHtf();                     // show cached HTF for the new symbol, then refresh
   loadHtf();
   loadHistory(symbol, { resetView: true });
@@ -493,6 +495,17 @@ const journalApi = {
 };
 if (window.Journal) Journal.init(journalApi);
 
+// P6: simulation-only paper-trading CRUD network. app.js owns the fetch;
+// paper.js renders + calls these (the pure-consumer boundary).
+const paperApi = {
+  state: () => api("/api/paper", { method: "GET" }),
+  order: (b) => api("/api/paper/order", { method: "POST", body: JSON.stringify(b) }),
+  close: (b) => api("/api/paper/close", { method: "POST", body: JSON.stringify(b) }),
+  cancel: (b) => api("/api/paper/order/cancel", { method: "POST", body: JSON.stringify(b) }),
+  wallet: (b) => api("/api/paper/wallet", { method: "POST", body: JSON.stringify(b) }),
+};
+if (window.Paper) Paper.init(paperApi);
+
 function replayBody() {
   const from = $("replay-from").value, to = $("replay-to").value;
   const raw = $("replay-speed").value;
@@ -555,14 +568,40 @@ async function loadDataPages() {
 // Review + Analytics stay on the recommendation-performance dashboard.
 window.addEventListener("ms-page", (e) => {
   if (e.detail === "journal") { if (window.Journal) Journal.mount($("page-journal")); }
+  else if (e.detail === "paper") { if (window.Paper) Paper.mount($("page-paper")); }
   else if (e.detail === "review" || e.detail === "analytics") loadDataPages();
 });
 for (const btn of document.querySelectorAll("[data-refresh]")) {
   btn.addEventListener("click", () => {
-    if (btn.getAttribute("data-refresh") === "journal" && window.Journal) Journal.reload();
+    const t = btn.getAttribute("data-refresh");
+    if (t === "journal" && window.Journal) Journal.reload();
+    else if (t === "paper" && window.Paper) Paper.reload();
     else loadDataPages();
   });
 }
+
+// P6: paper-position markers on the Live chart — entry + liquidation price lines
+// for the active symbol's open simulated position (display-only).
+let paperLines = [];
+function clearPaperLines() {
+  paperLines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch (e) { /* empty */ } });
+  paperLines = [];
+}
+async function updatePaperMarkers() {
+  if (replayMode || !window.Paper || !TOKEN) return;
+  try {
+    const st = await paperApi.state();
+    clearPaperLines();
+    (st.positions || []).filter((p) => p.symbol === activeSymbol).forEach((p) => {
+      paperLines.push(mainSeries.createPriceLine({ price: p.avg_entry,
+        color: p.side === "LONG" ? "#22c55e" : "#ef4444", lineWidth: 1,
+        lineStyle: 0, axisLabelVisible: true, title: p.side + " " + p.qty }));
+      if (p.liq_price) paperLines.push(mainSeries.createPriceLine({ price: p.liq_price,
+        color: "#f59e0b", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "LIQ" }));
+    });
+  } catch (e) { /* not configured / no positions */ }
+}
+setInterval(updatePaperMarkers, 8000);
 
 /* -------------------------------------------------- settings (Step 7) */
 {

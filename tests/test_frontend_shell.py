@@ -782,7 +782,7 @@ def test_sidebar_has_six_grouped_nav_items():
     assert 'id="sidebar"' in html
     for grp in ("Trading", "Analytics", "Account"):
         assert f'sb-group">{grp}' in html, grp
-    for nav in ("live", "replay", "review", "journal", "analytics", "settings"):
+    for nav in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):
         assert f'data-nav="{nav}"' in html, nav
     # honest naming — the Trade Review nav (recommendation performance) is not
     # mislabeled "Paper Trading"; the separate P6 simulator + its Help topic may
@@ -830,9 +830,36 @@ def test_journal_js_is_valid_javascript():
     assert result.returncode == 0, result.stderr
 
 
+def test_paper_js_page_pure_and_wired():
+    """P6: the Paper Trading page — simulation-only. app.js owns the network via
+    callbacks; paper.js never fetches and makes NO real-broker / exchange call."""
+    js = _read("paper.js")
+    assert "window.Paper" in js and "init:" in js and "mount:" in js
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "Math.log", "innerHTML",
+                   "placeOrder", "openPosition", "broker", "exchange.", "binance.com"):
+        assert banned not in js, banned                        # no real execution / no direct network
+    assert "Order Ticket" in js and "Place Order" in js        # the exchange-like ticket
+    for w in ("Positions", "Trade History", "Leverage", "Reduce only", "Liq", "wallet"):
+        assert w in js, w
+    html = _read("index.html")
+    assert 'src="paper.js"' in html and 'data-page="paper"' in html and 'data-nav="paper"' in html
+    assert html.index('src="paper.js"') < html.index('src="app.js"')
+    app = _read("app.js")
+    assert "/api/paper" in app and "paperApi" in app
+    assert "Paper.init" in app and "Paper.mount" in app
+    assert ".pt-card" in _read("styles.css")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_paper_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "paper.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_router_has_six_pages_live_default_active():
     html = _read("index.html")
-    for pg in ("live", "replay", "review", "journal", "analytics", "settings"):
+    for pg in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):
         assert f'data-page="{pg}"' in html, pg
     # the live page is active by default
     i = html.index('data-page="live"')

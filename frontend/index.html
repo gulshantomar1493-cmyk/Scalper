@@ -23,6 +23,7 @@
     <div class="sb-group">Trading</div>
     <button class="sb-nav" type="button" data-nav="live" title="Live analysis"><svg viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>Live</button>
     <button class="sb-nav" type="button" data-nav="replay" title="Practice historical trades"><svg viewBox="0 0 24 24"><path d="M7 5l11 7-11 7z"/></svg>Replay</button>
+    <button class="sb-nav" type="button" data-nav="paper" title="Paper trading — practice with virtual money (simulation only, no real orders)"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 15h5"/></svg>Paper Trading</button>
     <div class="sb-group">Analytics</div>
     <button class="sb-nav" type="button" data-nav="review" title="How the recommendations would have performed"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 13l2 2 4-4"/></svg>Trade Review</button>
     <button class="sb-nav" type="button" data-nav="journal" title="Your logged trades, notes and lessons"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h5"/></svg>Journal</button>
@@ -213,6 +214,11 @@
           <button class="pg-refresh" type="button" data-refresh="review">↻ Refresh</button></header>
         <div class="pg-body" id="page-review"><div class="dash-empty">Loading…</div></div>
       </section>
+      <section class="page" data-page="paper">
+        <header class="pg-head"><div class="pg-title"><b>Paper Trading</b><span data-beginner-text>Practice with virtual money — 100% simulation, no real orders.</span></div>
+          <button class="pg-refresh" type="button" data-refresh="paper">↻ Refresh</button></header>
+        <div class="pg-body" id="page-paper"><div class="dash-empty">Loading…</div></div>
+      </section>
 
       <!-- JOURNAL (Step 5) -->
       <section class="page" data-page="journal">
@@ -394,6 +400,7 @@
   <script src="htf.js"></script>
   <script src="dashboard.js"></script>
   <script src="journal.js"></script>
+  <script src="paper.js"></script>
   <script src="ops.js"></script>
   <script src="notify.js"></script>
   <script src="indicators.js"></script>

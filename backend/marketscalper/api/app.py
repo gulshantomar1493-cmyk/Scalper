@@ -60,6 +60,7 @@ from marketscalper import db, telegram
 from marketscalper.analytics import (compute_analytics,
                                      compute_mae_distribution, journal_list)
 from marketscalper.campaign import (data_quality_audit, expectancy_report)
+from marketscalper.core import paper_service
 from marketscalper.core.bus import EventBus
 from marketscalper.core.live_bar import FormingBar
 from marketscalper.core.state import StateStore
@@ -685,6 +686,97 @@ def create_app(
         if not ok:
             raise HTTPException(status_code=404, detail="journal entry not found")
         return {"deleted": entry_id}
+
+    # ------------------------------------------ paper trading (P6, decision D31)
+    # Simulation-only: isolated papertrade tables, the live mark price read from
+    # the StateStore. NEVER places a real order; never touches the frozen engines
+    # or the determinism stream.
+    _PAPER_SYMBOLS = list(ops_symbols) if ops_symbols else ["BTCUSDT", "ETHUSDT"]
+
+    def _paper_marks() -> dict:
+        marks = {}
+        for sym in _PAPER_SYMBOLS:
+            st = store.snapshot(sym)
+            c = getattr(st, "last_candle_1m", None) if st is not None else None
+            if c is not None:
+                marks[sym] = float(c.c)
+        return marks
+
+    def _validate_paper_order(p: dict) -> dict:
+        if not isinstance(p, dict):
+            _bad("body must be an object")
+        if p.get("symbol") not in _PAPER_SYMBOLS:
+            _bad("unknown symbol")
+        if p.get("side") not in ("BUY", "SELL"):
+            _bad("side must be BUY or SELL")
+        otype = p.get("type", "market")
+        if otype not in ("market", "limit", "stop"):
+            _bad("type must be market / limit / stop")
+        qty = p.get("qty")
+        if isinstance(qty, bool) or not isinstance(qty, (int, float)) or qty <= 0:
+            _bad("qty must be a positive number")
+        spec = {"symbol": p["symbol"], "side": p["side"], "type": otype,
+                "qty": float(qty), "reduce_only": bool(p.get("reduce_only", False))}
+        lev = p.get("leverage")
+        if lev is not None:
+            if isinstance(lev, bool) or not isinstance(lev, (int, float)) or not 1 <= lev <= 125:
+                _bad("leverage must be 1..125")
+            spec["leverage"] = float(lev)
+        if otype == "limit":
+            price = p.get("price")
+            if isinstance(price, bool) or not isinstance(price, (int, float)) or price <= 0:
+                _bad("a limit order needs a positive price")
+            spec["price"] = float(price)
+        if otype == "stop":
+            sp = p.get("stop_price")
+            if isinstance(sp, bool) or not isinstance(sp, (int, float)) or sp <= 0:
+                _bad("a stop order needs a positive stop_price")
+            spec["stop_price"] = float(sp)
+        return spec
+
+    @app.get("/api/paper", dependencies=[Depends(require_token)])
+    async def api_paper_state() -> dict:
+        async with pool.acquire() as conn:
+            return await paper_service.get_state(conn, _paper_marks())
+
+    @app.post("/api/paper/order", dependencies=[Depends(require_token)])
+    async def api_paper_order(payload: dict = Body(...)) -> dict:
+        spec = _validate_paper_order(payload)
+        try:
+            async with pool.acquire() as conn:
+                return await paper_service.place_order(conn, spec, _paper_marks())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/paper/close", dependencies=[Depends(require_token)])
+    async def api_paper_close(payload: dict = Body(...)) -> dict:
+        pid = payload.get("position_id")
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            _bad("position_id (integer) required")
+        try:
+            async with pool.acquire() as conn:
+                return await paper_service.close_position(conn, pid, _paper_marks())
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    @app.post("/api/paper/order/cancel", dependencies=[Depends(require_token)])
+    async def api_paper_cancel(payload: dict = Body(...)) -> dict:
+        oid = payload.get("order_id")
+        if isinstance(oid, bool) or not isinstance(oid, int):
+            _bad("order_id (integer) required")
+        async with pool.acquire() as conn:
+            ok = await paper_service.cancel_order(conn, oid)
+        if not ok:
+            raise HTTPException(status_code=404, detail="order not found")
+        return {"cancelled": oid}
+
+    @app.post("/api/paper/wallet", dependencies=[Depends(require_token)])
+    async def api_paper_wallet(payload: dict = Body(...)) -> dict:
+        bal = payload.get("balance")
+        if isinstance(bal, bool) or not isinstance(bal, (int, float)) or bal <= 0:
+            _bad("balance must be a positive number")
+        async with pool.acquire() as conn:
+            return await paper_service.reset_wallet(conn, float(bal))
 
     @app.websocket("/ws")
     async def ws_endpoint(websocket: WebSocket) -> None:

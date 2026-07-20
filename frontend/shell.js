@@ -6,7 +6,7 @@
  * beginner-mode choices persist in localStorage (a UI pref, not the token). */
 (function () {
   "use strict";
-  var PAGES = ["live", "replay", "review", "journal", "analytics", "settings"];
+  var PAGES = ["live", "replay", "paper", "review", "journal", "analytics", "settings"];
   var PAGE_KEY = "ms_page", BEG_KEY = "ms_beginner";
   var root = document.documentElement;
 
