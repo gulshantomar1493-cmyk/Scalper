@@ -166,6 +166,29 @@ def test_d9_config_plumbing_propagates_to_engines():
     assert default._momentum._ratio == 0.1
 
 
+def test_warm_g1_seeds_g1_window_live_only():
+    """D32: warm_g1=True seeds the G1 continuity window from the volume_seed
+    history (live restart -> G1 ready in ~1 candle, not ~30 min); the default
+    False leaves it cold, so replay/tests/harness -> determinism byte-identical."""
+    from datetime import datetime, timedelta, timezone
+    from marketscalper.core.bus import EventBus
+    from marketscalper.core.state import StateStore
+    from marketscalper.main import _StructurePipeline
+    from marketscalper.providers.base import Candle
+
+    store = StateStore(EventBus())
+    base = datetime(2026, 7, 22, 0, 0, tzinfo=timezone.utc)
+    seed = [Candle(symbol="BTCUSDT", tf="1m", ts=base + timedelta(minutes=i),
+                   o=100.0, h=100.5, l=99.5, c=100.2, v=1.0, qv=100.0,
+                   n_trades=1, taker_buy_v=0.5) for i in range(30)]
+
+    warm = _StructurePipeline("BTCUSDT", store, volume_seed=seed, warm_g1=True)
+    assert len(warm._qual._ts_window) == 30                # G1 ready on restart
+
+    cold = _StructurePipeline("ETHUSDT", store, volume_seed=seed)   # default False
+    assert len(cold._qual._ts_window) == 0                 # unchanged warm-up
+
+
 async def test_pipeline_g5_reflects_psychology_guard():
     """P4.9/D23.5: a locked psychology guard threads through to G5 in the
     payload — the whole bar goes NO_SIGNAL (behavioral circuit-breaker)."""

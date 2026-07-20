@@ -128,6 +128,60 @@ def test_g1_clock_arm_via_the_d6_surface():
     assert result.gates[0].passed and result.gates[0].flagged
 
 
+# ---------------------------------------------------- G1 warm-start (D32)
+
+def test_g1_seed_warmstart_passes_immediately():
+    """D32: seeding 30 contiguous stored candles skips the ~30-candle warm-up —
+    the FIRST live candle's G1 already sees a full contiguous window."""
+    rig = _Rig()
+    rig.qual.seed([_candle(i) for i in range(30)])  # minutes 0..29
+    assert len(rig.qual._ts_window) == 30
+    result = rig.step(_candle(30), clock=(0.5, True))   # first live candle
+    g1 = result.gates[0]
+    assert g1.passed and not g1.flagged             # not "warming ..."
+    assert not g1.detail.startswith("warming")
+
+
+def test_g1_seed_caps_at_window_size():
+    """Only the last maxlen candles are retained (deque bound)."""
+    rig = _Rig()
+    rig.qual.seed([_candle(i) for i in range(40)])  # 40 contiguous
+    assert len(rig.qual._ts_window) == 30
+    assert list(rig.qual._ts_window) == [_candle(i).ts for i in range(10, 40)]
+
+
+def test_g1_seed_keeps_only_contiguous_tail():
+    """A gap in the seeded history seeds ONLY the run nearest 'now' — never a
+    false 'contiguous' over a hole."""
+    rig = _Rig()
+    seed = [_candle(i) for i in (0, 1, 2, 50, 51, 52, 53)]   # gap 2 -> 50
+    rig.qual.seed(seed)
+    assert list(rig.qual._ts_window) == [_candle(i).ts for i in (50, 51, 52, 53)]
+
+
+def test_g1_seed_then_noncontiguous_live_detects_gap():
+    """A gap between the seed and the first live candle is caught — the seed can
+    never manufacture a passing G1 over missing data."""
+    rig = _Rig()
+    rig.qual.seed([_candle(i) for i in range(30)])  # 0..29
+    result = rig.step(_candle(31), clock=(0.5, True))   # minute 30 missing
+    assert not result.gates[0].passed
+    assert result.gates[0].detail == "gap in last 30 candles"
+
+
+def test_g1_seed_under_30_still_warms_and_empty_is_noop():
+    rig = _Rig()
+    rig.qual.seed([_candle(i) for i in range(10)])  # only 10
+    result = rig.step(_candle(10), clock=(0.5, True))
+    assert not result.gates[0].passed
+    assert result.gates[0].detail == "warming: 11/30 candles"
+    rig2 = _Rig()
+    rig2.qual.seed([])                              # empty -> no-op
+    rig2.qual.seed(None)                            # None -> no-op
+    assert len(rig2.qual._ts_window) == 0
+    assert rig2.step(_candle(0)).gates[0].detail == "warming: 1/30 candles"
+
+
 def test_g2_spread_strict_boundary():
     rig = _Rig()
     _warm(rig, 30)

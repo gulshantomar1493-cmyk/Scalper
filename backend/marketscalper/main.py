@@ -98,7 +98,8 @@ class _StructurePipeline:
     def __init__(self, symbol: str, store: StateStore,
                  clock_provider=None, volume_seed=None,
                  equity=DEFAULT_EQUITY_USD, psych_guard=None,
-                 regime_cfg=None, shift_accel_atr_ratio=0.1) -> None:
+                 regime_cfg=None, shift_accel_atr_ratio=0.1,
+                 warm_g1=False) -> None:
         self._symbol = symbol
         self._psych_guard = psych_guard            # D23 (P4.9), live-only
         self._store = store
@@ -134,6 +135,8 @@ class _StructurePipeline:
         self._qual = QualificationEngine(symbol, self._atr, self._trend,
                                          self._momentum, self._regime,
                                          volume=self._volume)   # D21.3 seam
+        if warm_g1 and volume_seed:                # D32: seed the G1 continuity
+            self._qual.seed(volume_seed)           # window (live restart only)
         self._strategy = StrategyEngine(symbol, self._atr)   # D20 (P3.12)
         self._lifecycle = RecommendationLifecycle(symbol)    # D22 (P4.2)
         self._pivots: deque = deque(maxlen=self._PIVOTS_SHOWN)
@@ -452,7 +455,8 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
                             seed_candles=None, recorder=None,
                             equity=DEFAULT_EQUITY_USD,
                             psych_guard=None, regime_cfg=None,
-                            shift_accel_atr_ratio=0.1, alerter=None) -> None:
+                            shift_accel_atr_ratio=0.1, alerter=None,
+                            warm_g1=False) -> None:
     """P1.19: subscribe the per-symbol pipelines to closed 1m candles.
     Must be wired AFTER the StateStore and BEFORE create_app so the WS
     broadcast's diff already contains the just-computed structure.
@@ -461,6 +465,10 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
     seed_candles: dict symbol -> historical 1m candles for the D19.2
     RVOL bucket seed (the 20 days preceding the stream start); None ->
     unseeded (rvol warms from the stream).
+    warm_g1: D32 — live main() passes True to also seed the G1 continuity
+    window from seed_candles (so a restart doesn't re-warm G1 for ~30 min);
+    replay/tests/harness leave it False -> G1 warms from the stream ->
+    determinism V1-V4 byte-identical.
     recorder: live main()'s SignalRecorder (D21.6); replay/tests pass
     None — payloads are identical either way, only persistence differs."""
     pipelines = {
@@ -469,7 +477,8 @@ def _wire_structure_engines(bus: EventBus, store: StateStore,
             volume_seed=(seed_candles or {}).get(symbol),
             equity=equity, psych_guard=psych_guard,
             regime_cfg=regime_cfg,
-            shift_accel_atr_ratio=shift_accel_atr_ratio)
+            shift_accel_atr_ratio=shift_accel_atr_ratio,
+            warm_g1=warm_g1)
         for symbol in symbols}
 
     async def on_candle(candle: Candle) -> None:
@@ -604,7 +613,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
         clock_provider=lambda: (sampler.offset_s, sampler.in_sync),
         seed_candles=seed_candles, recorder=recorder, equity=equity,
         psych_guard=psych_guard, regime_cfg=regime_cfg,
-        shift_accel_atr_ratio=shift_accel, alerter=alerter)
+        shift_accel_atr_ratio=shift_accel, alerter=alerter,
+        warm_g1=True)                              # D32: live restart warms G1
 
     feed = feed_cls(config.symbols, bus,
                     on_reference_candle=reconciler.on_reference)

@@ -159,6 +159,24 @@ class QualificationEngine:
         self._last_tl_signal_bar: int | None = None
         self._last_shift_flag_bar: int | None = None   # momentum shift
 
+    def seed(self, candles) -> None:
+        """G1 warm-start (D32): pre-fill the continuity window from the trailing
+        minute-CONTIGUOUS run (<= maxlen) of the provided stored 1m candles, so
+        a live restart does not spend ~30 minutes re-warming G1. A gap anywhere
+        in the tail seeds only the run after it — never a false 'contiguous'.
+        Call once, chronologically, before the stream (composition owns the
+        storage read); replay/tests/harness pass nothing -> unchanged. Touches
+        ONLY _ts_window — not _bar / recency windows / scoring."""
+        if not candles:
+            return
+        tail: list = []
+        for candle in reversed(candles[-self._ts_window.maxlen:]):
+            if tail and (tail[0] - candle.ts) != timedelta(minutes=1):
+                break                                  # gap -> keep only the run nearest 'now'
+            tail.insert(0, candle.ts)
+        self._ts_window.clear()
+        self._ts_window.extend(tail)
+
     def update(self, candle: Candle, *, bos_event, choch_event, tl_events,
                liq_events, zones: list[ConfluenceZone],
                spread_pct: float | None,
