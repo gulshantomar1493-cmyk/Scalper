@@ -857,6 +857,20 @@ def test_paper_js_is_valid_javascript():
     assert result.returncode == 0, result.stderr
 
 
+def test_chart_trade_widget_present_and_wired():
+    """On-chart scalper widget: qty + BUY/SELL (market) + a live P&L + Close,
+    wired to the paper API; the running P&L follows the live forming price."""
+    html = _read("index.html")
+    assert 'id="chart-trade"' in html
+    app = _read("app.js")
+    assert "chartTrade" in app and "chartClose" in app and "updateTradePnl" in app
+    assert "ct-qty" in app and "ct-buy" in app and "ct-sell" in app and "ct-pnl" in app
+    assert "syncTradeWidget" in app                        # rebuild only on a state change
+    assert 'type: "market"' in app                         # instant execution at the live price
+    assert "updateTradePnl(f.c)" in app                    # P&L updates on every forming tick
+    assert ".chart-trade" in _read("styles.css")
+
+
 def test_router_has_six_pages_live_default_active():
     html = _read("index.html")
     for pg in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):

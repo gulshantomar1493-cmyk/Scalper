@@ -365,6 +365,7 @@ function handleForming(f) {
   }
   try { mainSeries.update(liveBar); } catch (e) { /* history not loaded yet */ }
   Indicators.updateForming(f, activeTf);           // extend indicator lines (backend values)
+  updateTradePnl(f.c);                             // running paper P&L follows the live price
 }
 function updateLiveStats(f) {
   const set = (id, v) => { const e = $(id); if (e) e.textContent = fmt(v); };
@@ -583,25 +584,92 @@ for (const btn of document.querySelectorAll("[data-refresh]")) {
 // P6: paper-position markers on the Live chart — entry + liquidation price lines
 // for the active symbol's open simulated position (display-only).
 let paperLines = [];
+let paperPos = null;                 // active symbol's open paper position (for the on-chart widget)
+let tradeMode = null;                // "flat" | "pos" — rebuild the widget only on a state change
+let ctQty = "0.01";                  // remembered quantity across rebuilds
+const CHART_TRADE_LEV = 10;          // default leverage for on-chart quick trades
+
 function clearPaperLines() {
   paperLines.forEach((l) => { try { mainSeries.removePriceLine(l); } catch (e) { /* empty */ } });
   paperLines = [];
 }
 async function updatePaperMarkers() {
-  if (replayMode || !window.Paper || !TOKEN) return;
+  if (replayMode || !window.Paper || !TOKEN) { paperPos = null; syncTradeWidget(); return; }
   try {
     const st = await paperApi.state();
     clearPaperLines();
-    (st.positions || []).filter((p) => p.symbol === activeSymbol).forEach((p) => {
+    const here = (st.positions || []).filter((p) => p.symbol === activeSymbol);
+    here.forEach((p) => {
       paperLines.push(mainSeries.createPriceLine({ price: p.avg_entry,
         color: p.side === "LONG" ? "#22c55e" : "#ef4444", lineWidth: 1,
         lineStyle: 0, axisLabelVisible: true, title: p.side + " " + p.qty }));
       if (p.liq_price) paperLines.push(mainSeries.createPriceLine({ price: p.liq_price,
         color: "#f59e0b", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "LIQ" }));
     });
+    paperPos = here[0] || null;
+    syncTradeWidget();
   } catch (e) { /* not configured / no positions */ }
 }
-setInterval(updatePaperMarkers, 8000);
+setInterval(updatePaperMarkers, 5000);
+
+/* ---------- on-chart quick trade (scalper): BUY / SELL + live P&L + Close ---------- */
+function livePrice() { return liveBar ? liveBar.close : (paperPos ? paperPos.avg_entry : null); }
+function money2(v) { return (v < 0 ? "-$" : "+$") + Math.abs(v).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
+
+async function chartTrade(side) {
+  const qi = $("ct-qty");
+  const qty = qi ? parseFloat(qi.value) : NaN;
+  if (!(qty > 0)) { note("enter a quantity"); return; }
+  try {
+    await paperApi.order({ symbol: activeSymbol, side, type: "market", qty, leverage: CHART_TRADE_LEV });
+    note((side === "BUY" ? "Bought " : "Sold ") + qty + " " + activeSymbol + " (paper)");
+    await updatePaperMarkers();                         // immediate sync (don't wait for the poll)
+  } catch (e) { note("order: " + (e.message || e)); }
+}
+async function chartClose() {
+  if (!paperPos) return;
+  try { await paperApi.close({ position_id: paperPos.id }); note("position closed — logged"); await updatePaperMarkers(); }
+  catch (e) { note("close: " + (e.message || e)); }
+}
+
+function _ct(tag, cls, txt) { const e = document.createElement(tag); if (cls) e.className = cls; if (txt != null) e.textContent = txt; return e; }
+function buildTradeWidget(w) {
+  const cur = $("ct-qty"); if (cur) ctQty = cur.value || ctQty;   // preserve the typed qty
+  w.textContent = "";
+  if (paperPos) {
+    const p = paperPos;
+    w.appendChild(_ct("span", "ct-pos " + (p.side === "LONG" ? "up" : "down"), p.side + " " + p.qty));
+    w.appendChild(_ct("span", "ct-at", "@ " + fmt(p.avg_entry)));
+    w.appendChild(_ct("span", "ct-pnl", "—"));
+    const close = _ct("button", "ct-close", "Close");
+    close.addEventListener("click", chartClose);
+    w.appendChild(close);
+  } else {
+    w.appendChild(_ct("span", "ct-lbl", "Qty"));
+    const qi = _ct("input", "ct-qty"); qi.id = "ct-qty"; qi.type = "number"; qi.step = "any";
+    qi.value = ctQty; qi.title = "Quantity to buy / sell (paper)";
+    qi.addEventListener("input", () => { ctQty = qi.value; });
+    w.appendChild(qi);
+    const buy = _ct("button", "ct-buy", "BUY"); buy.addEventListener("click", () => chartTrade("BUY"));
+    const sell = _ct("button", "ct-sell", "SELL"); sell.addEventListener("click", () => chartTrade("SELL"));
+    w.appendChild(buy); w.appendChild(sell);
+  }
+}
+function syncTradeWidget() {
+  const w = $("chart-trade"); if (!w) return;
+  const mode = paperPos ? "pos" : "flat";
+  if (mode !== tradeMode || (paperPos && w.__pid !== paperPos.id)) {
+    tradeMode = mode; w.__pid = paperPos ? paperPos.id : null;
+    buildTradeWidget(w);
+  }
+  updateTradePnl(livePrice());
+}
+function updateTradePnl(price) {
+  const el = $("ct-pnl"); if (!el || !paperPos || price == null) return;
+  const pnl = (paperPos.side === "LONG" ? price - paperPos.avg_entry : paperPos.avg_entry - price) * paperPos.qty;
+  el.textContent = money2(pnl);
+  el.className = "ct-pnl " + (pnl > 0 ? "up" : pnl < 0 ? "down" : "");
+}
 
 /* -------------------------------------------------- settings (Step 7) */
 {

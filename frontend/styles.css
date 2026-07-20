@@ -1282,3 +1282,22 @@ body {
 .pt-mini { border:1px solid var(--hairline); background:transparent; color:var(--text-dim); padding:3px 9px; border-radius:6px; font:inherit; font-size:11px; cursor:pointer; }
 .pt-mini:hover { color:var(--text); border-color:var(--accent); }
 .pt-del:hover { color:var(--down); border-color:var(--down); }
+
+/* On-chart quick-trade widget (scalper) — top-right of the Live chart. */
+.chart-trade { position:absolute; top:8px; right:66px; z-index:7; display:flex; align-items:center; gap:6px;
+  padding:5px 8px; border-radius:9px; background:color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  border:1px solid var(--hairline); box-shadow:0 3px 14px rgba(0,0,0,.25); }
+.chart-trade:empty { display:none; }
+.ct-lbl { font-size:10.5px; color:var(--text-dim); font-weight:600; }
+.ct-qty { width:66px; border:1px solid var(--hairline); background:var(--surface); color:var(--text); padding:4px 7px; border-radius:6px; font:inherit; font-size:12px; }
+.ct-buy, .ct-sell, .ct-close { border:0; padding:5px 12px; border-radius:6px; font:inherit; font-size:12px; font-weight:800; cursor:pointer; letter-spacing:.02em; }
+.ct-buy { background:var(--up); color:#04121a; }
+.ct-sell { background:var(--down); color:#fff; }
+.ct-close { background:var(--subtle); color:var(--text); border:1px solid var(--hairline); font-weight:700; }
+.ct-close:hover { border-color:var(--down); color:var(--down); }
+.ct-pos { font-size:11.5px; font-weight:800; padding:2px 8px; border-radius:5px; }
+.ct-pos.up { background:color-mix(in srgb, var(--up) 22%, transparent); color:var(--up); }
+.ct-pos.down { background:color-mix(in srgb, var(--down) 22%, transparent); color:var(--down); }
+.ct-at { font-size:11px; color:var(--text-dim); }
+.ct-pnl { font-size:13px; font-weight:800; font-variant-numeric:tabular-nums; min-width:62px; text-align:right; }
+.ct-pnl.up { color:var(--up); } .ct-pnl.down { color:var(--down); }
