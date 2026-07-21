@@ -1275,9 +1275,10 @@ async def test_api_setups_htf_gated(db_conn):
             assert d["htf_bias"] == "BULLISH" and d["message"] is None
             assert len(d["setups"]) == 1
             setup = d["setups"][0]
-            assert setup["direction"] == "LONG" and setup["confidence"] >= 70
-            assert setup["rr"] == 2.0 and setup["why"]["why_edge"]
+            assert setup["direction"] == "LONG" and setup["grade"] in ("A+", "A")
+            assert 1.8 <= setup["rr"] <= 1.9 and setup["why"]["why_edge"]   # NET of fees
             assert setup["htf_bias"] == "BULLISH" and setup["market_bias"] == "BULLISH"
+            assert setup["reasons_to_avoid"] and setup["setup_type"] and setup["market_context"]
             # a symbol with no live structure -> the confident "no setup"
             async with s.get(f"http://{addr}/api/setups?symbol=ETHUSDT", headers=AUTH) as r:
                 d2 = await r.json()

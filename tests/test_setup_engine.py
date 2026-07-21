@@ -1,15 +1,15 @@
-"""Trade Engine V2 (core/setup_engine.py) — the discretionary setup logic.
+"""Trade Engine V2 (core/setup_engine.py) — post-audit design.
 
-Hand-constructed HTF + LTF inputs (the shapes the frozen engines emit) drive the
-gate: top-down alignment, the sweep->shift->zone pillars, the high-probability
-bar, and the confident "no setup". Pure — no DB, no server.
+Confidence is an emergent GRADE (A+/A/B) from confluence agreement, not a fake %.
+Necessary gates (HTF, location, sweep->shift, net R:R, data integrity) must all
+hold or there is no setup. Every setup carries the trader-card fields. Pure.
 """
 
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from marketscalper.core.setup_engine import MIN_CONFIDENCE, build_setups
+from marketscalper.core.setup_engine import TradeSetupV2, build_setups
 
 T0 = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
 
@@ -21,42 +21,50 @@ def _sig(direction="LONG", entry=100.0, sl=98.0, tp1=104.0, tp2=108.0,
             "invalid_after_bars": bars, "facts": []}
 
 
-def _htf(bias="BULLISH", conf=0.7, story="4H bullish; price drawing to buy-side liquidity."):
-    return {"symbol": "BTCUSDT", "overall": {"bias": bias, "confidence": conf,
-                                             "market_story": story}}
+def _htf(bias="BULLISH", conf=70, story="4H bullish; drawing to buy-side liquidity."):
+    # HtfService gives confidence as 0..100
+    return {"symbol": "BTCUSDT",
+            "overall": {"bias": bias, "confidence": conf, "market_story": story},
+            "timeframes": {}}
 
 
 def _ltf(direction="LONG", pd="DISCOUNT", integrity="PASS", trend="BULLISH",
-         sweeps=True, shifts=True, confl=True, rvol=1.5, cum_delta=120.0, signals=None):
+         sweeps=True, shifts=True, zone=True, rvol=1.5, cum_delta=120.0, signals=None):
+    long = direction == "LONG"
     liq = {"premium_discount": pd,
-           "sweeps": [{"ts": T0.isoformat(), "side": "LOW", "target": "EQL", "price": 97.9}] if sweeps else [],
+           "sweeps": [{"ts": T0.isoformat(), "side": "LOW" if long else "HIGH",
+                       "target": "EQL" if long else "EQH", "price": 97.9 if long else 102.1}] if sweeps else [],
            "shifts": [{"sweep_ts": T0.isoformat(), "ts": T0.isoformat()}] if shifts else [],
-           "pools": [], "levels": {}}
-    conf_zones = ([{"direction": "BULL" if direction == "LONG" else "BEAR",
-                    "lo": 99.5, "hi": 100.5, "count": 3, "members": ["OB"],
-                    "htf_magnet": True, "created_ts": T0.isoformat()}] if confl else [])
-    return {"trend": trend, "liquidity": liq, "confluence": conf_zones,
+           "pools": [{"kind": "EQH" if long else "EQL", "price": 104.5 if long else 95.5,
+                      "size": 3, "strength": 1.0}],
+           "levels": {}}
+    obs = {"blocks": ([{"direction": "BULL" if long else "BEAR", "lo": 99.5, "hi": 100.5,
+                        "status": "active", "created_ts": T0.isoformat()}] if zone else []),
+           "breakers": []}
+    return {"trend": trend, "liquidity": liq, "orderblocks": obs, "fvgs": [], "choch": [],
             "volume": {"rvol": rvol, "cum_delta": cum_delta},
-            "qualification": {"data_integrity": integrity, "verdict": "TRADEABLE"},
+            "qualification": {"data_integrity": integrity},
             "signals": signals if signals is not None else [_sig(direction=direction)]}
 
 
 # ---------------------------------------------------------- the happy path
 
-def test_high_probability_htf_aligned_long():
+def test_a_plus_setup_all_confluences():
     out = build_setups("BTCUSDT", _htf(), _ltf(), now_ts=T0 + timedelta(minutes=2))
     assert len(out) == 1
     s = out[0]
+    assert isinstance(s, TradeSetupV2)
     assert s.direction == "LONG" and s.htf_bias == "BULLISH"
-    assert s.confidence >= MIN_CONFIDENCE                 # all pillars -> ~95.5
-    assert s.rr == 2.0                                     # |104-100| / |100-98|
-    assert s.risk_level == "LOW"                           # aligned + strong conviction
-    # explainability: all six "why" questions answered + pillar reasons
+    assert s.grade == "A+" and s.confluence_score == "5 of 5 confluences aligned"
+    assert not hasattr(s, "confidence")                  # no fabricated %
+    assert 1.8 <= s.rr <= 1.9                             # NET of fees (~1.86), not 2.0
+    assert s.risk_level == "LOW"
+    assert s.setup_type == "Liquidity Sweep Reversal"
     for k in ("why_exists", "why_now", "why_entry", "why_sl", "why_targets", "why_edge"):
         assert s.why.get(k)
-    assert any("HTF" in r for r in s.reasons)
-    assert any("swept" in r for r in s.reasons)
-    assert str(s.sl) in s.invalidation
+    assert s.reasons_to_avoid and s.early_exit and s.management_notes   # the trader card
+    assert s.primary_confluence and s.secondary_confluence
+    assert s.expected_holding_time
 
 
 def test_short_mirror():
@@ -64,53 +72,78 @@ def test_short_mirror():
                        _ltf(direction="SHORT", pd="PREMIUM", trend="BEARISH",
                             signals=[_sig(direction="SHORT", entry=100, sl=102, tp1=96, tp2=92)]),
                        now_ts=T0 + timedelta(minutes=2))
-    assert len(out) == 1 and out[0].direction == "SHORT" and out[0].rr == 2.0
+    assert len(out) == 1 and out[0].direction == "SHORT" and out[0].grade == "A+"
 
 
-# ---------------------------------------------- the confident "no setup"
+# ---------------------------------------- emergent grade / no fake confidence
 
-def test_counter_trend_to_convinced_htf_is_rejected():
-    """Never fight a convinced higher timeframe (top-down discipline)."""
-    out = build_setups("BTCUSDT", _htf(bias="BEARISH", conf=0.7),   # HTF down
-                       _ltf(direction="LONG"),                       # 1m long trigger
+def test_grade_emerges_from_confluence_count():
+    """HTF neutral (not aligned), location only via a zone, no volume -> just one
+    confluence -> grade B (valid but thin), not a manufactured number."""
+    out = build_setups("BTCUSDT", _htf(bias="NEUTRAL", conf=0),
+                       _ltf(pd=None, rvol=0.9, cum_delta=None),   # zone present, nothing else
+                       now_ts=T0 + timedelta(minutes=2))
+    assert len(out) == 1
+    assert out[0].grade == "B" and out[0].confluence_score.startswith("1 of 5")
+    # the honest bear case must call out the missing HTF bias
+    assert any("range reaction" in r for r in out[0].reasons_to_avoid)
+
+
+def test_market_context_is_a_narrative_not_a_summary():
+    s = build_setups("BTCUSDT", _htf(), _ltf(), now_ts=T0 + timedelta(minutes=2))[0]
+    ctx = s.market_context.lower()
+    assert "control" in ctx and ("swept" in ctx or "liquidity" in ctx)
+    assert "drawn" in ctx or "draw" in ctx or "toward" in ctx        # the draw on liquidity
+    assert "bias (" not in ctx                                        # not the old indicator dump
+
+
+def test_reasons_to_avoid_always_present():
+    """A professional always argues the bear case for their own idea."""
+    for out in (build_setups("BTCUSDT", _htf(), _ltf(), now_ts=T0 + timedelta(minutes=2)),
+                build_setups("BTCUSDT", _htf(bias="NEUTRAL", conf=0), _ltf(pd=None),
+                             now_ts=T0 + timedelta(minutes=2))):
+        assert out and out[0].reasons_to_avoid
+
+
+# ------------------------------------------ necessary gates (all reject)
+
+def test_counter_trend_to_convinced_htf_rejected():
+    out = build_setups("BTCUSDT", _htf(bias="BEARISH", conf=70), _ltf(direction="LONG"),
                        now_ts=T0 + timedelta(minutes=2))
     assert out == []
 
 
-def test_no_signals_returns_no_setup():
-    out = build_setups("BTCUSDT", _htf(), _ltf(signals=[]), now_ts=T0)
+def test_no_valid_location_rejected():
+    """No discount AND no named zone -> no location -> no setup (the fix for the
+    'high-probability in a bad spot' defect)."""
+    out = build_setups("BTCUSDT", _htf(), _ltf(pd=None, zone=False),
+                       now_ts=T0 + timedelta(minutes=2))
     assert out == []
 
 
-def test_degraded_data_integrity_is_a_hard_gate():
+def test_no_sweep_shift_rejected():
+    out = build_setups("BTCUSDT", _htf(), _ltf(sweeps=False, shifts=False),
+                       now_ts=T0 + timedelta(minutes=2))
+    assert out == []
+
+
+def test_insufficient_net_rr_rejected():
+    out = build_setups("BTCUSDT", _htf(), _ltf(signals=[_sig(entry=100, sl=98, tp1=101)]),
+                       now_ts=T0 + timedelta(minutes=2))
+    assert out == []
+
+
+def test_degraded_data_integrity_rejected():
     out = build_setups("BTCUSDT", _htf(), _ltf(integrity="DEGRADED"),
                        now_ts=T0 + timedelta(minutes=2))
     assert out == []
 
 
-def test_insufficient_rr_rejected():
-    out = build_setups("BTCUSDT", _htf(),
-                       _ltf(signals=[_sig(entry=100, sl=98, tp1=101)]),   # rr 0.5
-                       now_ts=T0 + timedelta(minutes=2))
-    assert out == []
-
-
 def test_stale_trigger_rejected():
-    """A trigger past its validity window is not a 'now' setup."""
-    out = build_setups("BTCUSDT", _htf(), _ltf(),
-                       now_ts=T0 + timedelta(minutes=20))     # >> 5 bars
+    out = build_setups("BTCUSDT", _htf(), _ltf(), now_ts=T0 + timedelta(minutes=20))
     assert out == []
 
 
-def test_below_threshold_not_surfaced():
-    """Aligned + sweep/shift but no discount / confluence / volume -> ~65.5 < 70
-    -> not high-probability -> not surfaced."""
-    out = build_setups("BTCUSDT", _htf(conf=0.7),
-                       _ltf(pd=None, confl=False, rvol=0.9, cum_delta=None),
-                       now_ts=T0 + timedelta(minutes=2))
-    assert out == []
-
-
-def test_none_inputs_safe():
+def test_no_signals_and_none_safe():
+    assert build_setups("BTCUSDT", _htf(), _ltf(signals=[]), now_ts=T0) == []
     assert build_setups("BTCUSDT", None, None) == []
-    assert build_setups("BTCUSDT", None, _ltf(), now_ts=T0) == []   # no HTF -> no alignment
