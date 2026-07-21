@@ -27,12 +27,14 @@
 
   function init(container) { root = container; }
 
+  // one label/value line (full width)
   function levelRow(label, value, cls) {
     var r = el("div", "su-lv");
     r.appendChild(el("span", "su-lv-k", label));
     r.appendChild(el("span", "su-lv-v " + (cls || ""), value));
     return r;
   }
+  var divider = function () { return el("div", "su-div"); };
 
   function list(title, items, cls) {
     var wrap = el("div", "su-list");
@@ -54,26 +56,29 @@
     // grade reason — WHY this grade (backend-provided; never derived here)
     if (s.grade_reason) c.appendChild(el("div", "su-greason", s.grade_reason));
 
-    // the action: entry / stop / targets + R:R + risk
+    // the action, divider-separated: entry (cyan-threaded) / stop / targets / R:R · risk
     var lv = el("div", "su-levels");
-    lv.appendChild(levelRow("Entry", fmt(s.entry)));
+    lv.appendChild(levelRow("Entry", fmt(s.entry), "su-entry"));
+    lv.appendChild(divider());
     lv.appendChild(levelRow("Stop", fmt(s.sl), "su-stop"));
-    lv.appendChild(levelRow("TP1", fmt(s.tp1), "su-tp"));
-    if (s.tp2 != null) lv.appendChild(levelRow("TP2", fmt(s.tp2), "su-tp"));
-    lv.appendChild(levelRow("R:R", (s.rr != null ? s.rr + " : 1" : "—")));
-    lv.appendChild(levelRow("Risk", s.risk_level, RISK_CLASS[s.risk_level] || ""));
-    lv.appendChild(levelRow("Hold", s.holding_time));
+    lv.appendChild(divider());
+    var tps = el("div", "su-lv-pair");
+    tps.appendChild(levelRow("TP1", fmt(s.tp1), "su-tp"));
+    if (s.tp2 != null) tps.appendChild(levelRow("TP2", fmt(s.tp2), "su-tp"));
+    lv.appendChild(tps);
+    lv.appendChild(divider());
+    var meta = el("div", "su-lv-pair");
+    meta.appendChild(levelRow("R:R", (s.rr != null ? s.rr + " : 1" : "—")));
+    meta.appendChild(levelRow("Risk", s.risk_level, RISK_CLASS[s.risk_level] || ""));
+    lv.appendChild(meta);
     c.appendChild(lv);
 
-    // the narrative (concise; the backend keeps it short)
-    if (s.market_context) c.appendChild(el("div", "su-ctx", s.market_context));
-
-    // primary reasons (always visible — the trader sees the case at a glance)
-    if (s.reasons && s.reasons.length) c.appendChild(list("Confluences", s.reasons, "su-good"));
-
-    // full details on demand — minimize what's forced on the eye
+    // everything else expands on demand — the visible card stays the decision only
     var det = el("details", "su-more");
-    det.appendChild(el("summary", null, "Full details"));
+    det.appendChild(el("summary", null, "Details"));
+    if (s.holding_time) det.appendChild(levelRow("Holding time", s.holding_time));
+    if (s.market_context) det.appendChild(el("div", "su-ctx", s.market_context));
+    if (s.reasons && s.reasons.length) det.appendChild(list("Confluences", s.reasons, "su-good"));
     if (s.reasons_to_avoid && s.reasons_to_avoid.length)
       det.appendChild(list("Reasons to avoid", s.reasons_to_avoid, "su-warn"));
     if (s.invalidation) det.appendChild(list("Invalidation", [s.invalidation], "su-warn"));

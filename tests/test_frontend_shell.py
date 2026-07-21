@@ -177,11 +177,11 @@ def test_htf_js_pure_renderer_and_wired():
                    "tolerance", ".reduce(", "aggregate", "innerHTML"):
         assert banned not in js, banned
     assert "textContent" in js
-    # M2.5 Card 2 surface: overall bias + conviction + agreement + a tiny tf grid.
-    # The market story + signal-alignment line moved off the card (folded into the
-    # context strip); this card is now bias/conviction/agreement/tf-dots only.
-    assert "HTF Bias" in js and "conviction" in js and "agree" in js and "timeframes" in js
-    assert "htf-dot" in js                                  # the compact tf dot grid
+    # M2.6 Card 2 surface: overall bias + conviction + agreement + an inline tf dot
+    # row. The market story + signal-alignment line moved off the card (folded into
+    # the context strip); this card is now bias/conviction/agreement/tf-dots only.
+    assert "conviction" in js and "agree" in js and "timeframes" in js
+    assert "htf-dot" in js                                  # the compact tf dot row
     # index loads htf.js after panel.js, before app.js; the panel container exists
     html = _read("index.html")
     assert 'src="htf.js"' in html and 'id="htf-panel"' in html
@@ -1276,8 +1276,9 @@ def test_context_strip_pure_and_wired():
     for tile in ("TREND", "CONTROL", "LIQUIDITY", "DRAW", "SETUP"):
         assert tile in js, tile
     assert "No Setup" in js                                    # Q5 no-setup label
-    # reads frozen-contract fields only (no client-side analysis)
-    for field in ("ltf_trend", "overall", "bias", "conviction", "confidence",
+    # reads frozen-contract fields only (no client-side analysis). M2.6: CONTROL
+    # dropped conviction/confidence (those live in the HTF card) — one answer/tile.
+    for field in ("ltf_trend", "overall", "bias",
                   "liquidity_sweep", "liquidity", "tp1", "direction", "grade"):
         assert field in js, field
     assert "textContent" in js                                # XSS-safe

@@ -24,19 +24,20 @@
 
   function init(container) { root = container; }
 
-  // One tiny per-timeframe tile: a bias-colored dot + the tf label. The full read
+  // One per-timeframe chip: a bias-colored dot + the tf label, inline. The full read
   // (bias · trend) is on hover (title) — never color alone. No engine math here.
   function tfDot(tf, a) {
     var ready = a && a.ready;
     var d = el("div", "htf-dot-tile" + (ready ? "" : " htf-dim"));
-    d.appendChild(el("span", "htf-dot " + (ready ? (BIAS_CLASS[a.bias] || "htf-neu") : "htf-neu"), "●"));
+    d.appendChild(el("span", "htf-dot " + (ready ? (BIAS_CLASS[a.bias] || "htf-neu") : "htf-warm"), "●"));
     d.appendChild(el("span", "htf-dot-tf", TF_LABEL[tf]));
     d.title = TF_LABEL[tf] + ": " + (ready ? (a.bias + " · " + (a.trend || "")) : "warming up");
     return d;
   }
 
-  // Card 2 (M2.5): bias · conviction · agreement + a tiny tf grid. Nothing more —
-  // the market story folds into the context strip; the setup card owns the rest.
+  // Card 2 (M2.6): bias · conviction · agreement + an inline tf dot row. Nothing
+  // more — no paragraphs; the market story folds into the context strip and the
+  // setup card owns the rest. Only glanceable information.
   function render(data, direction) {                           // direction: unused (freeze)
     if (!root) return;
     root.textContent = "";
@@ -44,7 +45,7 @@
     var o = data.overall;
 
     var head = el("div", "htf-head");
-    head.appendChild(el("span", "htf-title", "HTF Bias"));
+    head.appendChild(el("span", "htf-title", "HTF"));
     head.appendChild(el("span", "htf-badge " + (BIAS_CLASS[o.bias] || "htf-neu"), o.bias));
     root.appendChild(head);
 

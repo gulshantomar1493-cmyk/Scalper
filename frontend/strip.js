@@ -36,14 +36,16 @@
     return null;
   }
 
-  function tile(q, label, ico, val, cls, sub) {
-    var t = el("div", "cs-tile cs-t" + q);
-    t.appendChild(el("div", "cs-lab", label));
-    var v = el("div", "cs-val cs-" + (cls || "neu"));
-    v.appendChild(el("span", "cs-ico", ico));
-    v.appendChild(el("span", "cs-txt", val));
-    t.appendChild(v);
-    if (sub != null) t.appendChild(el("div", "cs-sub", sub));
+  // One tile = a colored glyph + a category LABEL (line 1) and a single bold VALUE
+  // (line 2). The tile's semantic class colors both glyph and value. One question,
+  // one answer — no sub-lines (M2.6: conviction/level live in the HTF card + chart).
+  function tile(q, label, ico, val, cls) {
+    var t = el("div", "cs-tile cs-t" + q + " cs-" + (cls || "neu"));
+    var hd = el("div", "cs-hd");
+    hd.appendChild(el("span", "cs-ico", ico));
+    hd.appendChild(el("span", "cs-lab", label));
+    t.appendChild(hd);
+    t.appendChild(el("div", "cs-val", val));
     return t;
   }
 
@@ -59,43 +61,39 @@
     return tile("1", "TREND", v[0], v[1], v[2]);
   }
 
-  /* Q2 — CONTROL. htf overall bias -> Buyers / Sellers / Balanced; conviction + agree% below. */
+  /* Q2 — CONTROL. htf overall bias -> Buyers / Sellers / Balanced. (Conviction +
+     agreement live in the HTF card — the strip answers only "who controls?".) */
   function controlTile(htf) {
     var o = (htf && htf.overall) || null;
     if (!o) return tile("2", "CONTROL", "·", "—", "dim");
     var who = { BULLISH: "Buyers", BEARISH: "Sellers" }[o.bias] || "Balanced";
     var cls = { BULLISH: "up", BEARISH: "down" }[o.bias] || "neu";
-    var conv = (o.conviction || "").toLowerCase();
-    var sub = conv + (o.confidence != null ? " · " + o.confidence + "%" : "");
-    return tile("2", "CONTROL", "●", who, cls, sub.trim() || null);
+    return tile("2", "CONTROL", "●", who, cls);
   }
 
-  /* Q3 — LIQUIDITY. The most timely sweep (taken) else the strongest resting pool;
-     the level sits on the sub-line so the headline stays a clean glance. */
+  /* Q3 — LIQUIDITY. The most timely sweep (taken) else the strongest resting pool.
+     Just what's happened to liquidity — the exact level is on the chart. */
   function liquidityTile(htf) {
     var tfs = (htf && htf.timeframes) || {};
     for (var i = 0; i < TF_LOW.length; i++) {
       var a = tfs[TF_LOW[i]]; if (!a || !a.ready) continue;
       var s = a.liquidity_sweep;
-      if (s) {
-        var lbl = s.side === "HIGH" ? "BSL" : "SSL";     // buy-side high / sell-side low taken
-        var arr = s.side === "HIGH" ? "↓" : "↑";
-        return tile("3", "LIQUIDITY", "◎", lbl + " swept",
-                    s.side === "HIGH" ? "down" : "up", fmt(s.price) + " " + arr);
+      if (s) {                                             // buy-side high / sell-side low taken
+        var lbl = s.side === "HIGH" ? "BSL Swept" : "SSL Swept";
+        return tile("3", "LIQUIDITY", "◎", lbl, s.side === "HIGH" ? "down" : "up");
       }
     }
     for (var j = 0; j < TF_LOW.length; j++) {
       var b = tfs[TF_LOW[j]]; if (!b || !b.ready || !b.liquidity || !b.liquidity.length) continue;
-      var p = b.liquidity[0];                             // backend pre-sorted by strength
-      var k = p.kind === "EQH" ? "BSL" : "SSL";
-      return tile("3", "LIQUIDITY", "◇", k + " resting", "neu", fmt(p.price));
+      var k = b.liquidity[0].kind === "EQH" ? "BSL Resting" : "SSL Resting";
+      return tile("3", "LIQUIDITY", "◇", k, "neu");
     }
     return tile("3", "LIQUIDITY", "·", "—", "dim");
   }
 
-  /* Q4 — DRAW. setup.tp1 (the backend's stated target). With no setup we only know the
-     bias direction, not a specific unpassed level, so show the direction (a pool below
-     an up-trending price would mislead) — honest over falsely precise. */
+  /* Q4 — DRAW. setup.tp1 (the backend's stated target — the one price in the strip).
+     With no setup we only know the bias direction, not a specific unpassed level, so
+     show the direction (a pool behind an up-trending price would mislead). */
   function drawTile(setup, htf) {
     if (setup && setup.tp1 != null) {
       var up = setup.direction === "LONG";
@@ -107,7 +105,8 @@
     return tile("4", "DRAW", "·", "—", "dim");
   }
 
-  /* Q5 — SETUP. direction + grade (brightened tile) else a calm "No Setup". */
+  /* Q5 — SETUP. direction + grade (brightened, cyan-threaded to the chart + card)
+     else a calm "No Setup". */
   function setupTile(setup) {
     if (setup) {
       var up = setup.direction === "LONG";
