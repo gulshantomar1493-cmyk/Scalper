@@ -45,7 +45,7 @@
       card.appendChild(top);
       var l1 = el("div", "htf-card-line");
       l1.appendChild(el("span", "htf-k", a.trend));
-      l1.appendChild(el("span", "htf-v", "score " + a.score));
+      l1.appendChild(el("span", "htf-v", (a.conviction || "—").toLowerCase() + " conviction"));
       card.appendChild(l1);
       var l2 = el("div", "htf-card-line");
       l2.appendChild(el("span", "htf-k", a.structure));
@@ -81,7 +81,7 @@
     root.appendChild(head);
 
     var meta = el("div", "htf-meta");
-    meta.appendChild(el("span", "htf-score", (o.score != null ? o.score : "—") + "/100"));
+    meta.appendChild(el("span", "htf-score", (o.conviction || "—") + " conviction"));
     meta.appendChild(el("span", "htf-conf", (o.confidence != null ? o.confidence : 0) + "% agree"));
     root.appendChild(meta);
 

@@ -56,10 +56,10 @@ _MAX_ZONES = 4                    # supply / demand zones surfaced per side
 
 # Higher timeframes carry more weight in the overall roll-up.
 _TF_WEIGHT = {"15m": 1.0, "1h": 2.0, "4h": 3.0, "1d": 4.0}
-# Max magnitude of the per-tf signed score: trend 3 + ema 2 + bos 1.5 + choch 1
-# + momentum 0.5 + demand/supply 1 + ema200 0.5.
-_SCORE_MAX = 9.5
-_BIAS_THRESHOLD = 1.0            # |signed| below this reads NEUTRAL
+# Conviction (NOT direction) — fraction of confirmations agreeing with the
+# price-action bias. Direction comes ONLY from structure/BOS/CHOCH; these bands
+# just label how strongly the confirmations back it.
+_STRONG, _MODERATE = 0.66, 0.34
 
 
 def _to_candle(symbol: str, tf: str, d: dict) -> Candle:
@@ -160,22 +160,65 @@ def _structure_label(highs, lows) -> str:
     return "forming"
 
 
-def _derived_trend(highs, lows, ema_align: str) -> str:
-    """The DISPLAYED HTF trend, from market structure (primary) + EMA stack
-    (fallback when structure is mixed). The frozen TrendState is a memoryless
-    band classifier that reads RANGE on most closed HTF bars — it drives
-    BOS/CHOCH internally but is not a useful displayed trend."""
-    lh = highs[-1].label if highs else None
-    ll = lows[-1].label if lows else None
-    if lh == "HH" and ll == "HL":
-        return "Uptrend"
-    if lh == "LH" and ll == "LL":
-        return "Downtrend"
-    if ema_align in ("bullish", "mixed-up"):
-        return "Uptrend"
-    if ema_align in ("bearish", "mixed-down"):
-        return "Downtrend"
-    return "Range"
+def _parse_labels(structure: str) -> tuple[str | None, str | None]:
+    """'HH / HL' -> ('HH','HL'); 'forming' -> (None, None)."""
+    if " / " in structure:
+        h, low = structure.split(" / ", 1)
+        return h.strip(), low.strip()
+    return None, None
+
+
+def _pa_bias(structure: str, bos: dict | None, choch: dict | None) -> str:
+    """DIRECTION from price action ONLY. Market structure decides: clean HH+HL is
+    bullish, LH+LL bearish. When the structure is mixed/forming, the most recent
+    structural EVENT breaks the tie (a Break of Structure over a Change of
+    Character). Indicators contribute NOTHING here — they can never flip bias."""
+    h, low = _parse_labels(structure)
+    if h == "HH" and low == "HL":
+        return "BULLISH"
+    if h == "LH" and low == "LL":
+        return "BEARISH"
+    if bos:
+        return "BULLISH" if bos["direction"] == "UP" else "BEARISH"
+    if choch:
+        return "BULLISH" if choch["direction"] == "UP" else "BEARISH"
+    return "NEUTRAL"
+
+
+def _derived_trend(bias: str) -> str:
+    """The displayed trend is simply the price-action bias — always consistent
+    with it (no more 'uptrend / bearish bias' contradictions, no EMA fallback)."""
+    return {"BULLISH": "Uptrend", "BEARISH": "Downtrend"}.get(bias, "Range")
+
+
+def _conviction_fraction(a: dict, close: float, ema200, bias: str) -> float:
+    """0..1 — how strongly CONFIRMATIONS back the price-action bias. Price-action
+    confirmations (BOS in-direction, no opposing CHOCH, price reacting at the
+    right supply/demand) AND indicator confirmations (EMA stack, momentum, the
+    200-EMA side) each count once. They only raise/lower conviction; they never
+    change `bias`."""
+    if bias == "NEUTRAL":
+        return 0.0
+    up = bias == "BULLISH"
+    good_ema = ("bullish", "mixed-up") if up else ("bearish", "mixed-down")
+    zones = a["demand"] if up else a["supply"]
+    checks = [
+        bool(a["bos"]) and (a["bos"]["direction"] == "UP") == up,        # BOS confirms
+        not (a["choch"] and (a["choch"]["direction"] == "UP") != up),    # no opposing CHOCH
+        _in_zone(close, zones),                                          # reacting at the zone
+        a["ema_alignment"] in good_ema,                                  # EMA stack (confirm)
+        a["momentum"]["direction"] == ("up" if up else "down"),         # momentum (confirm)
+        ema200 is not None and ((close > ema200) == up),                # 200-EMA side (confirm)
+    ]
+    return sum(1 for c in checks if c) / len(checks)
+
+
+def _conviction_label(frac: float) -> str:
+    if frac >= _STRONG:
+        return "STRONG"
+    if frac >= _MODERATE:
+        return "MODERATE"
+    return "WEAK"
 
 
 def _ema_alignment(closes: list[float]) -> tuple[str, float | None]:
@@ -215,7 +258,7 @@ def analyze_timeframe(symbol: str, tf: str, candle_dicts: list[dict]) -> dict:
     recent = candle_dicts[-LOOKBACK_BARS:] if candle_dicts else []
     if len(recent) < _MIN_BARS:
         return {"tf": tf, "ready": False, "reason": "insufficient data",
-                "trend": None, "bias": "NEUTRAL", "score": 50.0}
+                "trend": None, "bias": "NEUTRAL", "conviction": "WEAK"}
 
     candles = [_to_candle(symbol, tf, d) for d in recent]
     pipe = _Pipeline(symbol)
@@ -231,11 +274,20 @@ def analyze_timeframe(symbol: str, tf: str, candle_dicts: list[dict]) -> dict:
 
     closes = [c.c for c in candles]
     ema_align, ema200 = _ema_alignment(closes)
-    trend = _derived_trend(highs, lows, ema_align)
 
     last_bos = pipe.bos_events[-1] if pipe.bos_events else None
     last_choch = pipe.choch_events[-1] if pipe.choch_events else None
     last_sweep = pipe.sweeps[-1] if pipe.sweeps else None
+
+    structure = _structure_label(highs, lows)
+    bos = ({"direction": last_bos.direction, "ts": last_bos.ts.isoformat(),
+            "close": last_bos.close} if last_bos else None)
+    choch = ({"direction": last_choch.direction, "ts": last_choch.ts.isoformat(),
+              "close": last_choch.close} if last_choch else None)
+
+    # DIRECTION from price action only; the displayed trend is consistent with it.
+    bias = _pa_bias(structure, bos, choch)
+    trend = _derived_trend(bias)
 
     supply = [{"lo": round(ob.zone_lo, 2), "hi": round(ob.zone_hi, 2), "status": ob.status}
               for ob in pipe.blocks if ob.direction == "BEAR"][-_MAX_ZONES:]
@@ -246,16 +298,14 @@ def analyze_timeframe(symbol: str, tf: str, candle_dicts: list[dict]) -> dict:
     liquidity = [{"kind": p.kind, "price": round(p.price, 2), "size": p.size,
                   "strength": round(p.strength, 3)} for p in pools]
 
-    momentum = _momentum_view(pipe.momentum)
     analysis = {
         "tf": tf,
         "ready": True,
         "trend": trend,
-        "structure": _structure_label(highs, lows),
-        "bos": ({"direction": last_bos.direction, "ts": last_bos.ts.isoformat(),
-                 "close": last_bos.close} if last_bos else None),
-        "choch": ({"direction": last_choch.direction, "ts": last_choch.ts.isoformat(),
-                   "close": last_choch.close} if last_choch else None),
+        "bias": bias,
+        "structure": structure,
+        "bos": bos,
+        "choch": choch,
         "swing_high": ({"price": round(highs[-1].price, 2), "label": highs[-1].label,
                         "ts": highs[-1].ts.isoformat()} if highs else None),
         "swing_low": ({"price": round(lows[-1].price, 2), "label": lows[-1].label,
@@ -270,12 +320,13 @@ def analyze_timeframe(symbol: str, tf: str, candle_dicts: list[dict]) -> dict:
         "resistance": round(resistance, 2),
         "trendlines": pipe.trendlines(),
         "ema_alignment": ema_align,
-        "momentum": momentum,
+        "momentum": _momentum_view(pipe.momentum),
     }
-    bias, score, signed = _score_timeframe(analysis, close, ema200)
-    analysis["bias"] = bias
-    analysis["score"] = score
-    analysis["_signed"] = signed        # internal, consumed by aggregate_htf then dropped
+    # CONVICTION from confirmations (indicators + extra price-action) — never
+    # changes `bias`. `_frac` feeds the overall roll-up, then is dropped.
+    frac = _conviction_fraction(analysis, close, ema200, bias)
+    analysis["conviction"] = _conviction_label(frac)
+    analysis["_frac"] = frac
     return analysis
 
 
@@ -283,67 +334,28 @@ def _in_zone(price: float, zones: list[dict]) -> bool:
     return any(z["lo"] <= price <= z["hi"] for z in zones)
 
 
-def _score_timeframe(a: dict, close: float, ema200: float | None) -> tuple[str, float, float]:
-    """Signed directional score -> (bias, 0..100 score with 50 = neutral, signed).
-    Weighted components (bullish +, bearish -), max magnitude _SCORE_MAX."""
-    signed = 0.0
-    if a["trend"] == "Uptrend":
-        signed += 3.0
-    elif a["trend"] == "Downtrend":
-        signed -= 3.0
-    if a["ema_alignment"] == "bullish":
-        signed += 2.0
-    elif a["ema_alignment"] == "bearish":
-        signed -= 2.0
-    elif a["ema_alignment"] == "mixed-up":
-        signed += 0.5
-    elif a["ema_alignment"] == "mixed-down":
-        signed -= 0.5
-    if a["bos"]:
-        signed += 1.5 if a["bos"]["direction"] == "UP" else -1.5
-    if a["choch"]:
-        signed += 1.0 if a["choch"]["direction"] == "UP" else -1.0
-    if a["momentum"]["direction"] == "up":
-        signed += 0.5
-    elif a["momentum"]["direction"] == "down":
-        signed -= 0.5
-    if _in_zone(close, a["demand"]):
-        signed += 1.0
-    if _in_zone(close, a["supply"]):
-        signed -= 1.0
-    if ema200 is not None:
-        signed += 0.5 if close > ema200 else -0.5
-
-    signed = max(-_SCORE_MAX, min(_SCORE_MAX, signed))
-    score = round(max(0.0, min(100.0, 50.0 + signed / _SCORE_MAX * 50.0)), 1)
-    if signed >= _BIAS_THRESHOLD:
-        bias = "BULLISH"
-    elif signed <= -_BIAS_THRESHOLD:
-        bias = "BEARISH"
-    else:
-        bias = "NEUTRAL"
-    return bias, score, signed
-
-
 def _market_story(per_tf: dict, overall: dict) -> str:
-    """A deterministic top-down narrative (Daily -> 15M)."""
+    """A deterministic top-down narrative (Daily -> 15M). Direction is the
+    price-action bias; conviction is the confirmation strength; a CHOCH against
+    the bias is surfaced as a caution, not a contradiction."""
     parts = [
         f"Higher-timeframe bias is {overall['bias']} "
-        f"({overall['score']}/100, {overall['confidence']}% timeframe agreement)."
+        f"({overall['confidence']}% timeframe agreement, "
+        f"{overall['conviction'].lower()} conviction)."
     ]
     for tf in HTF_TIMEFRAMES:                       # already Daily -> 15M
         a = per_tf.get(tf)
         if not a or not a.get("ready"):
-            parts.append(f"{TF_LABEL[tf]} has insufficient history.")
+            parts.append(f"{TF_LABEL[tf]}: insufficient history.")
             continue
         note = ""
         if a["choch"]:
-            note = f", recent CHOCH {a['choch']['direction']}"
+            note = f", recent CHOCH {a['choch']['direction'].lower()}"
         elif a["bos"]:
-            note = f", recent BOS {a['bos']['direction']}"
+            note = f", recent BOS {a['bos']['direction'].lower()}"
         parts.append(
-            f"{TF_LABEL[tf]} {a['trend'].lower()}, {a['bias'].lower()} bias "
-            f"({a['structure']}{note})."
+            f"{TF_LABEL[tf]}: {a['bias'].lower()} ({a['structure']}{note}), "
+            f"{a['conviction'].lower()} conviction."
         )
     return " ".join(parts)
 
@@ -365,28 +377,34 @@ def _explanation(per_tf: dict, overall: dict) -> str:
 
 
 def aggregate_htf(per_tf: dict) -> dict:
-    """Overall HTF score / bias / confidence / market story / explanation from the
-    per-timeframe analyses. `per_tf` is {tf: analyze_timeframe(...)}."""
+    """Overall HTF bias / conviction / confidence / market story from the per-tf
+    analyses. Direction is a TIMEFRAME-WEIGHTED VOTE of the per-tf price-action
+    biases (higher timeframes weigh more) — no scoring, no indicators. Confidence
+    is the fraction of that weight which agrees; conviction is the weighted
+    confirmation strength of the agreeing timeframes."""
     ready = {tf: a for tf, a in per_tf.items() if a.get("ready")}
     if not ready:
-        overall = {"score": 50.0, "bias": "NEUTRAL", "confidence": 0}
-        overall["market_story"] = "Not enough higher-timeframe history yet."
-        overall["explanation"] = "HTF analysis warms up as candle history loads."
-        return overall
+        return {"bias": "NEUTRAL", "conviction": "WEAK", "confidence": 0,
+                "market_story": "Not enough higher-timeframe history yet.",
+                "explanation": "HTF analysis warms up as candle history loads."}
 
     total_w = sum(_TF_WEIGHT[tf] for tf in ready)
-    weighted_signed = sum(_TF_WEIGHT[tf] * a["_signed"] for tf, a in ready.items()) / total_w
-    score = round(max(0.0, min(100.0, 50.0 + weighted_signed / _SCORE_MAX * 50.0)), 1)
-    if weighted_signed >= _BIAS_THRESHOLD:
-        bias = "BULLISH"
-    elif weighted_signed <= -_BIAS_THRESHOLD:
-        bias = "BEARISH"
-    else:
-        bias = "NEUTRAL"
-    agree_w = sum(_TF_WEIGHT[tf] for tf, a in ready.items() if a["bias"] == bias)
+    bull_w = sum(_TF_WEIGHT[tf] for tf, a in ready.items() if a["bias"] == "BULLISH")
+    bear_w = sum(_TF_WEIGHT[tf] for tf, a in ready.items() if a["bias"] == "BEARISH")
+    if bull_w > bear_w:
+        bias, agree_w = "BULLISH", bull_w
+    elif bear_w > bull_w:
+        bias, agree_w = "BEARISH", bear_w
+    else:                                            # tie (incl. all-neutral) = no bias
+        bias, agree_w = "NEUTRAL", total_w - bull_w - bear_w
     confidence = round(agree_w / total_w * 100)
+    if bias != "NEUTRAL" and agree_w > 0:
+        conv = sum(_TF_WEIGHT[tf] * a["_frac"] for tf, a in ready.items()
+                   if a["bias"] == bias) / agree_w
+    else:
+        conv = 0.0
 
-    overall = {"score": score, "bias": bias, "confidence": confidence}
+    overall = {"bias": bias, "conviction": _conviction_label(conv), "confidence": confidence}
     overall["market_story"] = _market_story(per_tf, overall)
     overall["explanation"] = _explanation(per_tf, overall)
     return overall
@@ -399,7 +417,7 @@ def analyze(symbol: str, candles_by_tf: dict[str, list[dict]]) -> dict:
               for tf in HTF_TIMEFRAMES}
     overall = aggregate_htf(per_tf)
     for a in per_tf.values():
-        a.pop("_signed", None)          # internal weight, never surfaced
+        a.pop("_frac", None)            # internal conviction weight, never surfaced
     return {"symbol": symbol, "timeframes": per_tf, "overall": overall}
 
 
