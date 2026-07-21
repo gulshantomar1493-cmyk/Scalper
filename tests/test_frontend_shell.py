@@ -1206,3 +1206,20 @@ def test_app_js_loads_data_pages_thin():
 def test_shell_dispatches_page_event_and_ui_exposes_theme_setter():
     assert '"ms-page"' in _read("shell.js")
     assert "__msSetTheme" in _read("ui.js")
+
+
+def test_paper_v2_total_pnl_rendered():
+    """B3: the Paper portfolio shows Total P&L + Realized P&L (were missing)."""
+    js = _read("paper.js")
+    assert "Total P&L" in js and "total_pnl" in js and "realized_pnl" in js
+
+
+def test_paper_v2_symbol_persistence():
+    """B2: the active symbol is persisted (ui.js owns storage) so a refresh
+    reopens the chart on the same symbol — an open position stays visible."""
+    ui = _read("ui.js")
+    assert "__msSym" in ui and "__msSaveSym" in ui and "ms_sym" in ui
+    app = _read("app.js")
+    assert "window.__msSaveSym(symbol)" in app          # saved on switch
+    assert "savedSymbol" in app                          # used on init
+    assert "localStorage" not in app                     # storage stays in ui.js

@@ -38,6 +38,20 @@ async def _collect(bus):
     return seen
 
 
+async def test_current_price_tracks_live_forming_close():
+    """Paper V2 (B4): current_price returns the latest live price per symbol
+    (None before any trade) so market orders fill live, not at the stale close."""
+    bus = EventBus()
+    tracker = LiveBarTracker(bus, min_interval_s=0)
+    assert tracker.current_price("BTCUSDT") is None      # nothing seen yet
+    await bus.publish(_trade(100, M0 + timedelta(seconds=1)))
+    await bus.publish(_trade(105, M0 + timedelta(seconds=10)))
+    assert tracker.current_price("BTCUSDT") == 105        # latest trade price
+    assert tracker.current_price("ETHUSDT") is None       # unknown symbol
+    await bus.publish(_trade(98, M0 + timedelta(seconds=20)))
+    assert tracker.current_price("BTCUSDT") == 98          # follows the live tick
+
+
 async def test_forming_folds_ohlcv_within_bucket():
     bus = EventBus()
     seen = await _collect(bus)

@@ -56,6 +56,15 @@
     if (TFS.indexOf(tf) >= 0) { try { window.localStorage.setItem(TF_KEY, tf); } catch (e) {} }
   };
 
+  // ---- last-selected symbol persistence (Paper V2 B2: after a refresh the
+  //      chart should reopen on the symbol you were on, so an open position
+  //      doesn't "vanish" from the chart). app.js is storage-banned -> here. ----
+  var SYM_KEY = "ms_sym";
+  try { window.__msSym = window.localStorage.getItem(SYM_KEY) || null; } catch (e) { window.__msSym = null; }
+  window.__msSaveSym = function (sym) {
+    if (sym) { try { window.localStorage.setItem(SYM_KEY, sym); } catch (e) {} }
+  };
+
   // ---- indicator config persistence (chart UX; app.js is storage-banned) ----
   var IND_KEY = "ms_indicators";
   try { window.__msIndicators = JSON.parse(window.localStorage.getItem(IND_KEY) || "null"); }

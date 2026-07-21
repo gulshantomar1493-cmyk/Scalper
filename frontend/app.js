@@ -48,7 +48,10 @@ const LOOKBACK_BY_TF = {
 };
 
 const urlSymbol = (params.get("symbol") || "").toUpperCase();
-let activeSymbol = SYMBOLS.includes(urlSymbol) ? urlSymbol : SYMBOLS[0];
+// B2: ?symbol= wins, else the last symbol you were on (persisted in ui.js), else default
+const savedSymbol = (window.__msSym || "").toUpperCase();
+let activeSymbol = SYMBOLS.includes(urlSymbol) ? urlSymbol
+  : (SYMBOLS.includes(savedSymbol) ? savedSymbol : SYMBOLS[0]);
 let activeTf = (window.__msTf && LOOKBACK_BY_TF[window.__msTf]) ? window.__msTf : "1m";
 
 const $ = (id) => document.getElementById(id);
@@ -321,6 +324,7 @@ for (const b of document.querySelectorAll(".lv-tf")) {
 
 function setSymbol(symbol) {
   activeSymbol = symbol;
+  if (window.__msSaveSym) window.__msSaveSym(symbol);   // B2: reopen here after refresh
   for (const s of SYMBOLS) {
     const el = $(`sym-${s}`);
     if (el) el.classList.toggle("active", s === symbol);

@@ -127,6 +127,7 @@ def create_app(
     ops_symbols=None,
     settings=None,
     live_indicators=None,
+    live_price=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -694,12 +695,19 @@ def create_app(
     _PAPER_SYMBOLS = list(ops_symbols) if ops_symbols else ["BTCUSDT", "ETHUSDT"]
 
     def _paper_marks() -> dict:
+        # Paper V2 (B4): prefer the LIVE forming price so a market order fills at
+        # what the user sees, not the last CLOSED 1m candle (up to ~60s stale).
+        # live_price is injected only by live main(); replay/tests fall back to
+        # the closed candle -> determinism/tests unchanged.
         marks = {}
         for sym in _PAPER_SYMBOLS:
-            st = store.snapshot(sym)
-            c = getattr(st, "last_candle_1m", None) if st is not None else None
-            if c is not None:
-                marks[sym] = float(c.c)
+            px = live_price(sym) if live_price is not None else None
+            if px is None:
+                st = store.snapshot(sym)
+                c = getattr(st, "last_candle_1m", None) if st is not None else None
+                px = c.c if c is not None else None
+            if px is not None:
+                marks[sym] = float(px)
         return marks
 
     def _validate_paper_order(p: dict) -> dict:

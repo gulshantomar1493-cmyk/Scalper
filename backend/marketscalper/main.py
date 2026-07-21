@@ -567,7 +567,7 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     store = StateStore(bus)                                # before create_app
     CandleBuilder(bus)
     CandleWriter(bus, pool)
-    LiveBarTracker(bus)                                    # display-only forming
+    live_bar = LiveBarTracker(bus)                         # display-only forming
                                                           # candle (live-only; no
                                                           # engine subscribes to it)
     reconciler = KlineReconciler()
@@ -650,7 +650,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      feed_status=lambda: feed.connected,      # GET /ops (items 3/5/9)
                      started_at=started_at, ops_symbols=config.symbols,
                      settings=settings,                       # items 7/8 (live)
-                     live_indicators=live_indicators)         # chart UX (live)
+                     live_indicators=live_indicators,         # chart UX (live)
+                     live_price=live_bar.current_price)       # Paper V2 B4: live fills
 
     await feed.start()
     await sampler.start()

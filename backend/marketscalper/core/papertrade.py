@@ -122,12 +122,15 @@ def portfolio(account, positions, marks: dict) -> dict:
     balance = account["balance"]
     equity = balance + unreal
     start = account["starting_balance"] or balance
+    realized = balance - start                 # Paper V2 (B3): explicit realized P&L
     return {
         "balance": balance,
         "equity": equity,
         "used_margin": used_margin,
         "available_margin": balance - used_margin,
         "unrealized_pnl": unreal,
+        "realized_pnl": realized,              # cumulative closed-trade P&L (this account)
+        "total_pnl": realized + unreal,        # realized + open — the "Total P&L"
         "roi_pct": ((equity - start) / start * 100.0) if start else 0.0,
         "open_positions": len(positions),
     }

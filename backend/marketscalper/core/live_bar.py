@@ -103,6 +103,13 @@ class LiveBarTracker:
             self._last_pub[trade.symbol] = now
             await self._bus.publish(cur.to_event(trade.symbol))
 
+    def current_price(self, symbol: str) -> float | None:
+        """Latest live forming-bar close (last trade price) for `symbol`, or None
+        if none seen yet. Paper V2 (B4) fills market orders against this so they
+        execute at the live price, not the last closed 1m candle."""
+        bar = self._bar.get(symbol)
+        return bar.c if bar is not None else None
+
 
 class LiveIndicatorTracker:
     """Display-only interim indicator values for the live forming stream

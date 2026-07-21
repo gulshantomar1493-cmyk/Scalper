@@ -53,6 +53,8 @@
     var p = state.portfolio || {};
     var wrap = el("div", "pt-portfolio");
     [["Equity", money(p.equity)], ["Balance", money(p.balance)],
+     ["Total P&L", money(p.total_pnl), cls(p.total_pnl)],           // B3: realized + open
+     ["Realized PnL", money(p.realized_pnl), cls(p.realized_pnl)],
      ["Unrealized PnL", money(p.unrealized_pnl), cls(p.unrealized_pnl)],
      ["ROI", (p.roi_pct == null ? "—" : (p.roi_pct >= 0 ? "+" : "") + num(p.roi_pct, 2) + "%"), cls(p.roi_pct)],
      ["Used Margin", money(p.used_margin)], ["Available", money(p.available_margin)],

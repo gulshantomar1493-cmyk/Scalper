@@ -101,3 +101,14 @@ def test_portfolio_summary():
     assert p["unrealized_pnl"] == 10.0 and p["equity"] == 10010.0
     assert p["used_margin"] == 10.0 and p["available_margin"] == 9990.0
     assert round(p["roi_pct"], 3) == 0.1 and p["open_positions"] == 1
+    assert p["realized_pnl"] == 0.0 and p["total_pnl"] == 10.0    # B3: realized + open
+
+
+def test_portfolio_realized_and_total_pnl():
+    """B3: realized = balance - starting; total = realized + unrealized."""
+    acct = {"balance": 10250.0, "starting_balance": 10000.0}      # +250 closed
+    pos = [{"symbol": "BTCUSDT", "side": "LONG", "qty": 1.0, "avg_entry": 100.0, "margin": 10.0}]
+    p = pt.portfolio(acct, pos, {"BTCUSDT": 90.0})                # -10 open
+    assert p["realized_pnl"] == 250.0
+    assert p["unrealized_pnl"] == -10.0
+    assert p["total_pnl"] == 240.0
