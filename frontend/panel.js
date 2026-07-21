@@ -139,6 +139,7 @@ const Panel = (function () {
   /* ---------------------------------------------------------- rendering */
   function setStructure(structure, candleTs) {
     if (candleTs) lastCandleTs = candleTs;
+    if (!el.recoDir) return;                 // M2.5: Live-Signal / Plan / Context cards removed
     if (!structure || !structure.qualification) {
       if (el.panel) el.panel.classList.add("empty");
       return;

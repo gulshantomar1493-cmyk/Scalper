@@ -177,9 +177,11 @@ def test_htf_js_pure_renderer_and_wired():
                    "tolerance", ".reduce(", "aggregate", "innerHTML"):
         assert banned not in js, banned
     assert "textContent" in js
-    # render surface: overall bias + market story + per-tf cards + signal alignment
-    assert "Higher-Timeframe" in js and "market_story" in js and "timeframes" in js
-    assert "alignment" in js and "aligned" in js
+    # M2.5 Card 2 surface: overall bias + conviction + agreement + a tiny tf grid.
+    # The market story + signal-alignment line moved off the card (folded into the
+    # context strip); this card is now bias/conviction/agreement/tf-dots only.
+    assert "HTF Bias" in js and "conviction" in js and "agree" in js and "timeframes" in js
+    assert "htf-dot" in js                                  # the compact tf dot grid
     # index loads htf.js after panel.js, before app.js; the panel container exists
     html = _read("index.html")
     assert 'src="htf.js"' in html and 'id="htf-panel"' in html
@@ -226,7 +228,6 @@ def test_index_wires_overlays_and_audit_controls():
     for control in ("audit-pick", "audit-accept", "audit-reject", "audit-tally",
                     "audit-pick-sweep", "audit-pick-ob"):
         assert f'id="{control}"' in html                   # P1.20 + P2.22 tool
-    assert 'id="ctx-trend"' in html                        # v3: trend in Market Context card
 
 
 def test_overlays_js_is_pure_consumer():
@@ -395,16 +396,19 @@ def test_overlays_js_is_still_a_pure_consumer_p222():
 
 
 def test_index_wires_quality_panel_and_panel_js():
-    # v3 (Step 2): the rail is three cards — Recommendation, Trade Plan,
-    # Market Context — plus a context-only card for higher timeframes.
+    # M2.5: the rail is EXACTLY two cards — SETUP (setups-panel) + HTF (htf-panel).
+    # The V1 Live-Signal / Trade-Plan / Market-Context / Market-Structure cards and
+    # the higher-timeframe context-only card are removed (not hidden) per the frozen
+    # WORKSPACE-DESIGN.md. panel.js stays (a pure consumer) but renders nothing now.
     html = _read("index.html")
     assert 'src="panel.js"' in html
     assert html.index("panel.js") < html.index('src="app.js"')   # load order
     assert 'id="quality-panel"' in html
-    for slot in ("reco-dir", "reco-grade", "reco-pct", "reco-stars", "reco-verdict",
-                 "panel-plan", "panel-components", "ctx-trend",
-                 "rail-analysis", "rail-ctxonly", "ctxonly-tf"):
+    for slot in ("rail-analysis", "setups-panel", "htf-panel"):
         assert f'id="{slot}"' in html, slot
+    for gone in ('id="reco-dir"', 'id="panel-plan"', 'id="panel-components"',
+                 'id="ctx-trend"', 'id="ms-stream"', 'id="rail-ctxonly"', 'id="ctxonly-tf"'):
+        assert gone not in html, gone                            # removed, not hidden
 
 
 def test_panel_js_is_pure_consumer():
@@ -792,13 +796,15 @@ def test_sidebar_has_six_grouped_nav_items():
     assert "Paper Trading" not in html[_rev:_rev + 140]
 
 
-def test_rail_order_htf_below_market_structure():
+def test_rail_two_cards_setup_then_htf():
     html = _read("index.html")
-    # P4: in the analysis rail, HTF (#htf-panel) sits AFTER the Market Structure
-    # card; the setup card is the honest "Trade Setup".
-    rail = html[html.index('id="rail-analysis"'):html.index('id="rail-ctxonly"')]
-    assert "Trade Setup" in rail and "Market Structure" in rail and 'id="htf-panel"' in rail
-    assert rail.index("Market Structure") < rail.index('id="htf-panel"')
+    # M2.5: the rail is EXACTLY two cards — SETUP (Card 1) above HTF (Card 2).
+    rail = html[html.index('id="rail-analysis"'):html.index("</aside>")]
+    assert 'id="setups-panel"' in rail and 'id="htf-panel"' in rail
+    assert rail.index('id="setups-panel"') < rail.index('id="htf-panel"')
+    # the removed cards are gone from the rail entirely
+    for gone in ("Market Structure", "Trade Plan", "Market Context", "Live Signal"):
+        assert gone not in rail, gone
 
 
 def test_journal_js_crud_page_pure_and_wired():
@@ -1084,10 +1090,9 @@ def test_structure_toggle_htf_context_and_drawing_wired():
     ov = _read("overlays.js")
     assert "setStructureVisible" in ov and "structureOn" in ov
     assert 'id="tb-structure"' in html and "Overlays.setStructureVisible" in app
-    # item 9 — HTF context rendered in the panel (backend-computed values)
-    pj = _read("panel.js")
-    assert "setContext" in pj and "ema_alignment" in pj and "execution" in pj
-    assert 'id="ctxonly-body"' in html and "Panel.setContext" in app
+    # item 9 — HTF context now lives in the M2.5 context strip (Q2..Q4 tiles),
+    # fed from the backend /api/htf + /api/setups caches (no client derivation)
+    assert 'id="context-strip"' in html and "Strip.render" in app
     # item 11 — drawing tools
     dj = _read("drawing.js")
     assert "window.Drawing" in dj and "subscribeClick" in dj and "attachPrimitive" in dj
@@ -1252,6 +1257,46 @@ def test_setups_panel_pure_and_wired():
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
 def test_setups_js_is_valid_javascript():
     result = subprocess.run(["node", "--check", str(FRONTEND / "setups.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
+def test_context_strip_pure_and_wired():
+    """Phase 3 M2.5: the context strip — five tiles (Q1..Q5) read left-to-right,
+    straight from the frozen contract (/api/htf + /api/setups). Pure renderer:
+    app.js owns the fetch/caches; strip.js only maps backend values to tiles and
+    never derives a trading decision."""
+    js = _read("strip.js")
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "localStorage",
+                   "sessionStorage", "Math.log", "Math.exp", "slope", "intercept",
+                   "tolerance", ".reduce(", "aggregate", "innerHTML", "addSeries"):
+        assert banned not in js, banned                       # pure consumer
+    assert "window.Strip" in js and "init:" in js and "render:" in js
+    # exactly the five questions, in order
+    for tile in ("TREND", "CONTROL", "LIQUIDITY", "DRAW", "SETUP"):
+        assert tile in js, tile
+    assert "No Setup" in js                                    # Q5 no-setup label
+    # reads frozen-contract fields only (no client-side analysis)
+    for field in ("ltf_trend", "overall", "bias", "conviction", "confidence",
+                  "liquidity_sweep", "liquidity", "tp1", "direction", "grade"):
+        assert field in js, field
+    assert "textContent" in js                                # XSS-safe
+    # index: loads after setups.js, before app.js; the container exists
+    html = _read("index.html")
+    assert 'id="context-strip"' in html and 'src="strip.js"' in html
+    assert html.index('src="setups.js"') < html.index('src="strip.js"')
+    assert html.index('src="strip.js"') < html.index('src="app.js"')
+    # app.js owns the network + wires init / render (fed by both caches)
+    app = _read("app.js")
+    assert "Strip.init" in app and "Strip.render" in app and "renderStrip" in app
+    # styled as a flat terminal band
+    css = _read("styles.css")
+    assert ".ctx-strip" in css and ".cs-tile" in css
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_strip_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "strip.js")],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
 

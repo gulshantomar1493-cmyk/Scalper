@@ -83,6 +83,10 @@
 
         <div class="lv-mid">
           <div class="lv-chartwrap">
+            <!-- CONTEXT STRIP (M2.5) — the market conversation, Q1..Q5 read left to
+                 right in one sweep. Filled by app.js from /api/htf + /api/setups
+                 (strip.js is a pure renderer; no derivation). -->
+            <div id="context-strip" class="ctx-strip mono" role="group" aria-label="Market context"></div>
             <div class="lv-ctitle mono" id="chart-title">BTCUSDT · 1m · Binance</div>
             <div class="chart-toolbar">
               <div class="ind-menu">
@@ -120,42 +124,18 @@
             </div>
           </div>
 
-          <!-- RIGHT RAIL — compact terminal panel. Order: Trade Setup ->
-               Market Structure -> HTF -> Risk/Reward -> Market Context (P4). -->
-          <aside id="quality-panel" class="lv-rail empty">
+          <!-- RIGHT RAIL (M2.5) — exactly TWO cards per docs/V2/WORKSPACE-DESIGN.md:
+               (1) SETUP detail — the decision, mirroring the on-chart lines;
+               (2) HTF compact — bias · conviction · agreement + a tiny tf grid.
+               Everything that answered none of the seven questions is removed
+               (not hidden): the V1 Live-Signal card, Trade Plan / Risk-Reward,
+               Market Context, and the Market-Structure stream (-> on-chart markers). -->
+          <aside id="quality-panel" class="lv-rail">
             <div id="rail-analysis">
-              <!-- Trade Setup (V2) — the top of the visual hierarchy after price -->
+              <!-- Card 1 — SETUP (the decision; mirrors the chart) -->
               <div id="setups-panel" class="setups-panel"></div>
-              <div class="lv-card">
-                <div class="lv-ch">Live Signal <span class="lv-q" title="The 1m/5m signal that armed the setup">?</span></div>
-                <div class="lv-reco"><span id="reco-dir" class="lv-dir">—</span><span id="reco-grade" class="lv-grade"></span><span id="reco-pct" class="lv-pct"></span></div>
-                <div id="reco-stars" class="lv-stars"></div>
-                <span id="reco-verdict" class="lv-pill"></span>
-                <div id="reco-note" class="lv-note" data-beginner-text>How reliable this setup is.</div>
-                <details class="lv-why"><summary>Why?</summary><div id="reco-why"></div></details>
-              </div>
-              <div class="lv-card">
-                <div class="lv-ch">Market Structure</div>
-                <div id="ms-stream" class="ms-stream" title="Live structure events — HH/HL, sweeps, BOS/CHoCH, OB, FVG"><div class="ms-empty">Waiting for structure…</div></div>
-              </div>
-              <!-- HTF Signal — below Market Structure (P4) -->
+              <!-- Card 2 — HTF compact (bias · conviction · agreement + tiny tf grid) -->
               <div id="htf-panel" class="htf-panel"></div>
-              <div class="lv-card">
-                <div class="lv-ch">Trade Plan · Risk / Reward</div>
-                <div id="panel-plan"></div>
-              </div>
-              <div class="lv-card">
-                <div class="lv-ch">Market Context</div>
-                <div class="lv-ctx-trend"><span class="k">Trend</span><span id="ctx-trend" class="lv-trend">—</span></div>
-                <div id="panel-components"></div>
-                <div class="lv-pos"><span class="dot live"></span>No open position</div>
-              </div>
-            </div>
-            <div id="rail-ctxonly" class="lv-card lv-ctxonly" hidden>
-              <div class="lv-ch"><span id="ctxonly-tf">1H</span> Context</div>
-              <div class="lv-ctxbig"><div id="ctxonly-trend" class="lv-lab">Trend: —</div></div>
-              <div id="ctxonly-body" class="ctx-body"></div>
-              <div class="lv-ctxnote">Context only — <b>execution</b> waits for confirmation on 1m / 5m.</div>
             </div>
           </aside>
 
@@ -404,6 +384,7 @@
   <script src="panel.js"></script>
   <script src="htf.js"></script>
   <script src="setups.js"></script>
+  <script src="strip.js"></script>
   <script src="dashboard.js"></script>
   <script src="journal.js"></script>
   <script src="paper.js"></script>

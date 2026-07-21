@@ -123,6 +123,7 @@ Overlays.init(mainChart, mainSeries);            // overlays draw on the Live ch
 Panel.init(quickLogSubmit);
 if (window.Htf) Htf.init($("htf-panel"));            // HTF V1.1 panel (pure renderer)
 if (window.Setups) Setups.init($("setups-panel"));   // Trade Setup V2 panel (pure renderer)
+if (window.Strip) Strip.init($("context-strip"));    // M2.5 context strip (pure renderer)
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
@@ -999,6 +1000,12 @@ function htfDirection() {
 }
 function renderHtf() {
   if (window.Htf) Htf.render(lastHtf[activeSymbol] || null, htfDirection());
+  renderStrip();                   // the context strip reads HTF + the top setup
+}
+// M2.5 context strip — the market conversation Q1..Q5, straight from the two frozen
+// caches (/api/htf + /api/setups). Re-rendered whenever either source updates.
+function renderStrip() {
+  if (window.Strip) Strip.render(lastHtf[activeSymbol] || null, activeSetup());
 }
 async function loadHtf() {
   if (!window.Htf) return;
@@ -1022,6 +1029,7 @@ let lastSetups = {};
 function renderSetups() {
   if (window.Setups) Setups.render(lastSetups[activeSymbol] || null);
   renderSetupOverlay();            // draw the active setup ON the chart (M2)
+  renderStrip();                   // and the strip's Trend/Draw/Setup tiles
 }
 async function loadSetups() {
   if (!window.Setups || replayMode) return;            // live only; replay clears it
