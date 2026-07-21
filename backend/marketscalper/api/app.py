@@ -70,6 +70,10 @@ from marketscalper.providers.base import Candle
 
 log = logging.getLogger(__name__)
 
+# V2 backend contract version (docs/V2/API-CONTRACT.md). Bump only on a breaking
+# change to /api/htf or /api/setups; additive fields do NOT bump it.
+CONTRACT_VERSION = "1.0"
+
 _TFS = ("1m", "5m")
 _REPLAY_SYMBOLS = ("BTCUSDT", "ETHUSDT")   # frozen v1 pair
 _REPLAY_SPEEDS = (1, 10, 60, "max")        # §10
@@ -449,7 +453,7 @@ def create_app(
     async def api_htf(symbol: str) -> dict:
         if htf_service is None:
             raise HTTPException(status_code=503, detail="htf service not configured")
-        return await htf_service.analyze(symbol)
+        return {"contract_version": CONTRACT_VERSION, **(await htf_service.analyze(symbol))}
 
     # Trade Engine V2 (Phase 2): HTF bias/story (HtfService) + the live 1m LTF
     # structure (StateStore) -> HTF-gated, fully-explained setups, or a confident
@@ -469,11 +473,12 @@ def create_app(
         setups = build_setups(symbol, htf, ltf, c.ts if c is not None else None)
         overall = ((htf or {}).get("overall") or {})
         return {
+            "contract_version": CONTRACT_VERSION,
             "symbol": symbol,
-            "htf_bias": overall.get("bias"),
-            "htf_confidence": overall.get("confidence"),
-            "market_story": overall.get("market_story"),
-            "setups": [asdict(s) for s in setups],
+            "htf_bias": overall.get("bias"),               # BULLISH|BEARISH|NEUTRAL|null
+            "htf_confidence": overall.get("confidence"),   # 0..100 timeframe agreement, or null
+            "market_story": overall.get("market_story"),   # the HTF narrative, or null
+            "setups": [asdict(s) for s in setups],         # ranked best-first; [] = none
             "message": None if setups else "No high-probability setup available.",
         }
 

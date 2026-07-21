@@ -55,7 +55,7 @@ def test_a_plus_setup_all_confluences():
     s = out[0]
     assert isinstance(s, TradeSetupV2)
     assert s.direction == "LONG" and s.htf_bias == "BULLISH"
-    assert s.grade == "A+" and s.confluence_score == "5 of 5 confluences aligned"
+    assert s.grade == "A+" and s.confluences == 5 and s.confluences_total == 5
     assert not hasattr(s, "confidence")                  # no fabricated %
     assert 1.8 <= s.rr <= 1.9                             # NET of fees (~1.86), not 2.0
     assert s.risk_level == "LOW"
@@ -63,8 +63,8 @@ def test_a_plus_setup_all_confluences():
     for k in ("why_exists", "why_now", "why_entry", "why_sl", "why_targets", "why_edge"):
         assert s.why.get(k)
     assert s.reasons_to_avoid and s.early_exit and s.management_notes   # the trader card
-    assert s.primary_confluence and s.secondary_confluence
-    assert s.expected_holding_time
+    assert s.holding_time == "INTRADAY"
+    assert not any(r.startswith("✓") for r in s.reasons)     # clean strings (UI adds ✓)
 
 
 def test_short_mirror():
@@ -84,7 +84,7 @@ def test_grade_emerges_from_confluence_count():
                        _ltf(pd=None, rvol=0.9, cum_delta=None),   # zone present, nothing else
                        now_ts=T0 + timedelta(minutes=2))
     assert len(out) == 1
-    assert out[0].grade == "B" and out[0].confluence_score.startswith("1 of 5")
+    assert out[0].grade == "B" and out[0].confluences == 1 and out[0].confluences_total == 5
     # the honest bear case must call out the missing HTF bias
     assert any("range reaction" in r for r in out[0].reasons_to_avoid)
 

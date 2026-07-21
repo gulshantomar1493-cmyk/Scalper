@@ -25,7 +25,7 @@ Pure + deterministic. Engine-isolated — no bus, no structure write, no persist
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime
 
 MIN_RR = 1.5                 # net-of-fees reward:risk to the next pool — a gate
@@ -41,30 +41,30 @@ _SETUP_TYPE = {"S1": "Liquidity Sweep Reversal", "S2": "Trend Pullback",
 
 @dataclass(frozen=True)
 class TradeSetupV2:
-    symbol: str
-    direction: str                 # LONG | SHORT
-    setup_type: str                # e.g. "Liquidity Sweep Reversal"
-    entry: float
-    sl: float
-    tp1: float
-    tp2: float | None
-    rr: float                      # NET-of-fees reward:risk to TP1 (structure-found)
-    grade: str                     # A+ | A | B — emergent, NOT a probability
-    confluence_score: str          # "N of M confluences aligned"
-    risk_level: str                # LOW | MEDIUM | HIGH
-    market_bias: str               # the LTF (1m) structural read
-    htf_bias: str                  # the higher-timeframe bias (the direction filter)
-    market_context: str            # the narrative — who controls / draw / trapped / next
-    primary_confluence: str
-    secondary_confluence: str
-    reasons: tuple = ()            # the aligned confluences, ✓-prefixed
-    reasons_to_avoid: tuple = ()   # the honest bear case for our own idea
-    invalidation: str = ""
-    early_exit: tuple = ()         # bail-before-stop conditions
-    management_notes: tuple = ()
-    expected_holding_time: str = ""
-    why: dict = field(default_factory=dict)
-    created_ts: str | None = None
+    # FROZEN contract v1.0 (docs/V2/API-CONTRACT.md). Field names / enums stable.
+    symbol: str                    # e.g. "BTCUSDT"
+    direction: str                 # enum: LONG | SHORT
+    setup_type: str                # enum: Liquidity Sweep Reversal | Trend Pullback | Fake-Break Trap
+    grade: str                     # enum: A+ | A | B (emergent, NOT a probability)
+    confluences: int               # how many independent confluences aligned (1..5)
+    confluences_total: int         # the maximum (always 5) — render "{confluences}/{total}"
+    risk_level: str                # enum: LOW | MEDIUM | HIGH
+    entry: float                   # suggested entry price
+    sl: float                      # stop loss price
+    tp1: float                     # first target (the nearer pool)
+    tp2: float | None              # second target, or null if none beyond TP1
+    rr: float                      # NET-of-fees reward:risk to TP1 (>= 1.5)
+    htf_bias: str                  # enum: BULLISH | BEARISH | NEUTRAL (the direction filter)
+    ltf_trend: str                 # enum: BULLISH | BEARISH | RANGE | UNKNOWN (the 1m structure)
+    market_context: str            # the narrative — who controls / what was taken / the draw / next
+    reasons: tuple                 # the aligned confluences (clean strings; UI adds any ✓)
+    reasons_to_avoid: tuple        # the honest bear case for this idea
+    invalidation: str              # the price/condition that voids the idea
+    early_exit: tuple              # conditions to bail before the stop
+    management_notes: tuple        # display-only management guidance
+    holding_time: str              # enum: INTRADAY (minutes to a few hours)
+    why: dict                      # 6 keys: why_exists/why_now/why_entry/why_sl/why_targets/why_edge
+    created_ts: str | None         # ISO-8601 UTC of the trigger, or null
 
 
 # ------------------------------------------------------------------ helpers
@@ -274,8 +274,6 @@ def build_setups(symbol: str, htf: dict | None, ltf: dict | None,
 
         draw = _draw_on_liquidity(direction, entry, ltf)
         context = _narrative(direction, htf_bias, htf_conf, ltf, entry, draw)
-        primary = confl[0] if confl else "a clean liquidity sweep + structure shift"
-        secondary = confl[1] if len(confl) > 1 else "the sweep→shift trigger itself"
 
         # honest bear case — a professional always argues against their own idea
         avoid: list[str] = []
@@ -294,14 +292,16 @@ def build_setups(symbol: str, htf: dict | None, ltf: dict | None,
 
         side = "long" if direction == _LONG else "short"
         why = {
-            "why_exists": context,
+            "why_exists": (f"a with-bias {side}: liquidity was swept and structure shifted into a "
+                           f"{'discount' if direction == _LONG else 'premium'} location"),
             "why_now": "the sweep + shift just printed and the trigger is still inside its validity window",
             "why_entry": (zone or f"the {'discount' if direction == _LONG else 'premium'} zone at {entry}")
                          + f" left by the shift",
             "why_sl": f"beyond {sl}, the swept extreme — the price that proves the read wrong",
             "why_targets": (f"the draw at {draw}" if draw is not None else f"the next pool at {tp1}")
                            + f" (TP1 {tp1}" + (f", TP2 {tp2}" if tp2 else "") + f"; net R:R {rr:.2f})",
-            "why_edge": (f"a {grade} setup: {n} independent confluences agree on a with-context "
+            "why_edge": (f"{'an' if grade in ('A+', 'A') else 'a'} {grade} setup: {n} "
+                         f"independent confluences agree on a with-context "
                          f"{side} after a confirmed liquidity raid + structure shift into a valid "
                          f"location — the sweep→shift→zone pattern, not an indicator signal"),
         }
@@ -318,16 +318,14 @@ def build_setups(symbol: str, htf: dict | None, ltf: dict | None,
         )
         out.append(TradeSetupV2(
             symbol=symbol, direction=direction,
-            setup_type=_SETUP_TYPE.get(sig.get("strategy"), sig.get("strategy") or "Discretionary"),
+            setup_type=_SETUP_TYPE.get(sig.get("strategy"), "Discretionary"),
+            grade=grade, confluences=n, confluences_total=5, risk_level=risk_level,
             entry=float(entry), sl=float(sl), tp1=float(tp1),
-            tp2=(float(tp2) if tp2 is not None else None),
-            rr=round(rr, 2), grade=grade, confluence_score=f"{n} of 5 confluences aligned",
-            risk_level=risk_level, market_bias=ltf_trend, htf_bias=htf_bias,
-            market_context=context, primary_confluence=primary, secondary_confluence=secondary,
-            reasons=tuple(f"✓ {c}" for c in confl),
-            reasons_to_avoid=tuple(avoid), invalidation=f"a decisive close beyond {sl} voids the idea",
-            early_exit=early, management_notes=manage,
-            expected_holding_time="intraday — minutes to a few hours (LTF sweep→shift trigger)",
+            tp2=(float(tp2) if tp2 is not None else None), rr=round(rr, 2),
+            htf_bias=htf_bias, ltf_trend=ltf_trend, market_context=context,
+            reasons=tuple(confl), reasons_to_avoid=tuple(avoid),
+            invalidation=f"a decisive close beyond {sl} voids the idea",
+            early_exit=early, management_notes=manage, holding_time="INTRADAY",
             why=why, created_ts=sig.get("created_ts")))
 
     # best idea first: grade, then more confluences, then better R:R

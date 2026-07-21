@@ -1090,7 +1090,8 @@ async def test_api_htf_returns_analysis():
                 body = await r.json()
     finally:
         await _stop(server, task)
-    assert set(body) == {"symbol", "timeframes", "overall"}
+    assert set(body) == {"contract_version", "symbol", "timeframes", "overall"}
+    assert body["contract_version"] == "1.0"
     assert body["symbol"] == "ETHUSDT"
     assert body["overall"]["bias"] == "BULLISH"
 
@@ -1272,12 +1273,14 @@ async def test_api_setups_htf_gated(db_conn):
             async with s.get(f"http://{addr}/api/setups?symbol=BTCUSDT", headers=AUTH) as r:
                 assert r.status == 200
                 d = await r.json()
+            assert d["contract_version"] == "1.0"                 # frozen contract
             assert d["htf_bias"] == "BULLISH" and d["message"] is None
             assert len(d["setups"]) == 1
             setup = d["setups"][0]
             assert setup["direction"] == "LONG" and setup["grade"] in ("A+", "A")
             assert 1.8 <= setup["rr"] <= 1.9 and setup["why"]["why_edge"]   # NET of fees
-            assert setup["htf_bias"] == "BULLISH" and setup["market_bias"] == "BULLISH"
+            assert setup["htf_bias"] == "BULLISH" and setup["ltf_trend"] == "BULLISH"
+            assert setup["confluences"] <= setup["confluences_total"] == 5
             assert setup["reasons_to_avoid"] and setup["setup_type"] and setup["market_context"]
             # a symbol with no live structure -> the confident "no setup"
             async with s.get(f"http://{addr}/api/setups?symbol=ETHUSDT", headers=AUTH) as r:
