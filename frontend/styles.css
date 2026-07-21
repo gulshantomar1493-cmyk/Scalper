@@ -1353,6 +1353,34 @@ body {
 .crosshair-box .cx-price span { color:var(--accent); font-weight:800; }
 
 /* draggable on-chart order lines: entry (with live P&L) + drag SL / TP */
+/* Active Trade Setup on the chart (M2) — subtle; price stays dominant */
+.chart-setup { position:absolute; inset:0; z-index:4; pointer-events:none; overflow:hidden; }
+.su-region { position:absolute; left:0; right:0; }
+.su-region.su-reward { background:color-mix(in srgb, var(--up) 8%, transparent); }
+.su-region.su-risk { background:color-mix(in srgb, var(--down) 8%, transparent); }
+.su-line { position:absolute; left:0; right:0; height:0; transform:translateY(-50%); }
+.su-line.su-entry { border-top:2px solid var(--accent); }            /* brightest overlay */
+.su-line.su-sl { border-top:1px solid var(--down); }                 /* never stronger than entry */
+.su-line.su-tp1 { border-top:1px solid var(--up); }
+.su-line.su-tp2 { border-top:1px dashed var(--up); }
+.su-tag { position:absolute; left:8px; top:0; transform:translateY(-50%); display:inline-flex;
+  align-items:center; gap:5px; padding:1px 7px; border-radius:5px; font-size:10px; font-weight:700;
+  white-space:nowrap; background:color-mix(in srgb, var(--surface-raised) 92%, transparent);
+  border:1px solid var(--hairline); }
+.su-entry .su-tag { border-color:var(--accent); }
+.su-sl .su-tag { border-color:color-mix(in srgb, var(--down) 45%, var(--hairline)); }
+.su-badge { font-size:9.5px; font-weight:800; padding:1px 5px; border-radius:4px; letter-spacing:.02em; }
+.su-badge.su-b-long { background:var(--up); color:#04121a; }
+.su-badge.su-b-short { background:var(--down); color:#fff; }
+.su-tag .su-k { color:var(--text-dim); font-weight:600; }
+.su-tag .su-p { color:var(--text); font-variant-numeric:tabular-nums; }
+.su-tp1 .su-p, .su-tp2 .su-p { color:var(--up); }
+.su-sl .su-p { color:var(--down); }
+.su-tag .su-rr { color:var(--accent); font-weight:700; }
+.su-banner { position:absolute; left:50%; bottom:14px; transform:translateX(-50%); font-size:11px;
+  color:var(--text-dim); padding:4px 12px; border-radius:6px;
+  background:color-mix(in srgb, var(--surface-raised) 85%, transparent); border:1px solid var(--hairline); }
+
 .chart-orders { position:absolute; inset:0; z-index:6; pointer-events:none; overflow:hidden; }
 .ol-row { position:absolute; left:0; right:0; height:0; border-top:1.5px dashed var(--hairline); transform:translateY(-50%); }
 .ol-label { position:absolute; left:8px; top:0; transform:translateY(-50%); padding:1px 8px; border-radius:5px;

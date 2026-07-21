@@ -1254,3 +1254,28 @@ def test_setups_js_is_valid_javascript():
     result = subprocess.run(["node", "--check", str(FRONTEND / "setups.js")],
                             capture_output=True, text=True)
     assert result.returncode == 0, result.stderr
+
+
+def test_setup_chart_overlay_present():
+    """Phase 3 M2: the active setup is drawn ON the chart (entry/stop/TP + R:R
+    region + direction·grade badge), pure-rendered from /api/setups, one rAF loop,
+    rebuilt only on identity change, cleared on no-setup/replay."""
+    html = _read("index.html")
+    assert 'id="chart-setup"' in html
+    app = _read("app.js")
+    for fn in ("renderSetupOverlay", "suBuild", "suTick", "activeSetup", "suClear"):
+        assert fn in app, fn
+    assert "priceToCoordinate" in app                     # positions from price (render, not derive)
+    assert "requestAnimationFrame(suTick)" in app         # a single tracking loop
+    assert "suId" in app and "id === suId" in app         # identity guard -> no flicker
+    assert "su-reward" in app and "su-risk" in app        # the R:R shaded regions
+    assert "su-badge" in app                              # the direction·grade badge on entry
+    assert "No high-probability setup available." in app  # calm no-setup banner
+    assert "replayMode" in app                            # cleared during replay
+    assert "renderSetupOverlay()" in app                  # wired into renderSetups
+    css = _read("styles.css")
+    for sel in (".chart-setup", ".su-entry", ".su-region", ".su-banner", ".su-b-long"):
+        assert sel in css, sel
+    # accessibility + hierarchy: entry is the brightest (2px), stop not stronger (1px)
+    assert ".su-line.su-entry { border-top:2px" in css
+    assert ".su-line.su-sl { border-top:1px" in css

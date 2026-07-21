@@ -768,6 +768,88 @@ document.addEventListener("mouseup", () => {
     .catch((err) => note("sl/tp: " + (err.message || err)));
 });
 
+/* ---------- Active Trade Setup ON the chart (Phase 3 M2) ----------
+   Read-only visualization of the top /api/setups setup, drawn on price so the
+   trade is understood by looking at the chart. Pure render of backend values —
+   entry (brightest) / stop / TP1 / TP2 lines + a subtle R:R shaded region + a
+   direction·grade badge. No derivation. ONE rAF loop; rebuilt only when the
+   setup IDENTITY changes (no flicker/duplication); cleared on no-setup/replay. */
+const suEls = {};                    // { reward, risk, entry, sl, tp1, tp2 }
+let suRAF = null, suId = null;
+function activeSetup() {
+  const d = lastSetups[activeSymbol];
+  return (d && d.setups && d.setups.length) ? d.setups[0] : null;
+}
+function suClear() {
+  const c = $("chart-setup"); if (c) c.textContent = "";
+  suEls.reward = suEls.risk = suEls.entry = suEls.sl = suEls.tp1 = suEls.tp2 = null;
+  if (suRAF) { cancelAnimationFrame(suRAF); suRAF = null; }
+}
+function suNode(cls) {
+  const c = $("chart-setup"); if (!c) return null;
+  const d = document.createElement("div"); d.className = cls;
+  if (cls.indexOf("su-line") === 0) d.appendChild(Object.assign(document.createElement("span"), { className: "su-tag" }));
+  c.appendChild(d); return d;
+}
+function suSetRegion(div, pa, pb) {
+  if (!div) return;
+  const ya = pa == null ? null : mainSeries.priceToCoordinate(pa);
+  const yb = pb == null ? null : mainSeries.priceToCoordinate(pb);
+  if (ya == null || yb == null) { div.style.display = "none"; return; }
+  div.style.display = ""; div.style.top = Math.min(ya, yb) + "px"; div.style.height = Math.abs(ya - yb) + "px";
+}
+function suSetLine(row, price, build) {
+  if (!row) return;
+  const y = price == null ? null : mainSeries.priceToCoordinate(price);
+  if (y == null) { row.style.display = "none"; return; }
+  row.style.display = ""; row.style.top = y + "px";
+  const l = row.querySelector(".su-tag"); if (l && build) { l.textContent = ""; build(l); }
+}
+function _chip(cls, txt) { return Object.assign(document.createElement("span"), { className: cls, textContent: txt }); }
+function suTick() {
+  const s = activeSetup();
+  if (!s) { suClear(); return; }                         // vanished mid-loop -> stop (banner on next render)
+  suSetRegion(suEls.reward, s.entry, s.tp1);             // reward: entry -> TP1 (defines the stated R:R)
+  suSetRegion(suEls.risk, s.entry, s.sl);                // risk: entry -> stop
+  suSetLine(suEls.entry, s.entry, (l) => {               // brightest, with the direction·grade badge
+    l.appendChild(_chip("su-badge " + (s.direction === "LONG" ? "su-b-long" : "su-b-short"), s.direction + " " + s.grade));
+    l.appendChild(_chip("su-k", "ENTRY"));
+    l.appendChild(_chip("su-p", fmt(s.entry)));
+    if (s.rr != null) l.appendChild(_chip("su-rr", "R:R " + s.rr));
+  });
+  suSetLine(suEls.sl, s.sl, (l) => { l.appendChild(_chip("su-p", "STOP " + fmt(s.sl))); l.appendChild(_chip("su-k", "· invalidation")); });
+  suSetLine(suEls.tp1, s.tp1, (l) => { l.appendChild(_chip("su-k", "TP1")); l.appendChild(_chip("su-p", fmt(s.tp1))); });
+  if (suEls.tp2) suSetLine(suEls.tp2, s.tp2, (l) => { l.appendChild(_chip("su-k", "TP2")); l.appendChild(_chip("su-p", fmt(s.tp2))); });
+  suRAF = requestAnimationFrame(suTick);
+}
+function suBuild() {
+  suClear();
+  const c = $("chart-setup"); if (!c) return;
+  const s = activeSetup();
+  if (!s) {                                              // no setup -> clean chart + a calm banner
+    const b = _chip("su-banner", (lastSetups[activeSymbol] && lastSetups[activeSymbol].message) || "No high-probability setup available.");
+    c.appendChild(b);
+    return;
+  }
+  suEls.reward = suNode("su-region su-reward");
+  suEls.risk = suNode("su-region su-risk");
+  suEls.tp1 = suNode("su-line su-tp1");                  // targets under entry/stop in the DOM;
+  suEls.tp2 = (s.tp2 != null) ? suNode("su-line su-tp2") : null;
+  suEls.sl = suNode("su-line su-sl");
+  suEls.entry = suNode("su-line su-entry");              // entry appended last = brightest, on top
+  suTick();
+}
+// Rebuild only when the setup identity changes -> the running loop just tracks
+// zoom/pan otherwise (survives polling/symbol/timeframe; no duplicate loops).
+function renderSetupOverlay() {
+  if (replayMode) { suClear(); suId = "__replay"; return; }
+  const s = activeSetup();
+  const id = s ? s.id : (lastSetups[activeSymbol] ? "__none" : "__wait");
+  if (id === suId) return;
+  suId = id;
+  suBuild();
+}
+
 /* -------------------------------------------------- settings (Step 7) */
 {
   const dark = $("set-theme-dark"), light = $("set-theme-light");
@@ -939,6 +1021,7 @@ const SETUPS_POLL_MS = 20000;
 let lastSetups = {};
 function renderSetups() {
   if (window.Setups) Setups.render(lastSetups[activeSymbol] || null);
+  renderSetupOverlay();            // draw the active setup ON the chart (M2)
 }
 async function loadSetups() {
   if (!window.Setups || replayMode) return;            // live only; replay clears it
