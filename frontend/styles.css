@@ -1185,6 +1185,53 @@ body {
 .htf-card-line .htf-v { color:var(--text); font-variant-numeric:tabular-nums; text-align:right; }
 .htf-card-line.htf-dim { color:var(--text-dim); font-style:italic; }
 
+/* Trade Setup V2 panel — the top Trade-Setup card (visual hierarchy) */
+.setups-panel { display:flex; flex-direction:column; gap:9px; padding:11px 12px; margin-bottom:10px;
+  background:var(--surface-raised); border:1px solid var(--hairline); border-radius:10px; }
+.setups-panel:empty { display:none; }
+.su-title { font-size:11px; font-weight:700; letter-spacing:.02em; color:var(--text); }
+.su-none { font-size:12px; font-weight:600; color:var(--text-dim); }
+.su-none-sub { font-size:10px; color:var(--text-dim); opacity:.8; }
+.su-card { display:flex; flex-direction:column; gap:7px; padding:9px; border-radius:9px;
+  background:var(--surface); border:1px solid var(--hairline); }
+.su-top { border-color:var(--accent); box-shadow:0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent); }
+.su-hd { display:flex; align-items:center; gap:6px; }
+.su-dir { font-size:11px; font-weight:800; padding:2px 8px; border-radius:6px; letter-spacing:.03em; }
+.su-long { background:color-mix(in srgb, var(--up) 20%, transparent); color:var(--up); }
+.su-short { background:color-mix(in srgb, var(--down) 20%, transparent); color:var(--down); }
+.su-type { flex:1; font-size:10.5px; font-weight:600; color:var(--text); }
+.su-grade { font-size:12px; font-weight:800; padding:1px 8px; border-radius:6px; }
+.su-aplus { background:color-mix(in srgb, var(--up) 26%, transparent); color:var(--up); }
+.su-a { background:color-mix(in srgb, var(--accent) 22%, transparent); color:var(--accent); }
+.su-b { background:color-mix(in srgb, var(--warn) 22%, transparent); color:var(--warn); }
+.su-greason { font-size:10px; line-height:1.45; color:var(--text-dim); }
+.su-levels { display:grid; grid-template-columns:1fr 1fr; gap:3px 12px; }
+.su-lv { display:flex; justify-content:space-between; gap:8px; font-size:11px; }
+.su-lv-k { color:var(--text-dim); }
+.su-lv-v { color:var(--text); font-weight:700; font-variant-numeric:tabular-nums; }
+.su-lv-v.su-stop { color:var(--down); }
+.su-lv-v.su-tp { color:var(--up); }
+.su-lv-v.su-risk-low { color:var(--up); }
+.su-lv-v.su-risk-med { color:var(--warn); }
+.su-lv-v.su-risk-high { color:var(--down); }
+.su-ctx { font-size:10.5px; line-height:1.5; color:var(--text);
+  padding:6px 7px; border-radius:6px; border-left:2px solid var(--accent);
+  background:color-mix(in srgb, var(--accent) 7%, transparent); }
+.su-list { display:flex; flex-direction:column; gap:2px; }
+.su-list-h { font-size:9.5px; font-weight:700; letter-spacing:.04em; text-transform:uppercase; color:var(--text-dim); }
+.su-li { font-size:10px; line-height:1.4; color:var(--text); padding-left:13px; position:relative; }
+.su-li.su-good::before { content:"✓"; position:absolute; left:0; color:var(--up); }
+.su-li.su-warn::before { content:"⚠"; position:absolute; left:0; color:var(--warn); font-size:9px; }
+.su-more > summary { cursor:pointer; font-size:10px; font-weight:600; color:var(--accent); padding:2px 0; list-style:none; }
+.su-more > summary::-webkit-details-marker { display:none; }
+.su-more > summary::before { content:"▸ "; }
+.su-more[open] > summary::before { content:"▾ "; }
+.su-more > *:not(summary) { margin-top:6px; }
+.su-why { display:flex; flex-direction:column; gap:3px; }
+.su-why-row { display:flex; gap:6px; font-size:10px; line-height:1.4; }
+.su-why-k { flex:0 0 46px; color:var(--text-dim); font-weight:600; }
+.su-why-v { flex:1; color:var(--text); }
+
 /* P4: compact terminal rail — tighter cards, denser type, less wasted space. */
 .lv-rail { padding:9px; gap:7px; }
 .lv-rail .lv-card { padding:8px 10px; border-radius:9px; }

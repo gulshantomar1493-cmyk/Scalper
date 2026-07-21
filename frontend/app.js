@@ -122,6 +122,7 @@ mainChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
 if (window.Htf) Htf.init($("htf-panel"));            // HTF V1.1 panel (pure renderer)
+if (window.Setups) Setups.init($("setups-panel"));   // Trade Setup V2 panel (pure renderer)
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
@@ -334,6 +335,8 @@ function setSymbol(symbol) {
   updatePaperMarkers();
   renderHtf();                     // show cached HTF for the new symbol, then refresh
   loadHtf();
+  renderSetups();                  // show cached setups for the new symbol, then refresh
+  loadSetups();
   loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
@@ -930,6 +933,28 @@ async function loadHtf() {
 }
 setInterval(loadHtf, HTF_POLL_MS);
 
+// Trade Setups from GET /api/setups (Trade Engine V2, frozen contract v1.0).
+// Event-driven (a fresh sweep->shift trigger), so polled a little faster than HTF.
+const SETUPS_POLL_MS = 20000;
+let lastSetups = {};
+function renderSetups() {
+  if (window.Setups) Setups.render(lastSetups[activeSymbol] || null);
+}
+async function loadSetups() {
+  if (!window.Setups || replayMode) return;            // live only; replay clears it
+  try {
+    const resp = await fetch(`${HTTP_BASE}/api/setups?symbol=${encodeURIComponent(activeSymbol)}`, {
+      headers: { Authorization: `Bearer ${TOKEN}` },
+    });
+    if (resp.status === 401) { onAuthFail(); return; }
+    if (!resp.ok) return;
+    const data = await resp.json();
+    lastSetups[data.symbol] = data;
+    if (data.symbol === activeSymbol) renderSetups();
+  } catch (e) { /* transient — the next poll retries */ }
+}
+setInterval(loadSetups, SETUPS_POLL_MS);
+
 function detectStructureEvents(sym, st) {
   if (!st || sym !== activeSymbol) return;             // stream the active symbol only
   const seen = (key, id, msg, cls) => {
@@ -1157,6 +1182,7 @@ function boot() {
   _startOps();        // /ops polling + activity pill
   loadSettings();     // notifications + telegram (settings page)
   loadHtf();          // HTF V1.1 panel (then polled every HTF_POLL_MS)
+  loadSetups();       // Trade Setup V2 panel (then polled every SETUPS_POLL_MS)
 }
 function resetToLogin() {
   if (window.__msToken) window.__msToken.clear();

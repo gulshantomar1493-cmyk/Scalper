@@ -123,8 +123,10 @@
                Market Structure -> HTF -> Risk/Reward -> Market Context (P4). -->
           <aside id="quality-panel" class="lv-rail empty">
             <div id="rail-analysis">
+              <!-- Trade Setup (V2) — the top of the visual hierarchy after price -->
+              <div id="setups-panel" class="setups-panel"></div>
               <div class="lv-card">
-                <div class="lv-ch">Trade Setup <span class="lv-q" title="Current suggested trade direction">?</span></div>
+                <div class="lv-ch">Live Signal <span class="lv-q" title="The 1m/5m signal that armed the setup">?</span></div>
                 <div class="lv-reco"><span id="reco-dir" class="lv-dir">—</span><span id="reco-grade" class="lv-grade"></span><span id="reco-pct" class="lv-pct"></span></div>
                 <div id="reco-stars" class="lv-stars"></div>
                 <span id="reco-verdict" class="lv-pill"></span>
@@ -400,6 +402,7 @@
   <script src="overlays.js"></script>
   <script src="panel.js"></script>
   <script src="htf.js"></script>
+  <script src="setups.js"></script>
   <script src="dashboard.js"></script>
   <script src="journal.js"></script>
   <script src="paper.js"></script>

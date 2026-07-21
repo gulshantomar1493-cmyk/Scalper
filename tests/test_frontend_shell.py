@@ -1223,3 +1223,34 @@ def test_paper_v2_symbol_persistence():
     assert "window.__msSaveSym(symbol)" in app          # saved on switch
     assert "savedSymbol" in app                          # used on init
     assert "localStorage" not in app                     # storage stays in ui.js
+
+
+def test_setups_panel_pure_and_wired():
+    """Phase 3 M1: the Trade Setup V2 panel. Pure renderer (app.js owns the
+    fetch); shows the frozen-contract fields; never derives trading logic."""
+    js = _read("setups.js")
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "localStorage",
+                   "sessionStorage", "Math.log", "Math.exp", "slope", "intercept",
+                   "aggregate", "innerHTML", "addSeries"):
+        assert banned not in js, banned                       # pure consumer
+    assert "window.Setups" in js and "init:" in js and "render:" in js
+    # renders the required setup fields (frozen v1.0 contract)
+    for f in ("grade", "grade_reason", "setup_type", "direction", "entry",
+              "market_context", "reasons", "reasons_to_avoid", "holding_time",
+              "risk_level", "why_edge"):
+        assert f in js, f
+    assert "No high-probability setup available." in js or "data.message" in js
+    html = _read("index.html")
+    assert 'id="setups-panel"' in html and 'src="setups.js"' in html
+    assert html.index('src="setups.js"') < html.index('src="app.js"')     # loads first
+    app = _read("app.js")
+    assert "/api/setups?symbol=" in app and "Setups.render" in app and "Setups.init" in app
+    assert "loadSetups" in app and "SETUPS_POLL_MS" in app
+    assert ".su-card" in _read("styles.css")
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_setups_js_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "setups.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
