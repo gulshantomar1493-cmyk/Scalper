@@ -50,6 +50,7 @@ import asyncio
 import hmac
 import logging
 import math
+from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 
 from fastapi import (Body, Depends, FastAPI, Header, HTTPException, Query,
@@ -63,6 +64,7 @@ from marketscalper.campaign import (data_quality_audit, expectancy_report)
 from marketscalper.core import paper_service
 from marketscalper.core.bus import EventBus
 from marketscalper.core.live_bar import FormingBar
+from marketscalper.core.setup_engine import build_setups
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
 
@@ -448,6 +450,32 @@ def create_app(
         if htf_service is None:
             raise HTTPException(status_code=503, detail="htf service not configured")
         return await htf_service.analyze(symbol)
+
+    # Trade Engine V2 (Phase 2): HTF bias/story (HtfService) + the live 1m LTF
+    # structure (StateStore) -> HTF-gated, fully-explained setups, or a confident
+    # "No high-probability setup available." Engine-isolated + read-only (like
+    # /api/htf): no bus, no structure write, no persistence -> determinism-safe.
+    @app.get("/api/setups", dependencies=[Depends(require_token)])
+    async def api_setups(symbol: str) -> dict:
+        htf = None
+        if htf_service is not None:
+            try:
+                htf = await htf_service.analyze(symbol)
+            except Exception as exc:              # HTF is context only — never 500 the setups
+                log.warning("setups: htf analyze failed for %s: %s", symbol, exc)
+        st = store.snapshot(symbol)
+        ltf = getattr(st, "structure", None) if st is not None else None
+        c = getattr(st, "last_candle_1m", None) if st is not None else None
+        setups = build_setups(symbol, htf, ltf, c.ts if c is not None else None)
+        overall = ((htf or {}).get("overall") or {})
+        return {
+            "symbol": symbol,
+            "htf_bias": overall.get("bias"),
+            "htf_confidence": overall.get("confidence"),
+            "market_story": overall.get("market_story"),
+            "setups": [asdict(s) for s in setups],
+            "message": None if setups else "No high-probability setup available.",
+        }
 
     # ------------------------------------------------------ journal (P4.8)
     # The recommendation core + the AUTO journal context (reason_text,

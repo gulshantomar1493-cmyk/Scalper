@@ -1237,3 +1237,50 @@ async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
                 assert isinstance(await r.json(), list)    # bare array, no envelope
     finally:
         await _stop(server, task)
+
+
+async def test_api_setups_htf_gated(db_conn):
+    """Trade Engine V2: /api/setups returns HTF-gated explained setups from the
+    live LTF structure + HTF bias, or 'No high-probability setup available.'"""
+    bus = EventBus()
+    store = StateStore(bus)
+    m0 = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
+    await bus.publish(Candle(symbol="BTCUSDT", tf="1m", ts=m0, o=100.0, h=100.0,
+                             l=100.0, c=100.0, v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5))
+    store.set_structure("BTCUSDT", {
+        "trend": "BULLISH",
+        "liquidity": {"premium_discount": "DISCOUNT",
+                      "sweeps": [{"ts": m0.isoformat(), "side": "LOW", "target": "EQL", "price": 97.9}],
+                      "shifts": [{"sweep_ts": m0.isoformat(), "ts": m0.isoformat()}]},
+        "confluence": [{"direction": "BULL", "lo": 99.5, "hi": 100.5, "count": 3, "htf_magnet": True}],
+        "volume": {"rvol": 1.5, "cum_delta": 120.0},
+        "qualification": {"data_integrity": "PASS"},
+        "signals": [{"strategy": "S1", "direction": "LONG", "entry": 100.0, "sl": 98.0,
+                     "tp1": 104.0, "tp2": 108.0, "created_ts": m0.isoformat(),
+                     "invalid_after_bars": 5, "facts": []}],
+    })
+
+    class _FakeHtf:
+        async def analyze(self, symbol):
+            return {"symbol": symbol, "overall": {"bias": "BULLISH", "confidence": 0.7,
+                                                  "market_story": "4H bullish; drawing to buy-side liquidity."}}
+
+    app = create_app(bus, store, TxPool(db_conn), TOKEN, htf_service=_FakeHtf())
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/setups?symbol=BTCUSDT", headers=AUTH) as r:
+                assert r.status == 200
+                d = await r.json()
+            assert d["htf_bias"] == "BULLISH" and d["message"] is None
+            assert len(d["setups"]) == 1
+            setup = d["setups"][0]
+            assert setup["direction"] == "LONG" and setup["confidence"] >= 70
+            assert setup["rr"] == 2.0 and setup["why"]["why_edge"]
+            assert setup["htf_bias"] == "BULLISH" and setup["market_bias"] == "BULLISH"
+            # a symbol with no live structure -> the confident "no setup"
+            async with s.get(f"http://{addr}/api/setups?symbol=ETHUSDT", headers=AUTH) as r:
+                d2 = await r.json()
+            assert d2["setups"] == [] and "No high-probability" in d2["message"]
+    finally:
+        await _stop(server, task)
