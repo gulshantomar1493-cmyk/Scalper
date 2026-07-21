@@ -56,6 +56,9 @@ def test_a_plus_setup_all_confluences():
     assert isinstance(s, TradeSetupV2)
     assert s.direction == "LONG" and s.htf_bias == "BULLISH"
     assert s.grade == "A+" and s.confluences == 5 and s.confluences_total == 5
+    assert s.id == "BTCUSDT:S1:" + T0.isoformat()         # stable key
+    assert s.grade_reason.startswith("Grade A+") and "confluences agree" in s.grade_reason
+    assert "HTF bias alignment" in s.grade_reason          # names the agreeing factors
     assert not hasattr(s, "confidence")                  # no fabricated %
     assert 1.8 <= s.rr <= 1.9                             # NET of fees (~1.86), not 2.0
     assert s.risk_level == "LOW"
@@ -85,6 +88,7 @@ def test_grade_emerges_from_confluence_count():
                        now_ts=T0 + timedelta(minutes=2))
     assert len(out) == 1
     assert out[0].grade == "B" and out[0].confluences == 1 and out[0].confluences_total == 5
+    assert out[0].grade_reason.startswith("Grade B") and "thin" in out[0].grade_reason
     # the honest bear case must call out the missing HTF bias
     assert any("range reaction" in r for r in out[0].reasons_to_avoid)
 

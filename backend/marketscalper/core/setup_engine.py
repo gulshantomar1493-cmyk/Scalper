@@ -42,10 +42,12 @@ _SETUP_TYPE = {"S1": "Liquidity Sweep Reversal", "S2": "Trend Pullback",
 @dataclass(frozen=True)
 class TradeSetupV2:
     # FROZEN contract v1.0 (docs/V2/API-CONTRACT.md). Field names / enums stable.
+    id: str                        # stable "{symbol}:{strategy}:{created_ts}" (key / dedupe)
     symbol: str                    # e.g. "BTCUSDT"
     direction: str                 # enum: LONG | SHORT
     setup_type: str                # enum: Liquidity Sweep Reversal | Trend Pullback | Fake-Break Trap
     grade: str                     # enum: A+ | A | B (emergent, NOT a probability)
+    grade_reason: str              # plain-English why THIS grade (the agreeing confluences)
     confluences: int               # how many independent confluences aligned (1..5)
     confluences_total: int         # the maximum (always 5) — render "{confluences}/{total}"
     risk_level: str                # enum: LOW | MEDIUM | HIGH
@@ -256,21 +258,34 @@ def build_setups(symbol: str, htf: dict | None, ltf: dict | None,
             continue                                    # structure doesn't pay enough
 
         # ---- SUPPORTING CONFLUENCES (grade emerges from agreement) ----
+        # each is (short label for grade_reason, full reason for the reasons list)
         vol_ok = _volume_confirms(direction, ltf)
-        confl: list[str] = []
+        loc = "discount" if direction == _LONG else "premium"
+        pairs: list[tuple[str, str]] = []
         if aligned:
-            confl.append(f"aligned with the {htf_bias.lower()} higher-timeframe bias")
+            pairs.append((f"{htf_bias.lower()} HTF bias alignment",
+                          f"aligned with the {htf_bias.lower()} higher-timeframe bias"))
         if aligned and htf_conf >= STRONG_HTF:
-            confl.append(f"strong HTF conviction ({round(htf_conf * 100)}% timeframe agreement)")
+            pairs.append(("strong HTF conviction",
+                          f"strong HTF conviction ({round(htf_conf * 100)}% timeframe agreement)"))
         if zone:
-            confl.append(zone)
+            pairs.append(("order block / FVG at entry", zone))
         if pd_ok:
-            confl.append(f"entry in {'discount' if direction == _LONG else 'premium'} — the correct half of the range")
+            pairs.append((f"{loc} location",
+                          f"entry in {loc} — the correct half of the range"))
         if vol_ok:
-            confl.append("volume confirms (elevated rvol, delta leaning with the move)")
-        n = len(confl)
+            pairs.append(("volume confirmation",
+                          "volume confirms (elevated rvol, delta leaning with the move)"))
+        confl = [full for _, full in pairs]
+        shorts = [short for short, _ in pairs]
+        n = len(pairs)
         grade = "A+" if n >= 4 else ("A" if n >= 2 else "B")
         risk_level = _risk_level(grade, aligned)
+        if grade == "B":
+            grade_reason = (f"Grade B: a valid but thin setup — only {n} of 5 confluences "
+                            f"present ({', '.join(shorts)}).")
+        else:
+            grade_reason = f"Grade {grade}: {n} of 5 confluences agree — {', '.join(shorts)}."
 
         draw = _draw_on_liquidity(direction, entry, ltf)
         context = _narrative(direction, htf_bias, htf_conf, ltf, entry, draw)
@@ -317,9 +332,11 @@ def build_setups(symbol: str, htf: dict | None, ltf: dict | None,
             + (f"TP2 ({tp2})" if tp2 else "the next pool"),
         )
         out.append(TradeSetupV2(
+            id=f"{symbol}:{sig.get('strategy', '?')}:{sig.get('created_ts', '')}",
             symbol=symbol, direction=direction,
             setup_type=_SETUP_TYPE.get(sig.get("strategy"), "Discretionary"),
-            grade=grade, confluences=n, confluences_total=5, risk_level=risk_level,
+            grade=grade, grade_reason=grade_reason,
+            confluences=n, confluences_total=5, risk_level=risk_level,
             entry=float(entry), sl=float(sl), tp1=float(tp1),
             tp2=(float(tp2) if tp2 is not None else None), rr=round(rr, 2),
             htf_bias=htf_bias, ltf_trend=ltf_trend, market_context=context,

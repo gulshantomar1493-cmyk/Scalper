@@ -130,10 +130,12 @@ The Trade Engine V2 output: HTF-gated, fully-explained setups, or a confident
 
 | Field | Type | Values / meaning |
 |---|---|---|
+| `id` | string | stable key `"{symbol}:{strategy}:{created_ts}"` — dedupe / track across polls |
 | `symbol` | string | e.g. `"BTCUSDT"` |
 | `direction` | enum string | `LONG` \| `SHORT` |
 | `setup_type` | enum string | `Liquidity Sweep Reversal` \| `Trend Pullback` \| `Fake-Break Trap` |
 | `grade` | enum string | `A+` \| `A` \| `B` — emergent from confluence agreement (NOT a probability) |
+| `grade_reason` | string | plain-English **why this grade** — names the agreeing confluences (never make the UI reverse-engineer the grade) |
 | `confluences` | integer | how many independent confluences aligned (1..5) |
 | `confluences_total` | integer | the maximum (always `5`); render `"{confluences}/{confluences_total}"` |
 | `risk_level` | enum string | `LOW` \| `MEDIUM` \| `HIGH` |
@@ -164,8 +166,11 @@ The Trade Engine V2 output: HTF-gated, fully-explained setups, or a confident
   "market_story": "Higher-timeframe bias is BULLISH ...",
   "message": null,
   "setups": [{
+    "id": "BTCUSDT:S1:2026-07-21T12:00:00+00:00",
     "symbol": "BTCUSDT", "direction": "LONG", "setup_type": "Liquidity Sweep Reversal",
-    "grade": "A+", "confluences": 5, "confluences_total": 5, "risk_level": "LOW",
+    "grade": "A+",
+    "grade_reason": "Grade A+: 5 of 5 confluences agree — bullish HTF bias alignment, strong HTF conviction, order block / FVG at entry, discount location, volume confirmation.",
+    "confluences": 5, "confluences_total": 5, "risk_level": "LOW",
     "entry": 100.0, "sl": 98.0, "tp1": 104.5, "tp2": 108.0, "rr": 2.1,
     "htf_bias": "BULLISH", "ltf_trend": "BULLISH",
     "market_context": "Buyers control the higher timeframe. Sell-side liquidity was just swept at 97.9 and structure shifted — the late shorts who sold that low are now trapped. The 1m is trending. Price is likely drawn to the buy-side liquidity at 104.5, and the long is the execution of that story.",
@@ -224,9 +229,15 @@ non-breaking in practice). `/api/htf` was already at its v1.0 shape after Phase 
 
 ## Consumer guidance
 
+**The backend owns all market analysis; the frontend only visualizes and never
+derives trading logic.** Every decision the UI shows is already explained by a
+field: the grade by `grade_reason`, the trade by `why.*` + `market_context`, the
+risks by `reasons_to_avoid`, the edge by `why.why_edge`. If you ever need to
+compute *why*, that is a backend gap — file it, do not infer it client-side.
+
 - Ignore unknown keys; treat missing optional keys as null/empty.
-- Render `grade` + `confluences/confluences_total`; **never** show `rr`, `confidence`, or
-  `confluences` as a probability.
+- Render `grade` with `grade_reason`, and `confluences/confluences_total`; **never**
+  show `rr`, `confidence`, or `confluences` as a probability.
 - `message` is authoritative for "no setup" — show it verbatim when `setups` is empty.
 - AI modules: the enums above are stable join keys; the free-text fields
   (`market_context`, `reasons*`, `why.*`) are human-readable and safe to summarize.

@@ -1281,6 +1281,7 @@ async def test_api_setups_htf_gated(db_conn):
             assert 1.8 <= setup["rr"] <= 1.9 and setup["why"]["why_edge"]   # NET of fees
             assert setup["htf_bias"] == "BULLISH" and setup["ltf_trend"] == "BULLISH"
             assert setup["confluences"] <= setup["confluences_total"] == 5
+            assert setup["id"] and setup["grade_reason"].startswith("Grade")   # self-explanatory
             assert setup["reasons_to_avoid"] and setup["setup_type"] and setup["market_context"]
             # a symbol with no live structure -> the confident "no setup"
             async with s.get(f"http://{addr}/api/setups?symbol=ETHUSDT", headers=AUTH) as r:
