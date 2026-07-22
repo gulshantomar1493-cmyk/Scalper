@@ -122,7 +122,7 @@ mainChart.priceScale("right").applyOptions({ scaleMargins: { top: 0.06, bottom: 
 Overlays.init(mainChart, mainSeries);            // overlays draw on the Live chart
 Panel.init(quickLogSubmit);
 if (window.Htf) Htf.init($("htf-panel"));            // HTF V1.1 panel (pure renderer)
-if (window.Setups) Setups.init($("setups-panel"));   // Trade Setup V2 panel (pure renderer)
+if (window.Setups) Setups.init($("setups-panel"), takePaperSetup);   // Trade Setup V2 panel (pure renderer)
 if (window.Strip) Strip.init($("context-strip"));    // M2.5 context strip (pure renderer)
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
@@ -1038,6 +1038,30 @@ function renderSetups() {
   if (window.Setups) Setups.render(lastSetups[activeSymbol] || null);
   renderSetupOverlay();            // draw the active setup ON the chart (M2)
   renderStrip();                   // and the strip's Trend/Draw/Setup tiles
+}
+
+// Phase 4 — one-click "take this setup" -> a simulated paper BRACKET order: a limit
+// at the setup entry, risk-sized to 0.5% of the paper wallet, with SL/TP that
+// activate on fill (backend bracket, migration 006). Simulation only; app.js owns
+// the network so setups.js stays a pure renderer. The user can cancel/close it on
+// the Paper page or by dragging the chart lines.
+async function takePaperSetup(setup) {
+  if (!setup || replayMode) return;
+  const sym = setup.symbol || activeSymbol;
+  try {
+    const st = await paperApi.state();
+    const equity = (st && st.account && st.account.balance) || 10000;
+    const entry = setup.entry, sl = setup.sl, tp = setup.tp1, dist = Math.abs(entry - sl), lev = 10;
+    let qty = dist > 0 ? (equity * 0.005) / dist : 0;              // risk 0.5% of the wallet at the stop
+    qty = Math.min(qty, (equity * 0.9 * lev) / entry);            // keep margin within the wallet
+    qty = Math.max(Math.round(qty * 1000) / 1000, 0.001);        // 3dp, sane minimum
+    const side = setup.direction === "LONG" ? "BUY" : "SELL";
+    const res = await paperApi.order({ symbol: sym, side, type: "limit", price: entry, qty, sl, tp, leverage: lev });
+    note(`paper: ${setup.direction} ${qty} ${sym} limit @ ${fmt(entry)} · SL ${fmt(sl)} · TP ${fmt(tp)}` +
+         (res && res.order_id ? ` (order #${res.order_id})` : ""));
+  } catch (e) {
+    note(`paper: could not take setup — ${e.message}`);
+  }
 }
 async function loadSetups() {
   if (!window.Setups || replayMode) return;            // live only; replay clears it

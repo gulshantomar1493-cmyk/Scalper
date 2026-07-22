@@ -1324,6 +1324,21 @@ def test_strip_js_is_valid_javascript():
     assert result.returncode == 0, result.stderr
 
 
+def test_take_setup_paper_v2_wired():
+    """Phase 4: one-click 'take setup' -> a simulated paper BRACKET order. setups.js
+    stays a pure renderer (a button that calls an app.js callback, no network);
+    app.js owns the fetch + risk-sizing and places a limit at the setup entry with
+    the setup's SL / TP1 as the bracket."""
+    sj, app, css = _read("setups.js"), _read("app.js"), _read("styles.css")
+    assert "su-take" in sj and "onTake" in sj              # button -> injected callback
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "localStorage"):
+        assert banned not in sj, banned                    # still a pure renderer
+    assert "Setups.init" in app and "takePaperSetup" in app
+    assert "paperApi.order" in app and 'type: "limit"' in app   # a limit at the setup entry
+    assert "0.005" in app                                  # risk-sized (0.5% of the wallet)
+    assert ".su-take" in css
+
+
 def test_setup_chart_overlay_present():
     """Phase 3 M2: the active setup is drawn ON the chart (entry/stop/TP + R:R
     region + direction·grade badge), pure-rendered from /api/setups, one rAF loop,

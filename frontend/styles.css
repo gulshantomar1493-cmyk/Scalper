@@ -1265,6 +1265,13 @@ body {
 .su-why-row { display:flex; gap:6px; font-size:10px; line-height:1.4; }
 .su-why-k { flex:0 0 46px; color:var(--text-dim); font-weight:600; }
 .su-why-v { flex:1; color:var(--text); }
+/* Phase 4: one-click "take setup" -> paper (direction-colored, simulation) */
+.su-take { margin-top:1px; padding:7px 10px; border-radius:7px; border:1px solid var(--hairline);
+  background:var(--surface-raised); color:var(--text); font:inherit; font-size:11px; font-weight:700;
+  letter-spacing:.01em; cursor:pointer; text-align:center; }
+.su-take:hover { filter:brightness(1.08); }
+.su-take.su-long  { color:var(--up);   background:color-mix(in srgb, var(--up) 12%, transparent);   border-color:color-mix(in srgb, var(--up) 32%, transparent); }
+.su-take.su-short { color:var(--down); background:color-mix(in srgb, var(--down) 12%, transparent); border-color:color-mix(in srgb, var(--down) 32%, transparent); }
 
 /* P4: compact terminal rail — tighter cards, denser type, less wasted space. */
 .lv-rail { padding:9px; gap:7px; }

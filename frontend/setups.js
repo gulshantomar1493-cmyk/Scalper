@@ -25,7 +25,8 @@
     return v == null ? "—" : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
   }
 
-  function init(container) { root = container; }
+  var onTake = null;
+  function init(container, take) { root = container; onTake = take || null; }
 
   // one label/value line (full width)
   function levelRow(label, value, cls) {
@@ -72,6 +73,14 @@
     meta.appendChild(levelRow("Risk", s.risk_level, RISK_CLASS[s.risk_level] || ""));
     lv.appendChild(meta);
     c.appendChild(lv);
+
+    // one-click "take this setup" -> a simulated paper position (Phase 4). Only the
+    // top setup is actionable; app.js owns the network (this file stays pure).
+    if (top && onTake) {
+      var take = el("button", "su-take " + (DIR_CLASS[s.direction] || ""), "▸ Take setup — paper");
+      take.addEventListener("click", function () { onTake(s); });
+      c.appendChild(take);
+    }
 
     // everything else expands on demand — the visible card stays the decision only
     var det = el("details", "su-more");

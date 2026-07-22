@@ -58,7 +58,7 @@ async def reset_wallet(conn, balance: float) -> dict:
 
 
 async def _apply_fill(conn, acct, *, symbol, side, qty, price, leverage,
-                      reduce_only, order_id=None):
+                      reduce_only, order_id=None, sl=None, tp=None):
     row = await conn.fetchrow(
         f"SELECT {_POS_COLS} FROM paper_positions WHERE symbol=$1 AND status='open' ORDER BY id LIMIT 1",
         symbol)
@@ -99,13 +99,18 @@ async def _apply_fill(conn, acct, *, symbol, side, qty, price, leverage,
         "INSERT INTO paper_trades (symbol, side, qty, price, fee, realized_pnl, position_id, order_id)"
         " VALUES ($1,$2,$3,$4,$5,$6,$7,$8)",
         symbol, side, filled, price, fee, realized, position_id, order_id)
+    # bracket (006): a non-reducing fill that carried an SL/TP sets it on the
+    # (now open) position, so a limit "Take setup" order is bracketed on fill.
+    if new_pos is not None and not reduce_only and (sl is not None or tp is not None):
+        await conn.execute(
+            "UPDATE paper_positions SET sl=$2, tp=$3 WHERE id=$1", position_id, sl, tp)
     return {"filled": filled, "realized": realized, "fee": fee}
 
 
 async def _sync(conn, acct, marks: dict):
     # 1) trigger resting limit/stop orders at the mark
     orders = await conn.fetch(
-        "SELECT id, symbol, side, type, qty, price, stop_price, leverage, reduce_only"
+        "SELECT id, symbol, side, type, qty, price, stop_price, leverage, reduce_only, sl, tp"
         " FROM paper_orders WHERE status='open' ORDER BY id")
     for o in orders:
         mark = marks.get(o["symbol"])
@@ -118,7 +123,8 @@ async def _sync(conn, acct, marks: dict):
         fill_price = _f(o["price"]) if o["type"] == "limit" else mark   # limit at its price, stop at mark
         await _apply_fill(conn, acct, symbol=o["symbol"], side=o["side"],
                           qty=float(o["qty"]), price=fill_price, leverage=_f(o["leverage"]),
-                          reduce_only=o["reduce_only"], order_id=o["id"])
+                          reduce_only=o["reduce_only"], order_id=o["id"],
+                          sl=_f(o["sl"]), tp=_f(o["tp"]))   # bracket applies on fill
         await conn.execute("UPDATE paper_orders SET status='filled', fill_price=$2, filled_at=now() WHERE id=$1",
                            o["id"], fill_price)
     # 2) close positions whose SL / TP / liquidation was hit (at the trigger price)
@@ -158,9 +164,10 @@ async def get_state(conn, marks: dict) -> dict:
         p["unrealized_pnl"] = pt.unrealized_pnl(p["side"], p["avg_entry"], p["qty"], mk)
     orders = [{"id": o["id"], "symbol": o["symbol"], "side": o["side"], "type": o["type"],
                "qty": _f(o["qty"]), "price": _f(o["price"]), "stop_price": _f(o["stop_price"]),
-               "leverage": _f(o["leverage"]), "reduce_only": o["reduce_only"]}
+               "leverage": _f(o["leverage"]), "reduce_only": o["reduce_only"],
+               "sl": _f(o["sl"]), "tp": _f(o["tp"])}
               for o in await conn.fetch(
-                  "SELECT id, symbol, side, type, qty, price, stop_price, leverage, reduce_only"
+                  "SELECT id, symbol, side, type, qty, price, stop_price, leverage, reduce_only, sl, tp"
                   " FROM paper_orders WHERE status='open' ORDER BY id")]
     history = [{"ts": t["ts"].isoformat() if t["ts"] else None, "symbol": t["symbol"],
                 "side": t["side"], "qty": _f(t["qty"]), "price": _f(t["price"]),
@@ -181,12 +188,14 @@ async def place_order(conn, spec: dict, marks: dict) -> dict:
             raise ValueError("no live price for this symbol yet")
         return await _apply_fill(conn, acct, symbol=symbol, side=spec["side"],
                                  qty=spec["qty"], price=mark, leverage=spec.get("leverage"),
-                                 reduce_only=spec.get("reduce_only", False))
+                                 reduce_only=spec.get("reduce_only", False),
+                                 sl=spec.get("sl"), tp=spec.get("tp"))
     rec = await conn.fetchrow(
-        "INSERT INTO paper_orders (symbol, side, type, qty, price, stop_price, leverage, reduce_only)"
-        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING id",
+        "INSERT INTO paper_orders (symbol, side, type, qty, price, stop_price, leverage, reduce_only, sl, tp)"
+        " VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id",
         symbol, spec["side"], otype, spec["qty"], spec.get("price"),
-        spec.get("stop_price"), spec.get("leverage"), spec.get("reduce_only", False))
+        spec.get("stop_price"), spec.get("leverage"), spec.get("reduce_only", False),
+        spec.get("sl"), spec.get("tp"))
     return {"order_id": rec["id"], "status": "open"}
 
 

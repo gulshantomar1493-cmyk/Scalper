@@ -773,6 +773,12 @@ def create_app(
             if isinstance(sp, bool) or not isinstance(sp, (int, float)) or sp <= 0:
                 _bad("a stop order needs a positive stop_price")
             spec["stop_price"] = float(sp)
+        for k in ("sl", "tp"):                        # optional bracket (006): applied on fill
+            v = p.get(k)
+            if v is not None:
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or v <= 0:
+                    _bad(k + " must be a positive number")
+                spec[k] = float(v)
         return spec
 
     @app.get("/api/paper", dependencies=[Depends(require_token)])
