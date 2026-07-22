@@ -623,6 +623,20 @@ def test_dashboard_js_renders_analytics_and_journal():
     assert "function statTable" in js
 
 
+def test_trade_review_paper_performance_m4():
+    """M4: the Trade Review page ties to V2 — a Paper Performance section (the setups
+    you took, as simulated paper trades). Backend computes the summary; dashboard.js
+    renders it (pure); app.js feeds /api/paper into renderReview."""
+    dj, app = _read("dashboard.js"), _read("app.js")
+    assert "function paperBlock" in dj and "Paper performance" in dj
+    assert "paper.performance" in dj and "paper.portfolio" in dj and "paper.history" in dj
+    assert "renderReview(target, a, journal, paper)" in dj      # signature carries paper
+    for banned in ("Math.log", "Math.exp", "slope", "fetch(", "WebSocket"):
+        assert banned not in dj, banned                          # still a pure renderer
+    assert 'renderReview($("page-review"), analytics, journal, paper)' in app
+    assert "/api/paper" in app                                   # app.js fetches paper for the review
+
+
 def test_app_js_opens_dashboard_via_fetch():
     js = _read("app.js")
     assert "async function openDashboard" in js

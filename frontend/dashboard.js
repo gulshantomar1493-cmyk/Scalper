@@ -56,6 +56,9 @@ const Dashboard = (function () {
   function r(v) { return v === null || v === undefined ? "—" : (v >= 0 ? "+" : "") + v.toFixed(2) + "R"; }
   function px(v) { return v === null || v === undefined ? "—"
     : Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 }); }
+  function money(v) { return v === null || v === undefined ? "—"
+    : (v >= 0 ? "+$" : "−$") + px(Math.abs(v)); }
+  function pnlCls(v) { return v > 0 ? "j-long" : v < 0 ? "j-short" : ""; }
 
   /* ----------------------------------------------------------- analytics */
 
@@ -81,15 +84,55 @@ const Dashboard = (function () {
     target.appendChild(statTable("By session", a.by_session));
   }
 
-  // Trade Review (Step 4) — DISPLAY-ONLY: hypothetical outcomes + manual
-  // results, never an execution engine. Overall summary + evaluated trades.
-  function renderReview(target, a, journal) {
+  // Paper Performance (M4) — the V2 tie: the setups you actually TOOK, as simulated
+  // paper trades. DISPLAY-ONLY; every number is backend-computed (paper_service).
+  function paperBlock(paper) {
+    const wrap = elem("div", "stat-block");
+    wrap.appendChild(elem("h3", "dash-h3", "Paper performance — setups you took"));
+    const p = paper.portfolio || {}, perf = paper.performance || {};
+    const grid = elem("div", "stat-grid");
+    stat(grid, "Equity", "$" + px(p.equity));
+    stat(grid, "Realized P&L", money(perf.realized));
+    stat(grid, "Unrealized", money(p.unrealized_pnl));
+    stat(grid, "Closed trades", String(perf.closed || 0));
+    stat(grid, "Win rate", perf.win_rate != null ? pct(perf.win_rate) : "—");
+    stat(grid, "Best / Worst", money(perf.best) + " / " + money(perf.worst));
+    wrap.appendChild(grid);
+    const hist = (paper.history || []).slice(0, 12);
+    if (hist.length) {
+      const table = elem("table", "dash-table");
+      const head = elem("tr");
+      for (const h of ["Time", "Symbol", "Side", "Qty", "Price", "P&L"]) head.appendChild(elem("th", null, h));
+      table.appendChild(head);
+      for (const t of hist) {
+        const row = elem("tr");
+        row.appendChild(elem("td", "mono", t.ts ? window.IST.dateTime(t.ts) : "—"));
+        row.appendChild(elem("td", "row-key", t.symbol || "—"));
+        row.appendChild(elem("td", "mono " + (t.side === "BUY" ? "j-long" : "j-short"), t.side || ""));
+        row.appendChild(elem("td", "mono", px(t.qty)));
+        row.appendChild(elem("td", "mono", px(t.price)));
+        row.appendChild(elem("td", "mono " + pnlCls(t.realized_pnl), t.realized_pnl ? money(t.realized_pnl) : "—"));
+        table.appendChild(row);
+      }
+      wrap.appendChild(table);
+    }
+    return wrap;
+  }
+
+  // Trade Review (M4) — DISPLAY-ONLY: paper performance (the V2 setups you took),
+  // then hypothetical outcomes + manual results. Never an execution engine.
+  function renderReview(target, a, journal, paper) {
     if (!target) return;
     clear(target);
-    if (!a || !a.n_recommendations) {
-      target.appendChild(elem("div", "dash-empty", "No recommendations to review yet."));
+    const hasPaper = paper && paper.performance && (paper.performance.closed > 0 || (paper.history || []).length);
+    const hasRecs = a && a.n_recommendations;
+    if (!hasPaper && !hasRecs) {
+      target.appendChild(elem("div", "dash-empty",
+        "No trades to review yet — take a setup on the Live chart to paper-trade it."));
       return;
     }
+    if (hasPaper) target.appendChild(paperBlock(paper));   // V2 primary
+    if (!hasRecs) return;
     target.appendChild(statBlock("Performance (hypothetical + your logged trades)", a.overall));
     const evaluated = (journal || []).filter((j) => j.eval_outcome);
     const wrap = elem("div", "stat-block");

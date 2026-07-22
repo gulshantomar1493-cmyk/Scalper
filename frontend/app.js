@@ -576,12 +576,14 @@ async function openDashboard() {
 // on demand when a data page is shown, or via its Refresh button.
 async function loadDataPages() {
   try {
+    // paper state is optional — the review still renders (V1 sections) if it fails
+    const paper = await api("/api/paper", { method: "GET" }).catch(() => null);
     const [analytics, journal] = await Promise.all([
       api("/analytics", { method: "GET" }),
       api("/journal?limit=200", { method: "GET" }),
     ]);
     Dashboard.renderAnalytics($("page-analytics"), analytics);
-    Dashboard.renderReview($("page-review"), analytics, journal);
+    Dashboard.renderReview($("page-review"), analytics, journal, paper);   // M4: + paper perf
   } catch (err) {
     for (const id of ["page-analytics", "page-review"]) {
       const e = $(id); if (e) e.textContent = "Could not load: " + err.message;

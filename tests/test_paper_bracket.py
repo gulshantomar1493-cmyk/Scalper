@@ -58,3 +58,21 @@ async def test_order_without_bracket_leaves_position_unbracketed(db_conn):
     st = await ps.get_state(db_conn, {_SYM: 100.0})
     assert len(st["positions"]) == 1
     assert st["positions"][0]["sl"] is None and st["positions"][0]["tp"] is None
+
+
+async def test_get_state_performance_summary(db_conn):
+    """M4 Trade Review: get_state reports a closed-trade performance summary."""
+    await ps.reset_wallet(db_conn, 10000.0)
+    # empty to start
+    st = await ps.get_state(db_conn, {_SYM: 100.0})
+    assert st["performance"]["closed"] == 0 and st["performance"]["win_rate"] is None
+    # open then close a winner: buy 1 @ 100, sell to close @ 110
+    await ps.place_order(db_conn, {"symbol": _SYM, "side": "BUY", "type": "market",
+                                   "qty": 1.0, "leverage": 10}, {_SYM: 100.0})
+    await ps.place_order(db_conn, {"symbol": _SYM, "side": "SELL", "type": "market",
+                                   "qty": 1.0, "reduce_only": True, "leverage": 10}, {_SYM: 110.0})
+    st = await ps.get_state(db_conn, {_SYM: 110.0})
+    perf = st["performance"]
+    assert perf["closed"] == 1 and perf["wins"] == 1 and perf["losses"] == 0
+    assert perf["win_rate"] == 1.0 and perf["realized"] > 0
+    assert not st["positions"]

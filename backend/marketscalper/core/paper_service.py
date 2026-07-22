@@ -175,8 +175,23 @@ async def get_state(conn, marks: dict) -> dict:
                for t in await conn.fetch(
                    "SELECT ts, symbol, side, qty, price, fee, realized_pnl"
                    " FROM paper_trades ORDER BY id DESC LIMIT 100")]
+    # performance summary over closed paper trades (M4 Trade Review) — realized fills
+    # only (realized_pnl <> 0 marks a close). Display aggregation; no trading logic.
+    perf = await conn.fetchrow(
+        "SELECT count(*) AS closed,"
+        " count(*) FILTER (WHERE realized_pnl > 0) AS wins,"
+        " coalesce(sum(realized_pnl), 0) AS realized,"
+        " coalesce(max(realized_pnl), 0) AS best,"
+        " coalesce(min(realized_pnl), 0) AS worst"
+        " FROM paper_trades WHERE realized_pnl <> 0")
+    closed = int(perf["closed"] or 0)
+    wins = int(perf["wins"] or 0)
+    performance = {"closed": closed, "wins": wins, "losses": closed - wins,
+                   "win_rate": (wins / closed) if closed else None,
+                   "realized": _f(perf["realized"]), "best": _f(perf["best"]), "worst": _f(perf["worst"])}
     return {"account": acct, "positions": positions, "orders": orders,
-            "portfolio": pt.portfolio(acct, positions, marks), "history": history}
+            "portfolio": pt.portfolio(acct, positions, marks), "history": history,
+            "performance": performance}
 
 
 async def place_order(conn, spec: dict, marks: dict) -> dict:
