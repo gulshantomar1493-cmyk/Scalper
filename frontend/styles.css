@@ -1098,6 +1098,7 @@ body {
 .tb-spacer { flex:1; }
 .ind-menu { position:relative; }
 .ind-panel { position:absolute; top:calc(100% + 4px); left:0; z-index:20; min-width:232px; padding:8px; background:var(--surface-raised); border:1px solid var(--hairline); border-radius:10px; box-shadow:0 8px 24px rgba(0,0,0,0.28); }
+.tb-more-panel { left:auto; right:0; min-width:158px; }   /* ⋮ overflow opens right-aligned (it sits on the right) */
 .ind-row { display:flex; align-items:center; gap:6px; padding:4px 2px; }
 .ind-label { flex:0 0 62px; font-size:11px; color:var(--text); }
 .ind-tog { width:30px; height:17px; border-radius:10px; background:var(--hairline); border:0; position:relative; cursor:pointer; flex:none; transition:background .15s; }

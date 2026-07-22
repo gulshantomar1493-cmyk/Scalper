@@ -109,9 +109,15 @@
               </div>
               <button id="tb-structure" class="tb-btn" type="button" title="Smart Money Concepts: overlay full market structure (HH/HL/BOS/CHoCH/OB/FVG). Off by default — execution chart stays clean.">≋ SMC</button>
               <span class="tb-spacer"></span>
-              <button id="tb-reset" class="tb-btn" type="button" title="Reset view">⤢ Reset</button>
               <button id="tb-autoscale" class="tb-btn" type="button" title="Toggle auto-scale">Auto</button>
-              <button id="tb-screenshot" class="tb-btn" type="button" title="Screenshot">📷</button>
+              <button id="tb-reset" class="tb-btn" type="button" title="Reset view">⤢ Reset</button>
+              <div class="ind-menu">
+                <button id="tb-more" class="tb-btn" type="button" title="More actions" aria-label="More actions">⋮</button>
+                <div id="tb-more-panel" class="ind-panel tb-more-panel" hidden>
+                  <button id="tb-fullscreen" class="draw-tool" type="button">⛶ Fullscreen</button>
+                  <button id="tb-screenshot" class="draw-tool" type="button">📷 Screenshot</button>
+                </div>
+              </div>
             </div>
             <div class="lv-chartarea">
               <div id="chart-legend" class="chart-legend mono"></div>

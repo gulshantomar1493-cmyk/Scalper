@@ -1117,6 +1117,23 @@ def test_structure_toggle_htf_context_and_drawing_wired():
     assert 'src="drawing.js"' in html and "Drawing.init" in app
 
 
+def test_toolbar_overflow_and_fullscreen():
+    """Final polish (WORKSPACE-DESIGN item 5): the chart toolbar keeps Indicators /
+    Draw / SMC + Auto / Reset visible and tucks Screenshot + Fullscreen into a ⋮
+    overflow menu; app.js wires the ⋮ toggle + the Fullscreen API."""
+    html, app = _read("index.html"), _read("app.js")
+    assert 'id="tb-more"' in html and 'id="tb-more-panel"' in html and 'id="tb-fullscreen"' in html
+    # screenshot moved INTO the overflow (id/handler kept) — its id follows the panel's
+    tb = html[html.index("chart-toolbar"):html.index("lv-chartarea")]
+    assert tb.index('id="tb-more-panel"') < tb.index('id="tb-screenshot"')
+    # Auto + Reset stay directly on the toolbar
+    assert 'id="tb-autoscale"' in tb and 'id="tb-reset"' in tb
+    # app.js: the ⋮ toggle + the fullscreen API
+    assert "tb-more" in app and "requestFullscreen" in app and "exitFullscreen" in app
+    assert "fullscreenchange" in app
+    assert ".tb-more-panel" in _read("styles.css")
+
+
 def test_drawing_persistence_m3():
     """M3: drawings persist across refresh AND follow the symbol. drawing.js stays a
     pure renderer (storage-banned); ui.js owns the per-symbol localStorage; app.js

@@ -1294,6 +1294,25 @@ async function loadSettings() {           // called by boot() after login
       a.href = canvas.toDataURL(); a.click();
     } catch (e) { note("screenshot unavailable"); }
   });
+  // ⋮ overflow: the secondary actions (fullscreen, screenshot) live off the toolbar
+  const moreBtn = $("tb-more"), morePanel = $("tb-more-panel");
+  if (moreBtn && morePanel) {
+    moreBtn.addEventListener("click", (e) => { e.stopPropagation(); morePanel.hidden = !morePanel.hidden; });
+    document.addEventListener("click", (e) => {
+      if (!morePanel.hidden && !morePanel.contains(e.target) && e.target !== moreBtn) morePanel.hidden = true;
+    });
+    morePanel.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { morePanel.hidden = true; }));
+  }
+  const fs = $("tb-fullscreen");
+  if (fs) {
+    fs.addEventListener("click", () => {
+      try { document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen(); }
+      catch (e) { note("fullscreen unavailable"); }
+    });
+    document.addEventListener("fullscreenchange", () => {
+      fs.textContent = document.fullscreenElement ? "⛶ Exit fullscreen" : "⛶ Fullscreen";
+    });
+  }
 })();
 
 /* ----------------------------------------------- auth + boot (login gate) */
