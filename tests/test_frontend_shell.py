@@ -1096,11 +1096,33 @@ def test_structure_toggle_htf_context_and_drawing_wired():
     # item 11 — drawing tools
     dj = _read("drawing.js")
     assert "window.Drawing" in dj and "subscribeClick" in dj and "attachPrimitive" in dj
-    for t in ("trendline", "hline", "rect", "fib", "text"):
+    for t in ("trendline", "hline", "rect", "fib", "text", "rr"):   # rr = M3 risk/reward tool
         assert 'data-tool="' + t + '"' in html, t
     for banned in ("fetch(", "WebSocket", "localStorage", "Math.log"):
         assert banned not in dj, banned
     assert 'src="drawing.js"' in html and "Drawing.init" in app
+
+
+def test_drawing_persistence_m3():
+    """M3: drawings persist across refresh AND follow the symbol. drawing.js stays a
+    pure renderer (storage-banned); ui.js owns the per-symbol localStorage; app.js
+    coordinates save-on-change + save-old/load-new on a symbol switch."""
+    dj, ui, app = _read("drawing.js"), _read("ui.js"), _read("app.js")
+    # drawing.js exposes serialize/restore + a change hook, and touches NO storage
+    for api in ("getItems", "setItems", "onChange", "changed"):
+        assert api in dj, api
+    for banned in ("localStorage", "sessionStorage", "fetch(", "WebSocket"):
+        assert banned not in dj, banned                    # persistence lives in ui.js, not here
+    # ui.js owns the per-symbol store
+    assert "__msDrawings" in ui and "ms_drawings" in ui and "localStorage" in ui
+    assert "get:" in ui and "save:" in ui                  # per-symbol get/save
+    # app.js coordinates: restore on load, save on every edit, and swap on symbol switch
+    assert "Drawing.setItems" in app and "Drawing.getItems" in app and "Drawing.onChange" in app
+    assert "__msDrawings.get" in app and "__msDrawings.save" in app
+    # the R:R tool is present + labeled (notes = the text tool, relabeled)
+    html = _read("index.html")
+    assert 'data-tool="rr"' in html and "Risk / Reward" in html
+    assert "Text / Note" in html
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")

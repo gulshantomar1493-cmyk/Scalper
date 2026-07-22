@@ -12,10 +12,13 @@
  */
 (function () {
   "use strict";
-  const COLORS = { line: "#22D3EE", rectFill: "rgba(34,211,238,0.10)", fib: "#F5C518", text: "#E7ECF5", handle: "#22D3EE", sel: "#F5C518" };
+  const COLORS = { line: "#22D3EE", rectFill: "rgba(34,211,238,0.10)", fib: "#F5C518", text: "#E7ECF5", handle: "#22D3EE", sel: "#F5C518",
+    riskFill: "rgba(239,68,68,0.13)", riskLine: "#EF4444", rewardFill: "rgba(34,197,94,0.13)", rewardLine: "#22C55E" };
   const FIBS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1];
   const HANDLE = 6;      // anchor hit/paint radius (px)
   const LINE_HIT = 6;    // line/edge hit distance (px)
+  const RR_DEFAULT = 2;  // R:R target auto-projected at 2R on placement (then draggable)
+  const fnum = (v) => Number(v).toLocaleString("en-US", { maximumFractionDigits: 2 });
 
   class DrawPrimitive {
     constructor() {
@@ -57,6 +60,22 @@
           }
           const bx = X(d.b.time), by = Y(d.b.price);
           if (bx == null || by == null) continue;
+          if (d.type === "rr") {                                 // risk/reward position tool
+            const cx = X(d.c.time), cy = Y(d.c.price);
+            if (cx == null || cy == null) continue;
+            const xL = Math.min(ax, bx), w = Math.max(Math.abs(bx - ax), 64), xR = xL + w;   // min visible width
+            ctx.fillStyle = COLORS.riskFill;   ctx.fillRect(xL, Math.min(ay, by), w, Math.abs(by - ay));   // entry -> stop
+            ctx.fillStyle = COLORS.rewardFill; ctx.fillRect(xL, Math.min(ay, cy), w, Math.abs(cy - ay));   // entry -> target
+            const hl = (yy, col) => { ctx.beginPath(); ctx.setLineDash([]); ctx.strokeStyle = col; ctx.lineWidth = 1; ctx.moveTo(xL, yy); ctx.lineTo(xR, yy); ctx.stroke(); };
+            hl(ay, COLORS.line); hl(by, COLORS.riskLine); hl(cy, COLORS.rewardLine);
+            const risk = Math.abs(d.a.price - d.b.price), rr = risk ? Math.abs(d.c.price - d.a.price) / risk : 0;
+            ctx.font = "10px ui-monospace, monospace";
+            ctx.fillStyle = COLORS.line;       ctx.fillText("Entry " + fnum(d.a.price) + "  ·  R:R " + rr.toFixed(2), xR + 4, ay - 3);
+            ctx.fillStyle = COLORS.riskLine;   ctx.fillText("Stop " + fnum(d.b.price), xR + 4, by + 11);
+            ctx.fillStyle = COLORS.rewardLine; ctx.fillText("Target " + fnum(d.c.price), xR + 4, cy - 3);
+            if (isSel) { this._handle(ctx, ax, ay); this._handle(ctx, bx, by); this._handle(ctx, cx, cy); }
+            continue;
+          }
           if (d.type === "trendline") {
             ctx.beginPath(); ctx.strokeStyle = COLORS.line; ctx.lineWidth = 1.6;
             ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
@@ -87,9 +106,10 @@
     }
   }
 
-  let chart = null, series = null, chartEl = null, prim = null, onDoneCb = null;
+  let chart = null, series = null, chartEl = null, prim = null, onDoneCb = null, onChangeCb = null;
   let tool = "none", pending = null, selected = -1, drag = null;
   const items = [];
+  function changed() { if (onChangeCb) onChangeCb(); }   // fired on every item mutation (app.js persists)
 
   // ---- coordinate helpers ----
   function toScreen(pt) { return { x: chart.timeScale().timeToCoordinate(pt.time), y: series.priceToCoordinate(pt.price) }; }
@@ -111,6 +131,14 @@
     if (d.type === "text") return (mx >= a.x - 4 && mx <= a.x + 90 && Math.abs(my - a.y) <= 12) ? "body" : null;
     if (!d.b) return null;
     const b = toScreen(d.b); if (b.x == null) return null;
+    if (d.type === "rr") {
+      const c = toScreen(d.c);
+      if (c.x != null && Math.hypot(mx - c.x, my - c.y) <= HANDLE + 3) return "c";   // target handle
+      if (c.x == null) return null;
+      const xL = Math.min(a.x, b.x), xR = Math.max(a.x, b.x);
+      const yT = Math.min(a.y, b.y, c.y), yB = Math.max(a.y, b.y, c.y);
+      return (mx >= xL - LINE_HIT && mx <= xR + LINE_HIT && my >= yT - LINE_HIT && my <= yB + LINE_HIT) ? "body" : null;
+    }
     if (d.type === "trendline" || d.type === "fib") return distToSeg(mx, my, a.x, a.y, b.x, b.y) <= LINE_HIT ? "body" : null;
     if (d.type === "rect") {
       const x0 = Math.min(a.x, b.x), x1 = Math.max(a.x, b.x), y0 = Math.min(a.y, b.y), y1 = Math.max(a.y, b.y), n = LINE_HIT;
@@ -130,14 +158,20 @@
     if (tool === "hline") { items.push({ type: "hline", a: pt }); finish(); return; }
     if (tool === "text") { const txt = window.prompt("Text label:"); if (txt) items.push({ type: "text", a: pt, text: txt }); finish(); return; }
     if (!pending) { pending = { type: tool, a: pt, b: pt }; refresh(); return; }   // 1st point -> preview
-    items.push({ type: tool, a: pending.a, b: pt }); finish();                      // 2nd point
+    if (tool === "rr") {                                                            // entry -> stop, target auto-projected at 2R
+      const target = pending.a.price + (pending.a.price - pt.price) * RR_DEFAULT;
+      items.push({ type: "rr", a: pending.a, b: pt, c: { time: pt.time, price: target } });
+    } else {
+      items.push({ type: tool, a: pending.a, b: pt });                              // 2nd point
+    }
+    finish();
   }
   function onCrosshair(param) {                       // preview: 2nd point follows the mouse
     if (!pending || !param.point || param.time == null) return;
     const price = series.coordinateToPrice(param.point.y);
     if (price != null) { pending.b = { time: param.time, price }; refresh(); }
   }
-  function finish() { pending = null; tool = "none"; selected = items.length - 1; refresh(); if (onDoneCb) onDoneCb(); }
+  function finish() { pending = null; tool = "none"; selected = items.length - 1; refresh(); changed(); if (onDoneCb) onDoneCb(); }
 
   // ---- select + drag (DOM, capture phase so a hit blocks the chart pan) ----
   function onMouseDown(e) {
@@ -156,17 +190,19 @@
     const it = items[drag.i], o = drag.orig;
     if (drag.part === "a") it.a = tp;
     else if (drag.part === "b") it.b = tp;
+    else if (drag.part === "c") it.c = tp;             // R:R target
     else if (drag.startTP) {                           // move whole shape by the drag delta
       const dT = tp.time - drag.startTP.time, dP = tp.price - drag.startTP.price;
       it.a = { time: o.a.time + dT, price: o.a.price + dP };
       if (o.b) it.b = { time: o.b.time + dT, price: o.b.price + dP };
+      if (o.c) it.c = { time: o.c.time + dT, price: o.c.price + dP };
     }
-    e.preventDefault(); refresh();
+    drag.moved = true; e.preventDefault(); refresh();
   }
-  function onMouseUp() { drag = null; }
+  function onMouseUp() { if (drag && drag.moved) changed(); drag = null; }
   function onKey(e) {
     if ((e.key === "Delete" || e.key === "Backspace") && selected >= 0 && tool === "none") {
-      items.splice(selected, 1); selected = -1; refresh();
+      items.splice(selected, 1); selected = -1; refresh(); changed();
     } else if (e.key === "Escape") { pending = null; tool = "none"; selected = -1; refresh(); if (onDoneCb) onDoneCb(); }
   }
 
@@ -181,8 +217,18 @@
     window.addEventListener("keydown", onKey);
   }
   function setTool(t) { tool = t; pending = null; selected = -1; refresh(); }
-  function clear() { items.length = 0; pending = null; selected = -1; refresh(); }
-  function undo() { items.pop(); selected = -1; refresh(); }
+  function clear() { items.length = 0; pending = null; selected = -1; refresh(); changed(); }
+  function undo() { items.pop(); selected = -1; refresh(); changed(); }
 
-  window.Drawing = { init, setTool, clear, undo, onDone: (cb) => { onDoneCb = cb; }, tool: () => tool, count: () => items.length };
+  // ---- serialize / restore (M3 persistence; storage lives in ui.js, not here) ----
+  function getItems() { return JSON.parse(JSON.stringify(items)); }   // a plain-data snapshot
+  function setItems(arr) {                                            // replace (e.g. on a symbol switch); NOT a user edit
+    items.length = 0;
+    if (Array.isArray(arr)) arr.forEach((d) => { if (d && d.type && d.a) items.push(d); });
+    pending = null; selected = -1; drag = null; refresh();
+  }
+
+  window.Drawing = { init, setTool, clear, undo, getItems, setItems,
+    onDone: (cb) => { onDoneCb = cb; }, onChange: (cb) => { onChangeCb = cb; },
+    tool: () => tool, count: () => items.length };
 })();

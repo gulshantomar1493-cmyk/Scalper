@@ -82,4 +82,23 @@
     save: function (t) { try { window.localStorage.setItem(TOKEN_KEY, t); } catch (e) {} },
     clear: function () { try { window.localStorage.removeItem(TOKEN_KEY); } catch (e) {} },
   };
+
+  // ---- drawing persistence (M3): chart annotations survive a refresh AND follow
+  //      the symbol (a BTC trendline never lingers on ETH). Kept PER-SYMBOL under
+  //      one key: { "BTCUSDT": [items], "ETHUSDT": [items] }. drawing.js is
+  //      storage-banned (pure renderer); app.js coordinates save/load through here. ----
+  var DRAW_KEY = "ms_drawings";
+  function _allDrawings() {
+    try { var a = JSON.parse(window.localStorage.getItem(DRAW_KEY) || "{}"); return (a && typeof a === "object") ? a : {}; }
+    catch (e) { return {}; }
+  }
+  window.__msDrawings = {
+    get: function (sym) { var a = _allDrawings(); return Array.isArray(a[sym]) ? a[sym] : []; },
+    save: function (sym, items) {
+      if (!sym) return;
+      var a = _allDrawings();
+      if (items && items.length) a[sym] = items; else delete a[sym];   // never store an empty list
+      try { window.localStorage.setItem(DRAW_KEY, JSON.stringify(a)); } catch (e) {}
+    },
+  };
 })();

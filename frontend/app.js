@@ -127,6 +127,10 @@ if (window.Strip) Strip.init($("context-strip"));    // M2.5 context strip (pure
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
+if (window.__msDrawings) {                           // M3: persist per-symbol (storage in ui.js)
+  Drawing.setItems(window.__msDrawings.get(activeSymbol));                              // restore on load
+  Drawing.onChange(() => window.__msDrawings.save(activeSymbol, Drawing.getItems()));   // save on every edit
+}
 
 // Crosshair OHLC readout (item 12) — reads the hovered bar from LWC, no caching.
 mainChart.subscribeCrosshairMove((param) => {
@@ -325,7 +329,11 @@ for (const b of document.querySelectorAll(".lv-tf")) {
 /* -------------------------------------------------------- symbol switcher */
 
 function setSymbol(symbol) {
+  const prev = activeSymbol;
+  // M3: drawings follow the symbol — bank the ones we're leaving, load the ones we're entering
+  if (window.__msDrawings && prev && prev !== symbol) window.__msDrawings.save(prev, Drawing.getItems());
   activeSymbol = symbol;
+  if (window.__msDrawings && prev !== symbol) Drawing.setItems(window.__msDrawings.get(symbol));
   if (window.__msSaveSym) window.__msSaveSym(symbol);   // B2: reopen here after refresh
   for (const s of SYMBOLS) {
     const el = $(`sym-${s}`);
