@@ -32,8 +32,10 @@ def window_at(ts: int, cfg: V3Config = DEFAULT) -> dict:
         win = {"ist": (0, 0), "rating": 3, "effect": "NORMAL", "label": "unmapped"}
     out = {"rating": win["rating"], "effect": win["effect"],
            "label": win["label"], "ist_time": ist.strftime("%H:%M"),
+           "min_grade": win.get("min_grade"),
            "sunday": ist.weekday() == 6}
     if out["sunday"] and out["effect"] not in ("BLOCK",):
         out = {**out, "effect": cfg.sunday_effect,
+               "min_grade": cfg.sunday_min_grade,
                "label": out["label"] + " · SUNDAY (erratic structure)"}
     return out

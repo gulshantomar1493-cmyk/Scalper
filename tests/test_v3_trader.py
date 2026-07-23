@@ -73,8 +73,10 @@ def run(m, reads, bars, cfg=CFG):
 
 def test_rejection_wick_triggers_long_setup():
     z = zone(95.0, 96.0)
-    # approach from above, spear the zone, reject back out (long lower wick)
-    bars = bars_path([100, 99, 98, 97])
+    # approach from above, spear the zone, reject back out (long lower wick).
+    # Tokyo NORMAL window: plain candle confirmations issue here (in BOOST
+    # windows they additionally need a sweep/CHOCH — tested separately).
+    bars = bars_path([100, 99, 98, 97], t0=ist_ts(6))
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 97.0, "h": 97.2,
                  "l": 94.6, "c": 96.6})                 # rejection bar
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.6, "h": 97.4,
@@ -83,12 +85,12 @@ def test_rejection_wick_triggers_long_setup():
     assert out["setups"], out
     s = out["setups"][0]
     assert s["direction"] == "LONG" and s["state"] == "TRIGGERED"
-    assert s["entry"] == 95.5                            # zone 50%
+    assert s["entry"] == 96.0                            # zone EDGE (the retest fill)
     assert s["sl"] < 94.6                                # beyond the wick + pad
     assert s["tp1"] == 106.0 and s["rr"] >= CFG.min_rr_net
     assert s["confluences"] >= 2 and "of 7" in s["grade_reason"]
     assert s["reasons_to_avoid"]                         # honesty always present
-    assert "session" in s and s["session"]["rating"] == 6
+    assert "session" in s and s["session"]["rating"] == 4
 
 
 def test_watching_and_armed_states():
@@ -119,7 +121,7 @@ def test_choch_confirmation_path():
 
 def test_short_mirror_at_supply():
     z = zone(104.0, 105.0, kinds=("SUPPLY",), side="ABOVE", zid="map:1")
-    bars = bars_path([100, 102, 103.5])
+    bars = bars_path([100, 102, 103.5], t0=ist_ts(6))
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 103.5, "h": 105.4,
                  "l": 103.3, "c": 103.6})               # upper-wick rejection
     pool_dn = {"kind": "PDL", "price": 94.0, "priority": 5, "side": "SELLSIDE",
@@ -146,7 +148,7 @@ def test_rr_floor_blocks_thin_geometry():
     z = zone(95.0, 96.0)
     near_pool = {"kind": "EQH", "price": 96.6, "priority": 4, "side": "BUYSIDE",
                  "tf": "5m", "session": None}
-    bars = bars_path([100, 98, 96.5])
+    bars = bars_path([100, 98, 96.5], t0=ist_ts(6))
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.5, "h": 96.7,
                  "l": 94.6, "c": 96.6})
     out = run(mk_map([z], above=[near_pool]), {"5m": r5()}, bars)
@@ -165,27 +167,62 @@ def test_block_window_suppresses_setups():
 
 
 def test_lunch_window_downgrades_grade():
+    # an A+ (5 factors: aligned + 3-TF stack + trendline + FRESH + CHOCH) at
+    # 12:00 IST lunch is downgraded to A; a plain A there is dropped entirely
     z = zone(95.0, 96.0, stack=3, weight=4.0,
              kinds=("DEMAND", "ORDER_BLOCK", "TRENDLINE"),
              states=("FRESH", "FRESH", "FRESH"))
     t0 = ist_ts(12)                                    # 12:00 IST lunch chop
-    bars = bars_path([100, 98, 96.5], t0=t0)
-    bars.append({"ts": t0 + 3 * 300, "o": 96.5, "h": 96.7, "l": 94.6, "c": 96.6})
-    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars)
+    bars = bars_path([100, 98, 96.5, 95.5, 95.6, 95.55, 95.7], t0=t0)
+    choch_ts = bars[6]["ts"]
+    reads = {"5m": r5(events=[{"kind": "CHOCH", "direction": "UP",
+                               "ts": choch_ts, "displaced": False}])}
+    out = run(mk_map([z], above=[POOL_UP]), reads, bars)
     assert out["setups"]
     s = out["setups"][0]
-    assert s["grade"] in ("A", "B")                     # downgraded from A+/A
+    assert s["grade"] == "A"                            # A+ downgraded, never B
     assert any("session" in a.lower() for a in s["reasons_to_avoid"])
+    # a 3-factor A in the same window is not issued at all
+    z2 = zone(95.0, 96.0)
+    out2 = run(mk_map([z2], above=[POOL_UP]), reads, bars)
+    assert all(x["grade"] != "B" for x in out2["setups"])
 
 
-def test_boost_window_counts_as_confluence():
+def test_boost_window_counts_with_choch_fuel_only():
+    # trend sessions reward CHOCH/sweep reversals — a CHOCH-confirmed setup in
+    # the 20:00 IST overlap gets the session as a confluence
     z = zone(95.0, 96.0, stack=1, weight=1.0, kinds=("SR",))
-    bars = bars_path([100, 98, 96.5])                  # 20:00 IST overlap
+    bars = bars_path([100, 98, 96.5, 95.5, 95.6, 95.55, 95.7])   # stays in zone
+    choch_ts = bars[6]["ts"]
+    reads = {"5m": r5(events=[{"kind": "CHOCH", "direction": "UP",
+                               "ts": choch_ts, "displaced": False}])}
+    out = run(mk_map([z], above=[POOL_UP]), reads, bars)
+    assert out["setups"]
+    assert any("session" in f for f in out["setups"][0]["reasons"])
+
+
+def test_plain_fade_in_boost_window_not_boosted_and_floored():
+    # the same zone with only a plain rejection (no fuel, no CHOCH): session is
+    # NOT a confluence and 2 factors < the 3-factor floor → not issued
+    z = zone(95.0, 96.0, stack=1, weight=1.0, kinds=("SR",))
+    bars = bars_path([100, 98, 96.5])
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.5, "h": 96.7,
                  "l": 94.6, "c": 96.6})
     out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars)
-    assert out["setups"]
-    assert any("session" in f for f in out["setups"][0]["reasons"])
+    assert not out["setups"]
+    assert any("trend session" in w["trigger_hint"] or "floor" in w["trigger_hint"]
+               for w in out["watching"])
+
+
+def test_counter_trend_wick_without_fuel_skipped():
+    z = zone(95.0, 96.0)
+    bars = bars_path([100, 99, 98, 97])
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 97.0, "h": 97.2,
+                 "l": 94.6, "c": 96.6})                 # rejection wick
+    out = run(mk_map([z], above=[POOL_UP]),
+              {"5m": r5(trend="BEARISH")}, bars)        # 5m trend AGAINST the long
+    assert not out["setups"]
+    assert any("counter-trend" in w["trigger_hint"] for w in out["watching"])
 
 
 # ------------------------------------------------------------------ session

@@ -198,7 +198,35 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
 
         # ---- build the setup ----
         fuel = _sweep_fuel(zone, reads, last["ts"], atr, cfg)
-        entry = round((zone["lo"] + zone["hi"]) / 2.0, 2)
+        # counter-trend guard (replay-validated): candle patterns AGAINST the 5m
+        # trend, with no sweep fuel and no CHOCH, are noise — a trader skips them
+        t5 = r5.get("trend")
+        opposing = (direction == _LONG and t5 == "BEARISH") or \
+                   (direction == _SHORT and t5 == "BULLISH")
+        structural = fuel is not None or conf.kind == "5m CHOCH"
+        if cfg.counter_trend_needs_fuel and opposing and not structural:
+            watching.append({
+                "zone_id": zone["id"], "state": "ARMED", "direction": direction,
+                "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                "weight": zone["weight"], "explain": zone["explain"],
+                "trigger_hint": f"counter-trend {direction.lower()} without sweep "
+                                f"fuel — needs a CHOCH or a liquidity raid first"})
+            continue
+        # trend-session guard (replay-validated: London open 8% / peak 0% win on
+        # plain fades): in BOOST windows a reversal must be structural too
+        if cfg.boost_needs_fuel and session["effect"] == "BOOST" and not structural:
+            watching.append({
+                "zone_id": zone["id"], "state": "ARMED", "direction": direction,
+                "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                "weight": zone["weight"], "explain": zone["explain"],
+                "trigger_hint": "trend session — a fade here needs a sweep or a "
+                                "CHOCH, not just a candle pattern"})
+            continue
+        # entry at the zone EDGE (the retest a trader actually gets filled on)
+        if cfg.entry_at_edge:
+            entry = round(zone["hi"] if direction == _LONG else zone["lo"], 2)
+        else:
+            entry = round((zone["lo"] + zone["hi"]) / 2.0, 2)
         if direction == _LONG:
             wick_lo = min(b["l"] for b in bars[touch_i:bars.index(conf.bar) + 1])
             sl = round(min(zone["lo"], wick_lo) - cfg.sl_pad_atr * atr, 2)
@@ -235,23 +263,40 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
             factors.append("FRESH zone component (first return)")
         if conf.displaced or conf.kind == "5m CHOCH":
             factors.append(f"clean confirmation — {conf.kind}")
-        if session["effect"] == "BOOST":
+        if session["effect"] == "BOOST" and \
+                (not cfg.boost_needs_fuel or fuel is not None
+                 or conf.kind == "5m CHOCH"):
+            # trend sessions reward SWEEP/CHOCH reversals; a plain fade into
+            # London momentum is not a confluence (replay-validated)
             factors.append(f"session: {session['label']}")
         n = len(factors)
 
-        # ---- session gates ----
+        # ---- session gates + issuance floor ----
         if session["effect"] == "BLOCK":
             continue
-        grade = "A+" if n >= cfg.grade_a_plus else \
-                "A" if n >= cfg.grade_a else \
-                "B" if n >= cfg.grade_b else None
-        if grade is None:
+        if n < cfg.min_issue_confluences:      # replay-validated: <3 factors lost
+            watching.append({
+                "zone_id": zone["id"], "state": "ARMED", "direction": direction,
+                "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                "weight": zone["weight"], "explain": zone["explain"],
+                "trigger_hint": f"confirmed but only {n} of 7 confluences — "
+                                f"below the {cfg.min_issue_confluences}-factor floor"})
             continue
+        grade = "A+" if n >= cfg.grade_a_plus else \
+                "A" if n >= cfg.grade_a else "B"
         if session["effect"] == "WARN_DOWNGRADE":
-            grade = {"A+": "A", "A": "B", "B": None}[grade]
+            # replay-validated: downgraded-to-B issuance lost 100% — A+ becomes
+            # A here; a plain A in a chop window is simply not taken
+            grade = {"A+": "A", "A": None}.get(grade)
             if grade is None:
                 continue
-        if session["effect"] == "STRONG_ONLY" and grade == "B":
+        if session.get("min_grade") == "A+" and grade != "A+":
+            watching.append({
+                "zone_id": zone["id"], "state": "ARMED", "direction": direction,
+                "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                "weight": zone["weight"], "explain": zone["explain"],
+                "trigger_hint": f"{session['label']}: reversals need A+ here — "
+                                f"this one graded {grade}"})
             continue
 
         # ---- honesty: the bear case ----

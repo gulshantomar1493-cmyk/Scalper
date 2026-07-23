@@ -80,7 +80,16 @@ class V3Config:
     rejection_wick_frac: float = 0.60  # wick ≥60% of bar range = rejection
     grade_a_plus: int = 5              # confluence counts (of 7)
     grade_a: int = 3
-    grade_b: int = 2                   # below → not issued
+    grade_b: int = 2                   # label threshold
+    min_issue_confluences: int = 3     # replay-validated: B-grade issuance lost;
+                                       # only A/A+ (≥3 factors) get issued
+    # replay-validated trader rules (P4 false-positive reduction):
+    entry_at_edge: bool = True         # enter the zone EDGE (retest), not the mid
+                                       # (mid entries expired 43% of the time)
+    counter_trend_needs_fuel: bool = True   # a rejection wick AGAINST the 5m trend
+                                            # without sweep fuel = noise, skip
+    boost_needs_fuel: bool = True      # trend sessions (London/NY) reward SWEEP
+                                       # reversals; plain fades there lost 94-97%
     max_watching_out: int = 6
     max_setups_out: int = 3
 
@@ -99,9 +108,12 @@ class V3Config:
          "label": "11:30-13:30 Asian lunch chop"},
         {"ist": (810, 870),  "rating": 4, "effect": "NORMAL",
          "label": "13:30-14:30 pre-London"},
-        {"ist": (870, 1050), "rating": 5, "effect": "BOOST",
+        # replay-validated: London open/peak are TREND sessions — hostile to
+        # mean-reversion (8-12% win on fades even with fuel). Reversals here
+        # must be A+; the BOOST still counts as a confluence when structural.
+        {"ist": (870, 1050), "rating": 5, "effect": "BOOST", "min_grade": "A+",
          "label": "14:30-17:30 London open"},
-        {"ist": (1050, 1170), "rating": 5, "effect": "BOOST",
+        {"ist": (1050, 1170), "rating": 5, "effect": "BOOST", "min_grade": "A+",
          "label": "17:30-19:30 London peak"},
         {"ist": (1170, 1350), "rating": 6, "effect": "BOOST",
          "label": "19:30-22:30 London+NY overlap (best)"},
@@ -113,6 +125,13 @@ class V3Config:
          "label": "02:00-03:30 US wind-down"},
     )
     sunday_effect: str = "WARN_DOWNGRADE"   # erratic weekend structure
+    sunday_min_grade: str = "A+"           # replay-validated: Sunday fades lost
+
+    # ---- replay / validation (P4) --------------------------------------
+    replay_step_bars: int = 3          # trader pass every N 5m bars (15 min)
+    replay_entry_window_bars: int = 24 # limit at zone-mid must fill within 2h
+    replay_horizon_bars: int = 288     # 24h max hold, then mark-to-market
+    replay_missed_rr: float = 2.0      # ARMED-but-unissued zone that ran ≥2R = missed
 
     # ---- rendering caps (payload size) --------------------------------
     max_swings_out: int = 40
