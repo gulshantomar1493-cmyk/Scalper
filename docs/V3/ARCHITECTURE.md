@@ -27,6 +27,25 @@ multi-TF zones**. V3 inverts this: map the chart first, then wait at the zones.
 
 ---
 
+## 0b. Philosophy (bold, engine-wide)
+
+**MarketScalper never predicts. It observes. It maps. It waits. It reacts.
+It recommends.**
+
+`Observe → Understand → Wait → Confirm → Recommend → Manage → Learn`
+(never `Detect → Score → Recommend`).
+
+The core is a **domain-object state machine**, not a re-scanner: Swings,
+Structure, Trendlines, Zones, LiquidityPools, MapZones, Memory and Setups are
+long-lived objects that FOLD each closed candle into their state. Every object
+keeps an append-only `history[]` (why created / why active / why changed /
+why used / why ignored) — see `docs/V3/DOMAIN-MODEL.md` (the object contract;
+code mirrors it 1:1, designed BEFORE implementation per owner condition).
+
+Setup lifecycle runs end-to-end so journal + replay are automatic:
+`WATCHING → ARMED → TRIGGERED → LIVE → TP1_HIT → TP2_HIT → CLOSED → ARCHIVED`
+(aborts: CANCELLED / EXPIRED / STOPPED → ARCHIVED).
+
 ## 1. What V3 is
 
 A **virtual professional crypto-futures trader**: it reads every timeframe the
@@ -293,6 +312,9 @@ append-only DB.
 
 ## 8. Roadmap (each phase: design→implement→test→regression→perf→docs→commit→STOP)
 
+- **P1.0 — Domain model first (owner condition).** `docs/V3/DOMAIN-MODEL.md`
+  is the contract: objects, states, transitions, relationships, history/explain.
+  Code mirrors it 1:1; any model change is a doc change first.
 - **P1 — Chart Read Engine.** L1 for 5m/15m/1h/4h/1d + `/api/v3/analysis` +
   frontend per-TF rendering of trendlines/zones/liquidity. Old overlays off.
   Gate: visually correct on real BTC/ETH charts across TFs (owner review).
@@ -314,6 +336,10 @@ append-only DB.
   false negatives) and **false trades** (issued setups that hit SL without ever
   reaching +1R — false positives), each with the chart context saved for review.
   Edge cases, perf (<300ms per refresh), stress.
+  **Top KPI — Engine vs Professional Trader:** owner marks the valid setups on
+  N historical charts; replay runs the same charts → `coverage = engine-found /
+  trader-marked` + precision (engine extras the trader rejects). Target ≥90%
+  coverage at acceptable precision.
   Gate: owner reviews the validation report — objective numbers, not vibes.
 - **P5 — Production cutover.** v3 default, old engine code + dead endpoints
   removed, docs final, deploy, prod verify, monitor.
