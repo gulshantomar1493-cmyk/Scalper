@@ -1345,3 +1345,32 @@ async def test_api_v3_analysis_503_when_not_configured():
                 assert r.status == 503
     finally:
         await _stop(server, task)
+
+
+async def test_api_v3_map_route_and_shape():
+    class _FakeV3Map(_FakeV3):
+        async def map(self, symbol):
+            return {"symbol": symbol, "ready": True, "price": 100.0,
+                    "bias": {"per_tf": {"1h": "BULLISH"}, "overall": "BULLISH"},
+                    "zones": [], "decision_points": [],
+                    "liquidity": {"above": [], "below": [], "draw_above": None,
+                                  "draw_below": None, "swept_recent": []},
+                    "memory": {"day_profile": {}, "session_model": {},
+                               "weekly": {}, "sweep_history": [],
+                               "zone_history": []}}
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN, v3_service=_FakeV3Map())
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/v3/map",
+                             params={"symbol": "BTCUSDT"}) as r:
+                assert r.status == 401
+            async with s.get(f"http://{addr}/api/v3/map",
+                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+    finally:
+        await _stop(server, task)
+    for key in ("bias", "zones", "decision_points", "liquidity", "memory"):
+        assert key in body

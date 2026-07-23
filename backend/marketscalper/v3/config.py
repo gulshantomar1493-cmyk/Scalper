@@ -40,6 +40,7 @@ class V3Config:
 
     # ---- liquidity -----------------------------------------------------
     eq_pool_atr: float = 0.10          # equal highs/lows within 0.10×ATR
+    sweep_resolve_bars: int = 6        # post-sweep outcome judged N bars later
     pool_priorities: dict = field(default_factory=lambda: {
         "PWH": 5, "PWL": 5, "PDH": 5, "PDL": 5,
         "EQH": 4, "EQL": 4,
@@ -57,6 +58,17 @@ class V3Config:
 
     # ---- premium / discount -------------------------------------------
     range_swings: int = 20             # dealing range from the last N swings
+
+    # ---- market map (L2) ----------------------------------------------
+    map_merge_atr: float = 0.30        # zones merge if gap ≤ 0.3×ATR(higher tf)
+    map_max_width_atr: float = 1.5     # a merged map-zone never exceeds 1.5×ATR(higher tf)
+    map_fresh_bonus: float = 0.5       # FRESH component adds to map-zone weight
+    map_max_zones: int = 14            # decision points kept per symbol
+    map_max_targets: int = 6           # liquidity targets kept per side
+    bias_weights: dict = field(default_factory=lambda: {
+        "1d": 4.0, "4h": 3.0, "1h": 2.0, "15m": 1.0})   # structure-only vote
+    bias_min_share: float = 0.4        # winner needs ≥40% of total vote weight
+    bias_min_margin: float = 0.3       # AND a ≥30%-of-total margin (else NEUTRAL)
 
     # ---- rendering caps (payload size) --------------------------------
     max_swings_out: int = 40

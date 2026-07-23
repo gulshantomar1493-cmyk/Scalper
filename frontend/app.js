@@ -349,6 +349,7 @@ function setSymbol(symbol) {
   renderSetups();                  // show cached setups for the new symbol, then refresh
   loadSetups();
   loadV3();                        // V3: the new symbol's read for the active TF
+  loadMap();                       // V3: the new symbol's market map
   loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
@@ -1040,11 +1041,28 @@ async function loadV3() {
   } catch (e) { /* transient — next poll retries */ }
 }
 setInterval(loadV3, V3_POLL_MS);
-// M2.5 context strip — the market conversation Q1..Q5, straight from the two frozen
-// caches (/api/htf + /api/setups). Re-rendered whenever either source updates.
+// Context strip — Q1..Q5. V3 Market Map when available (P2), else the old
+// HTF/setups caches. Re-rendered whenever any source updates.
 function renderStrip() {
-  if (window.Strip) Strip.render(lastHtf[activeSymbol] || null, activeSetup());
+  if (!window.Strip) return;
+  const map = lastMap[activeSymbol];
+  if (map && map.ready && Strip.renderMap) Strip.renderMap(map, activeSetup());
+  else Strip.render(lastHtf[activeSymbol] || null, activeSetup());
 }
+
+// ---- V3 L2 Market Map (bias ladder · stacked zones · liquidity targets · memory)
+const MAP_POLL_MS = 45000;
+let lastMap = {};
+async function loadMap() {
+  if (replayMode) return;
+  try {
+    const data = await api(`/api/v3/map?symbol=${encodeURIComponent(activeSymbol)}`,
+                           { method: "GET" });
+    lastMap[data.symbol] = data;
+    if (data.symbol === activeSymbol) renderStrip();
+  } catch (e) { /* transient — next poll retries */ }
+}
+setInterval(loadMap, MAP_POLL_MS);
 async function loadHtf() {
   if (!window.Htf) return;
   try {
@@ -1356,6 +1374,7 @@ function boot() {
   loadHtf();          // HTF V1.1 panel (then polled every HTF_POLL_MS)
   loadSetups();       // Trade Setup V2 panel (then polled every SETUPS_POLL_MS)
   loadV3();           // V3 chart read for the active TF (then polled)
+  loadMap();          // V3 market map (strip + memory; then polled)
 }
 function resetToLogin() {
   if (window.__msToken) window.__msToken.clear();

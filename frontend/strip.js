@@ -127,5 +127,60 @@
     root.appendChild(setupTile(setup));
   }
 
-  window.Strip = { init: init, render: render };
+  /* ---- V3 Market Map mode (P2): the same five questions, answered from
+     GET /api/v3/map (bias ladder · liquidity targets · memory). Backend values
+     only — no derivation here. ---- */
+  function v3TrendTile(setup, map) {
+    var raw = setup ? setup.ltf_trend : null;
+    if (raw == null) {
+      var per = (map.bias || {}).per_tf || {};
+      raw = per["5m"] || per["15m"] || per["1h"] || null;
+    }
+    var m = { BULLISH: ["▲", "Uptrend", "up"], BEARISH: ["▼", "Downtrend", "down"],
+              RANGE: ["◆", "Range", "neu"] };
+    var v = m[raw] || ["·", "—", "dim"];
+    return tile("1", "TREND", v[0], v[1], v[2]);
+  }
+  function v3ControlTile(map) {
+    var o = (map.bias || {}).overall;
+    var who = { BULLISH: "Buyers", BEARISH: "Sellers" }[o] || "Balanced";
+    var cls = { BULLISH: "up", BEARISH: "down" }[o] || "neu";
+    return tile("2", "CONTROL", "●", who, cls);
+  }
+  function v3LiquidityTile(map) {
+    var liq = map.liquidity || {};
+    var sw = (liq.swept_recent || [])[0];
+    if (sw) {
+      var isHigh = sw.side === "BUYSIDE";
+      return tile("3", "LIQUIDITY", "◎", (isHigh ? "BSL" : "SSL") + " Swept",
+                  isHigh ? "down" : "up");
+    }
+    var d = liq.draw_above || liq.draw_below;
+    if (d) return tile("3", "LIQUIDITY", "◇", d.kind + " Resting", "neu");
+    return tile("3", "LIQUIDITY", "·", "—", "dim");
+  }
+  function v3DrawTile(setup, map) {
+    if (setup && setup.tp1 != null) {
+      var up = setup.direction === "LONG";
+      return tile("4", "DRAW", up ? "↑" : "↓", fmt(setup.tp1), up ? "up" : "down");
+    }
+    var o = (map.bias || {}).overall, liq = map.liquidity || {};
+    if (o === "BULLISH" && liq.draw_above)
+      return tile("4", "DRAW", "↑", fmt(liq.draw_above.price), "up");
+    if (o === "BEARISH" && liq.draw_below)
+      return tile("4", "DRAW", "↓", fmt(liq.draw_below.price), "down");
+    return tile("4", "DRAW", "·", "—", "dim");
+  }
+  function renderMap(map, setup) {
+    if (!root) return;
+    if (!map || !map.ready) { render(null, setup); return; }
+    root.textContent = "";
+    root.appendChild(v3TrendTile(setup, map));
+    root.appendChild(v3ControlTile(map));
+    root.appendChild(v3LiquidityTile(map));
+    root.appendChild(v3DrawTile(setup, map));
+    root.appendChild(setupTile(setup));
+  }
+
+  window.Strip = { init: init, render: render, renderMap: renderMap };
 })();

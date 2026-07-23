@@ -281,13 +281,23 @@ class ChartReadEngine:
                     elif z.state == d.FRESH:
                         z._transition(ts, d.TESTED, f"first touch ({reaction})")
 
-            # -- liquidity swept fold -----------------------------------
+            # -- liquidity swept fold + post-sweep resolution -----------
             for p in pools:
                 if p.state == d.UNSWEPT and p.created_at < ts:
                     if (p.side == d.BUYSIDE and h > p.price) or \
                        (p.side == d.SELLSIDE and lo < p.price):
                         p.swept_at = ts
+                        p._sweep_idx = i
                         p._transition(ts, d.SWEPT, f"wick through {p.price}")
+                elif p.state == d.SWEPT and p.post_sweep == "PENDING" and \
+                        getattr(p, "_sweep_idx", None) is not None and \
+                        (i - p._sweep_idx) >= cfg.sweep_resolve_bars:
+                    # judged N bars later: did the raid reverse or continue?
+                    if p.side == d.BUYSIDE:
+                        p.post_sweep = "REVERSED" if c < p.price else "CONTINUED"
+                    else:
+                        p.post_sweep = "REVERSED" if c > p.price else "CONTINUED"
+                    p._log(ts, "post_sweep", p.post_sweep)
 
         # ---- post-pass: trendlines + premium/discount ------------------
         trendlines = self._trendlines(C, swings, atr_series)
@@ -541,6 +551,7 @@ class ChartReadEngine:
             "symbol": self.symbol,
             "tf": self.tf,
             "asof_ts": C[-1]["ts"] if C else None,
+            "last_close": C[-1]["c"] if C else None,
             "bars": n,
             "atr": atr_series[-1] if atr_series else None,
             "trend": structure.trend,
@@ -575,7 +586,8 @@ class ChartReadEngine:
             "liquidity": sorted([{
                 "id": p.id, "kind": p.kind, "price": p.price, "side": p.side,
                 "priority": p.priority, "state": p.state,
-                "swept_at": p.swept_at, "session": p.session,
+                "swept_at": p.swept_at, "post_sweep": p.post_sweep,
+                "session": p.session,
                 "history": _hist(p),
             } for p in pools[-cfg.max_pools_out * 2:]],
                 key=lambda x: (-x["priority"], x["price"]))[:cfg.max_pools_out],

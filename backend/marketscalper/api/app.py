@@ -459,6 +459,14 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
+    # L2 Market Map + L3 Market Memory: the merged multi-TF battlefield (stacked
+    # zones, bias ladder, liquidity targets, memory). Same isolation as above.
+    @app.get("/api/v3/map", dependencies=[Depends(require_token)])
+    async def api_v3_map(symbol: str) -> dict:
+        if v3_service is None:
+            raise HTTPException(status_code=503, detail="v3 service not configured")
+        return await v3_service.map(symbol)
+
     # ------------------------------------------------------ HTF (V1.1)
     # Higher-timeframe intelligence: 15m/1h/4h/1d SMC analysis + overall
     # bias/confidence/market-story. ADDITIVE and ISOLATED (like /api/chart) —

@@ -1117,6 +1117,20 @@ def test_structure_toggle_htf_context_and_drawing_wired():
     assert 'src="drawing.js"' in html and "Drawing.init" in app
 
 
+def test_v3_map_strip_and_wiring():
+    """V3 P2: the strip can render from GET /api/v3/map (bias ladder, liquidity
+    targets, memory) — backend values only; app.js owns the fetch + fallback to
+    the old HTF path when the map isn't available."""
+    sj = _read("strip.js")
+    assert "renderMap" in sj and "draw_above" in sj and "swept_recent" in sj
+    for banned in ("fetch(", "WebSocket", "localStorage", ".reduce(", "aggregate"):
+        assert banned not in sj, banned                       # still pure
+    app = _read("app.js")
+    assert "/api/v3/map" in app and "loadMap" in app and "lastMap" in app
+    assert "Strip.renderMap(map, activeSetup())" in app       # map preferred
+    assert app.count("loadMap()") >= 2                        # init + symbol switch
+
+
 def test_v3_overlay_pure_and_wired():
     """V3 P1: the per-TF chart read overlay. v3overlay.js is a pure renderer
     (app.js owns the /api/v3/analysis fetch); it draws zones (with lifecycle
