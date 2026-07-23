@@ -36,7 +36,7 @@ to reach those places, confirms with price action, and only then issues a
 complete setup — sized by session quality (IST timing guide). Decision-support
 only; never executes.
 
-Pipeline (5 layers):
+Pipeline (6 layers):
 
 ```
 candles (ChartService, all TFs)
@@ -48,13 +48,16 @@ L1  CHART READ  — per TF: swings → structure → trendlines → zones → li
 L2  MARKET MAP  — merge TFs: stacked zones, liquidity targets, bias per TF + overall
    │
    ▼
-L3  VIRTUAL TRADER — watch price vs map: WATCHING → ARMED → TRIGGERED setups
-   │                 (reversal / breakout / breakdown), entry/SL/TP/RR/grade
-   ▼
-L4  SESSION TIMING — IST windows (owner's guide) modify grade / block dead zones
+L3  MARKET MEMORY — yesterday/session/weekly context, zone & sweep history
    │
    ▼
-L5  DELIVERY — /api/v3/* + chart overlays per active TF + setup card + paper
+L4  VIRTUAL TRADER — watch price vs map: WATCHING → ARMED → TRIGGERED setups
+   │                 (reversal / breakout / breakdown), entry/SL/TP/RR/grade
+   ▼
+L5  SESSION TIMING — IST windows (owner's guide) modify grade / block dead zones
+   │
+   ▼
+L6  DELIVERY — /api/v3/* + chart overlays per active TF + setup card + paper
 ```
 
 ---
@@ -89,8 +92,51 @@ Per TF, in order:
 6. **Premium/Discount** — equilibrium of the active TF range; longs only from
    discount, shorts only from premium (for reversal setups).
 
+### Zone lifecycle (every zone carries a state)
+
+```
+FRESH ──1st touch──▶ TESTED ──more touches──▶ WEAK ──close through──▶ BROKEN ──▶ RETIRED
+                                                            │
+                                                            ▼
+                                                       ROLE-FLIP (broken demand → supply,
+                                                       broken supply → demand; one flip only)
+```
+- FRESH (0 touches) = strongest reaction odds; every test consumes resting orders.
+- Touch counting: 1st retest tradeable · 2nd caution · 3rd+ = WEAK (likely to break).
+- BROKEN = decisive close through + displacement; the flipped zone starts FRESH
+  on the other side. RETIRED zones (old/violated/max-age per TF) leave the map —
+  old zones never linger forever.
+
+### Trendline lifecycle
+
+```
+NEW (2 touches) ──3rd touch──▶ VALID ──respected repeatedly──▶ STRONG
+VALID/STRONG ──touch violated (wick-through, closes back)──▶ WEAK
+WEAK/any ──decisive close through──▶ BROKEN ──▶ role-flip candidate (support⇄resistance) ──▶ INVALID (retired)
+```
+Only VALID/STRONG lines produce zones and setups; WEAK lines only warn; BROKEN
+lines flip once, then retire.
+
+### Liquidity priority (every pool ranked — targets & sweeps are not equal)
+
+| Pool | Priority |
+|---|---|
+| PWH / PWL (weekly extremes) | ★★★★★ |
+| PDH / PDL (previous day) | ★★★★★ |
+| Equal highs / equal lows (clean double/triple) | ★★★★ |
+| Session high / low (Asia · London · NY) | ★★★ |
+| Internal range high / low | ★★ |
+| Minor swing stops | ★ |
+
+- TP selection prefers the highest-priority unswept pool in the trade direction.
+- A sweep of a ★★★★+ pool into a zone = premium reversal fuel (strong confluence);
+  a sweep of a ★ pool counts little.
+- SWEPT pools are devalued as targets (stops already taken) and marked with
+  sweep time + what price did after (feeds Market Memory).
+
 Output contract per TF: `TfRead { trend, swings[], structure_events[],
-trendlines[], channels[], zones[], liquidity[], equilibrium, atr }`.
+trendlines[] (with state), channels[], zones[] (with lifecycle state + touches),
+liquidity[] (with priority + swept info), equilibrium, atr }`.
 
 **Chart rendering (owner requirement):** `GET /api/v3/analysis?symbol&tf`
 returns that TF's `TfRead`; the frontend draws that TF's own trendlines +
@@ -115,7 +161,28 @@ One object per symbol, rebuilt whenever any TF read updates:
 
 ---
 
-## 4. L3 — Virtual Trader (setup generation)
+## 3b. L3 — Market Memory (context beyond the current candle)
+
+Rolling, persisted context the trader "remembers" (per symbol):
+
+- **Day profile** — yesterday's OHLC, range, direction, which session drove it;
+  today's running Asia/London/NY session H/L + ranges.
+- **Session model tracking** — the classic daily sequence (Asia range →
+  London sweep of Asia H/L → NY trend). Memory flags e.g. "Asia low already
+  swept in London" — which side's fuel is spent, which side is still the draw.
+- **Weekly / monthly frame** — PWH/PWL, prior-month H/L, week-open/month-open
+  levels; where today sits inside the weekly range.
+- **Zone history** — which map-zones held vs failed recently (a demand that
+  produced a strong bounce yesterday ranks above one that barely reacted).
+- **Sweep outcomes** — last N sweeps per pool class: did they reverse or
+  continue? (e.g. "PDH sweeps this week all continued" tempers reversal bets).
+
+Memory adjusts WEIGHTS/context only — it never invents a setup. It is the
+foundation layer for future V4/V5 statistical learning.
+
+---
+
+## 4. L4 — Virtual Trader (setup generation)
 
 A state machine per (symbol, map-zone). No rare-event dependence — zones are
 always there; the trader is always watching.
@@ -155,17 +222,27 @@ Every `TradeSetup`:
 grade, grade_reason, confluences[], avoid_reasons[], invalidation,
 management[], session_window, tf_stack, state, created_ts }`
 
-**Grade = confluence count (never a %):**
-counted from: HTF bias aligned · zone stack ≥2 TFs · liquidity swept into zone ·
-trendline confluence · fresh (untested) zone · clean confirmation displacement ·
-session window ≥4⭐. A+ ≥5 · A ≥3 · B ≥2 (below 2 → not issued).
+**Grade = a CONFLUENCE GRAPH, never a % and never an opaque score.**
+The setup carries the actual named factors that agree:
+
+```
+4h demand (FRESH)  +  1h trendline  +  PDH sweep ★★★★★  +  1m CHOCH  +  HTF bullish  +  session ⭐⭐⭐⭐⭐
+                                            = LONG · confluence 6/7
+```
+
+Counted factors (each named in the setup): HTF bias aligned · zone stack ≥2 TFs ·
+high-priority liquidity swept into zone (★★★★+) · trendline confluence ·
+FRESH zone · clean displacement confirmation · session window ≥4⭐.
+**A+ ≥5 · A ≥3 · B ≥2** (below 2 → not issued). Displayed as `confluence N/7`
+with the list — the word "confidence" and any percentage are banned from the
+engine and the UI.
 
 **Honesty rules (kept from V2):** avoid_reasons always populated; "No Setup"
 is a valid, common answer; every number traceable to a rule; no probabilities.
 
 ---
 
-## 5. L4 — Session Timing Engine (owner's IST guide, verbatim)
+## 5. L5 — Session Timing Engine (owner's IST guide, verbatim)
 
 Windows (IST) with rating → effect on the trader:
 
@@ -189,7 +266,7 @@ Session high/low of ASIA (05:30–13:30 IST), LONDON (14:30–19:30), NY
 
 ---
 
-## 6. L5 — Delivery
+## 6. L6 — Delivery
 
 - `GET /api/v3/analysis?symbol&tf` → the TF's `TfRead` (chart draws it; redraw
   on TF switch).
@@ -219,16 +296,25 @@ append-only DB.
 - **P1 — Chart Read Engine.** L1 for 5m/15m/1h/4h/1d + `/api/v3/analysis` +
   frontend per-TF rendering of trendlines/zones/liquidity. Old overlays off.
   Gate: visually correct on real BTC/ETH charts across TFs (owner review).
-- **P2 — Market Map.** Zone stacking, bias ladder, liquidity targets,
-  `/api/v3/map` + map summary in UI (strip rewired to v3).
-  Gate: map matches what a trader would mark on the same chart.
+- **P2 — Market Map + Market Memory.** Zone stacking, bias ladder, liquidity
+  targets, `/api/v3/map` + map summary in UI (strip rewired to v3); the Memory
+  layer (day profile, session model, weekly frame, zone & sweep history).
+  Gate: map + memory match what a trader would mark on the same chart.
 - **P3 — Virtual Trader + Session Timing.** State machine, 3 archetypes,
   grading, `/api/v3/setups`, setup card + watchlist UI, paper hookup.
   Gate: setups on historical days match discretionary reads; dead windows block.
-- **P4 — Validation.** Replay over historical data (multi-month), false-pos/neg
-  review, expectancy report per archetype/session, edge cases, perf (<300ms
-  per refresh), stress.
-  Gate: owner reviews the validation report.
+- **P4 — Replay & Performance Validation Engine.** A first-class REPLAY ENGINE,
+  not a manual test: feed any historical range through the full V3 stack →
+  auto-detect every setup it would have issued → simulate outcomes on the
+  candles → produce a performance report:
+  `win rate · avg R:R · expectancy · max drawdown · average hold time ·
+  profit factor · per-archetype (A/B/C) · per-session-window · per-grade`.
+  Plus the two error scans:
+  **missed trades** (zones that produced a clean ≥2R move with NO issued setup —
+  false negatives) and **false trades** (issued setups that hit SL without ever
+  reaching +1R — false positives), each with the chart context saved for review.
+  Edge cases, perf (<300ms per refresh), stress.
+  Gate: owner reviews the validation report — objective numbers, not vibes.
 - **P5 — Production cutover.** v3 default, old engine code + dead endpoints
   removed, docs final, deploy, prod verify, monitor.
 
