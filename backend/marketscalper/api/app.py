@@ -467,6 +467,14 @@ def create_app(
             raise HTTPException(status_code=503, detail="v3 service not configured")
         return await v3_service.map(symbol)
 
+    # L4 Virtual Trader + L5 Session Timing: confirmed setups + the watchlist
+    # ("setup ban raha hai"), session-gated per the owner's IST guide.
+    @app.get("/api/v3/setups", dependencies=[Depends(require_token)])
+    async def api_v3_setups(symbol: str) -> dict:
+        if v3_service is None:
+            raise HTTPException(status_code=503, detail="v3 service not configured")
+        return await v3_service.setups(symbol)
+
     # ------------------------------------------------------ HTF (V1.1)
     # Higher-timeframe intelligence: 15m/1h/4h/1d SMC analysis + overall
     # bias/confidence/market-story. ADDITIVE and ISOLATED (like /api/chart) —

@@ -40,27 +40,44 @@ def _collect_zones(reads: dict) -> list[dict]:
 
 
 def _merge_zones(zones: list[dict], reads: dict, cfg: V3Config) -> list[dict]:
-    """Greedy band-merge: overlapping (or near, ≤0.3×ATR of the higher TF)
-    zones across TFs become ONE map-zone with a tf_stack + weight."""
+    """Two-pass trader merge.
+
+    Pass 1 — band merge: near zones (gap ≤ 0.3×ATR of the higher TF) become one
+    map-zone ONLY while the band stays tradeable: width ≤ 1.5×ATR of the
+    TIGHTEST (lowest-TF) member. A 1d area never swallows a 5m entry zone.
+
+    Pass 2 — containment context: a higher-TF zone whose band overlaps a merged
+    zone joins its components as CONTEXT (stack/weight/explain), without
+    widening the band — HTF gives the context, LTF gives the entry.
+    """
     zs = sorted(zones, key=lambda z: (z["lo"], z["hi"]))
     merged: list[dict] = []
     for z in zs:
         if merged:
             cur = merged[-1]
-            hi_tf = max([c["tf"] for c in cur["components"]] + [z["tf"]],
-                        key=lambda t: _TF_RANK.get(t, 0))
-            atr_hi = _atr_of(reads, hi_tf)
-            tol = atr_hi * cfg.map_merge_atr
+            ranks = [c["tf"] for c in cur["components"]] + [z["tf"]]
+            hi_tf = max(ranks, key=lambda t: _TF_RANK.get(t, 0))
+            lo_tf = min(ranks, key=lambda t: _TF_RANK.get(t, 0))
+            tol = _atr_of(reads, hi_tf) * cfg.map_merge_atr
             new_lo = min(cur["lo"], z["lo"])
             new_hi = max(cur["hi"], z["hi"])
-            # merge only when near AND the result stays a tradeable band —
-            # never chain zones into a mega-zone wider than 1.5×ATR(higher tf)
             if z["lo"] <= cur["hi"] + tol and \
-                    (new_hi - new_lo) <= atr_hi * cfg.map_max_width_atr:
+                    (new_hi - new_lo) <= _atr_of(reads, lo_tf) * cfg.map_max_width_atr:
                 cur["components"].append(z)
                 cur["lo"], cur["hi"] = new_lo, new_hi
                 continue
         merged.append({"lo": z["lo"], "hi": z["hi"], "components": [z]})
+
+    # pass 2: HTF (1h+) zones overlapping a merged band join as context
+    htf = [z for z in zs if _TF_RANK.get(z["tf"], 0) >= 2]
+    for m in merged:
+        ids = {c["id"] for c in m["components"]}
+        for hz in htf:
+            if hz["id"] in ids:
+                continue
+            if hz["lo"] <= m["hi"] and hz["hi"] >= m["lo"]:
+                m["components"].append({**hz, "context": True})
+
     out = []
     for i, m in enumerate(merged):
         comps = m["components"]
@@ -73,9 +90,11 @@ def _merge_zones(zones: list[dict], reads: dict, cfg: V3Config) -> list[dict]:
             "tf_stack": tfs, "stack": len(tfs), "weight": weight,
             "kinds": sorted({c["kind"] for c in comps}),
             "components": [{"tf": c["tf"], "kind": c["kind"],
-                            "state": c["state"], "id": c["id"]} for c in comps],
+                            "state": c["state"], "id": c["id"],
+                            "context": bool(c.get("context"))} for c in comps],
             "explain": " + ".join(
-                f"{c['tf']} {c['kind']}({c['state']})" for c in comps),
+                f"{c['tf']} {c['kind']}({c['state']})"
+                + (" ctx" if c.get("context") else "") for c in comps),
         })
     return out
 
@@ -147,7 +166,9 @@ def build_map(symbol: str, reads: dict, cfg: V3Config = DEFAULT) -> dict:
         else:
             z["side"], z["distance"] = "BELOW", round(price - z["hi"], 2)
     zones.sort(key=lambda z: (-z["weight"], z["distance"]))
-    decision = sorted([z for z in zones], key=lambda z: z["distance"])
+    # decision points = the SAME full zone objects, nearest first — what the
+    # trader actually stalks (a nearby 5m zone matters more than a far 1d one)
+    decision = sorted(zones, key=lambda z: z["distance"])
 
     return {
         "symbol": symbol,
@@ -155,11 +176,7 @@ def build_map(symbol: str, reads: dict, cfg: V3Config = DEFAULT) -> dict:
         "price": price,
         "bias": _bias_ladder(ready, cfg),
         "zones": zones[:cfg.map_max_zones],
-        "decision_points": [
-            {"id": z["id"], "side": z["side"], "distance": z["distance"],
-             "lo": z["lo"], "hi": z["hi"], "weight": z["weight"],
-             "explain": z["explain"]}
-            for z in decision[:cfg.map_max_zones]],
+        "decision_points": decision[:cfg.map_max_zones],
         "liquidity": _liquidity_targets(ready, price, cfg),
         "premium_discount": {tf: ready[tf].get("premium_discount")
                              for tf in ready},

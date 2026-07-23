@@ -1114,7 +1114,8 @@ async function takePaperSetup(setup) {
 async function loadSetups() {
   if (!window.Setups || replayMode) return;            // live only; replay clears it
   try {
-    const resp = await fetch(`${HTTP_BASE}/api/setups?symbol=${encodeURIComponent(activeSymbol)}`, {
+    // V3 Virtual Trader (P3): confirmed setups + the watchlist, session-gated
+    const resp = await fetch(`${HTTP_BASE}/api/v3/setups?symbol=${encodeURIComponent(activeSymbol)}`, {
       headers: { Authorization: `Bearer ${TOKEN}` },
     });
     if (resp.status === 401) { onAuthFail(); return; }

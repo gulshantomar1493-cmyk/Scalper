@@ -1346,7 +1346,7 @@ def test_setups_panel_pure_and_wired():
     assert 'id="setups-panel"' in html and 'src="setups.js"' in html
     assert html.index('src="setups.js"') < html.index('src="app.js"')     # loads first
     app = _read("app.js")
-    assert "/api/setups?symbol=" in app and "Setups.render" in app and "Setups.init" in app
+    assert "/api/v3/setups?symbol=" in app and "Setups.render" in app and "Setups.init" in app
     assert "loadSetups" in app and "SETUPS_POLL_MS" in app
     assert ".su-card" in _read("styles.css")
 
@@ -1437,3 +1437,18 @@ def test_setup_chart_overlay_present():
     # accessibility + hierarchy: entry is the brightest (2px), stop not stronger (1px)
     assert ".su-line.su-entry { border-top:2px" in css
     assert ".su-line.su-sl { border-top:1px" in css
+
+
+def test_v3_setups_watchlist_and_session():
+    """V3 P3: the setup card is fed by /api/v3/setups and renders the session
+    window (IST guide) + the watchlist (WATCHING/ARMED zones) — pure renderer."""
+    sj = _read("setups.js")
+    assert "watchingList" in sj and "sessionLine" in sj
+    for key in ("trigger_hint", "ARMED", "su-watch", "su-session"):
+        assert key in sj, key
+    for banned in ("fetch(", "WebSocket", "localStorage"):
+        assert banned not in sj, banned
+    app = _read("app.js")
+    assert "/api/v3/setups?symbol=" in app
+    css = _read("styles.css")
+    assert ".su-watch" in css and ".su-session" in css

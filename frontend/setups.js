@@ -113,18 +113,56 @@
 
   // data = GET /api/setups response (frozen v1.0). Renders the setup(s) or the
   // calm "no high-probability setup" state — never fabricates one.
+  // V3: the session window line (owner's IST timing guide) — backend values only
+  function sessionLine(sess) {
+    if (!sess) return null;
+    var line = el("div", "su-session");
+    var stars = "";
+    for (var i = 0; i < (sess.rating || 0); i++) stars += "★";
+    line.appendChild(el("span", "su-sess-stars " +
+      (sess.effect === "BLOCK" ? "su-sess-bad" :
+       sess.effect === "BOOST" ? "su-sess-good" : ""), stars || "—"));
+    line.appendChild(el("span", "su-sess-label", sess.label || ""));
+    return line;
+  }
+
+  // V3: the watchlist — zones the trader is stalking ("setup ban raha hai")
+  function watchingList(items) {
+    if (!items || !items.length) return null;
+    var wrap = el("div", "su-watch");
+    wrap.appendChild(el("div", "su-list-h", "Watching"));
+    items.forEach(function (w) {
+      var row = el("div", "su-watch-row");
+      var top = el("div", "su-watch-top");
+      top.appendChild(el("span", "su-watch-state " +
+        (w.state === "ARMED" ? "su-armed" : ""), w.state));
+      top.appendChild(el("span", "su-watch-dir " + (DIR_CLASS[w.direction] || ""),
+        w.direction));
+      top.appendChild(el("span", "su-watch-band",
+        fmt(w.lo) + " – " + fmt(w.hi)));
+      row.appendChild(top);
+      row.appendChild(el("div", "su-watch-hint", w.trigger_hint || ""));
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   function render(data) {
     if (!root) return;
     root.textContent = "";
     root.appendChild(el("div", "su-title", "Trade Setup"));
+    var sess = sessionLine(data && data.session);
+    if (sess) root.appendChild(sess);
     var setups = (data && data.setups) || [];
     if (!setups.length) {
       var msg = (data && data.message) || "No high-probability setup available.";
       root.appendChild(el("div", "su-none", msg));
       root.appendChild(el("div", "su-none-sub", "The engine is watching. Patience — no forced trades."));
-      return;
+    } else {
+      setups.forEach(function (s, i) { root.appendChild(card(s, i === 0)); });
     }
-    setups.forEach(function (s, i) { root.appendChild(card(s, i === 0)); });
+    var watch = watchingList(data && data.watching);
+    if (watch) root.appendChild(watch);
   }
 
   window.Setups = { init: init, render: render };

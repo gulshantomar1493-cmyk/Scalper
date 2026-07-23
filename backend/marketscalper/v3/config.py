@@ -70,6 +70,50 @@ class V3Config:
     bias_min_share: float = 0.4        # winner needs ≥40% of total vote weight
     bias_min_margin: float = 0.3       # AND a ≥30%-of-total margin (else NEUTRAL)
 
+    # ---- virtual trader (L4) ------------------------------------------
+    watch_dist_atr: float = 1.5        # price within 1.5×ATR of a zone → WATCHING
+    confirm_bars: int = 30             # 5m bars scanned for zone entry + confirmation
+    sweep_into_zone_bars: int = 24     # a sweep within N 5m bars counts as fuel
+    sl_pad_atr: float = 0.25           # SL beyond the zone edge / sweep wick
+    min_rr_net: float = 1.5            # net-of-fees floor to TP1
+    taker_fee: float = 0.0005          # per side; round trip ×2
+    rejection_wick_frac: float = 0.60  # wick ≥60% of bar range = rejection
+    grade_a_plus: int = 5              # confluence counts (of 7)
+    grade_a: int = 3
+    grade_b: int = 2                   # below → not issued
+    max_watching_out: int = 6
+    max_setups_out: int = 3
+
+    # ---- session timing (L5) — the owner's IST guide, verbatim ---------
+    # IST minutes-of-day [start, end) → rating ⭐ + effect.
+    # Effects: BLOCK · WARN_DOWNGRADE · NORMAL · BOOST (counts as a confluence)
+    #          · STRONG_ONLY (A+/A only; B suppressed)
+    session_windows: tuple = (
+        {"ist": (210, 330),  "rating": 1, "effect": "BLOCK",
+         "label": "03:30-05:30 dead zone (fake breakouts)"},
+        {"ist": (330, 510),  "rating": 4, "effect": "NORMAL",
+         "label": "05:30-08:30 Tokyo momentum"},
+        {"ist": (510, 690),  "rating": 4, "effect": "NORMAL",
+         "label": "08:30-11:30"},
+        {"ist": (690, 810),  "rating": 2, "effect": "WARN_DOWNGRADE",
+         "label": "11:30-13:30 Asian lunch chop"},
+        {"ist": (810, 870),  "rating": 4, "effect": "NORMAL",
+         "label": "13:30-14:30 pre-London"},
+        {"ist": (870, 1050), "rating": 5, "effect": "BOOST",
+         "label": "14:30-17:30 London open"},
+        {"ist": (1050, 1170), "rating": 5, "effect": "BOOST",
+         "label": "17:30-19:30 London peak"},
+        {"ist": (1170, 1350), "rating": 6, "effect": "BOOST",
+         "label": "19:30-22:30 London+NY overlap (best)"},
+        {"ist": (1350, 1470), "rating": 4, "effect": "NORMAL",
+         "label": "22:30-00:30"},
+        {"ist": (1470, 1560), "rating": 3, "effect": "STRONG_ONLY",
+         "label": "00:30-02:00 strong setups only"},
+        {"ist": (1560, 1650), "rating": 1, "effect": "BLOCK",
+         "label": "02:00-03:30 US wind-down"},
+    )
+    sunday_effect: str = "WARN_DOWNGRADE"   # erratic weekend structure
+
     # ---- rendering caps (payload size) --------------------------------
     max_swings_out: int = 40
     max_zones_out: int = 30

@@ -1374,3 +1374,27 @@ async def test_api_v3_map_route_and_shape():
         await _stop(server, task)
     for key in ("bias", "zones", "decision_points", "liquidity", "memory"):
         assert key in body
+
+
+async def test_api_v3_setups_route_and_shape():
+    class _FakeV3S(_FakeV3):
+        async def setups(self, symbol):
+            return {"symbol": symbol, "session": {"rating": 6, "effect": "BOOST",
+                                                  "label": "overlap"},
+                    "setups": [], "watching": [], "message": "No setup right now"}
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN, v3_service=_FakeV3S())
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/v3/setups",
+                             params={"symbol": "BTCUSDT"}) as r:
+                assert r.status == 401
+            async with s.get(f"http://{addr}/api/v3/setups",
+                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+    finally:
+        await _stop(server, task)
+    for key in ("session", "setups", "watching", "message"):
+        assert key in body
