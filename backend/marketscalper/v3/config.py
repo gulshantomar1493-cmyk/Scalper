@@ -93,6 +93,11 @@ class V3Config:
     max_watching_out: int = 6
     max_setups_out: int = 3
 
+    # ---- breakout archetype (one structural addition; replay-compared) --
+    breakout_body_atr: float = 1.2     # the break candle must displace (body ≥1.2×ATR)
+    breakout_retest_tol_atr: float = 0.25   # retest counts within 0.25×ATR of the level
+    breakout_max_age_bars: int = 18    # break older than 90min without retest → stale
+
     # ---- session timing (L5) — the owner's IST guide, verbatim ---------
     # IST minutes-of-day [start, end) → rating ⭐ + effect.
     # Effects: BLOCK · WARN_DOWNGRADE · NORMAL · BOOST (counts as a confluence)

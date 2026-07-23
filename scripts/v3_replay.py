@@ -81,6 +81,9 @@ async def main() -> int:
         print("by session:")
         for s, a in report["by_session"].items():
             print(f"  {str(s)[:34]:<34}: {_fmt(a)}")
+        print("by type:")
+        for ty, a in report.get("by_type", {}).items():
+            print(f"  {str(ty):<12}: {_fmt(a)}")
         print("by direction:")
         for d_, a in report["by_direction"].items():
             print(f"  {d_:<5}: {_fmt(a)}")

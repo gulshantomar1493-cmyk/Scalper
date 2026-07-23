@@ -213,6 +213,7 @@ class ReplayEngine:
             sim = simulate_outcome(s, bars5, rec["confirm_i"], cfg)
             trades.append({**sim, "id": s["id"], "direction": s["direction"],
                            "grade": s["grade"], "rr_planned": s["rr"],
+                           "setup_type": s.get("setup_type"),
                            "session": (s.get("session") or {}).get("label"),
                            "entry": s["entry"], "sl": s["sl"], "tp1": s["tp1"],
                            "zone": (s.get("zone") or {}).get("explain"),
@@ -256,6 +257,7 @@ class ReplayEngine:
             "by_grade": _split(trades, lambda t: t["grade"]),
             "by_session": _split(trades, lambda t: t["session"]),
             "by_direction": _split(trades, lambda t: t["direction"]),
+            "by_type": _split(trades, lambda t: t.get("setup_type")),
             "trades": sorted(trades, key=lambda t: t["created_ts"]),
             "false_trades": false_trades,
             "missed_trades": missed[:20],

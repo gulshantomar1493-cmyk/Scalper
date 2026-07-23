@@ -251,3 +251,89 @@ def test_trader_deterministic():
     a = json.dumps(run(m, {"5m": r5()}, bars), sort_keys=True)
     b = json.dumps(run(m, {"5m": r5()}, bars), sort_keys=True)
     assert a == b
+
+
+# ------------------------------------------------------------ breakout archetype
+
+def _bo_zone():
+    # a resistance-side zone ABOVE the path start; SR cluster w/ FRESH component
+    return zone(103.0, 104.0, stack=2, weight=3.0, kinds=("SR",),
+                states=("FRESH",), zid="map:bo", side="ABOVE")
+
+
+def test_breakout_long_break_then_retest_hold():
+    z = _bo_zone()
+    bars = bars_path([100, 101, 102], t0=ist_ts(6))
+    # displaced break candle THROUGH the zone (o below hi, c above hi, big body)
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 102.0, "h": 106.6,
+                 "l": 101.8, "c": 106.4})
+    # retest: dips to the broken level (104 ± tol) and closes back above
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 106.4, "h": 106.5,
+                 "l": 104.05, "c": 105.2})
+    pool_up = {"kind": "PDH", "price": 112.0, "priority": 5, "side": "BUYSIDE",
+               "tf": "1h", "session": None}
+    out = run(mk_map([z], above=[pool_up]), {"5m": r5(trend="BULLISH")}, bars)
+    assert out["setups"], out
+    s = out["setups"][0]
+    assert s["setup_type"] == "Breakout" and s["direction"] == "LONG"
+    assert s["entry"] == 104.0                          # the broken level (retest)
+    assert s["sl"] < 103.0                              # back inside = failed break
+    assert s["tp1"] == 112.0 and s["rr"] >= CFG.min_rr_net
+    assert any("FRESH level" in f for f in s["reasons"])
+    assert any("5m trend" in f for f in s["reasons"])
+
+
+def test_breakout_without_retest_watches():
+    z = _bo_zone()
+    bars = bars_path([100, 101, 102], t0=ist_ts(6))
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 102.0, "h": 106.6,
+                 "l": 101.8, "c": 106.4})               # break, no retest yet
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 106.4, "h": 107.0,
+                 "l": 106.0, "c": 106.8})
+    out = run(mk_map([z]), {"5m": r5()}, bars)
+    assert not out["setups"]
+    assert any("awaiting the retest" in w["trigger_hint"] for w in out["watching"])
+
+
+def test_failed_break_back_inside_no_setup():
+    z = _bo_zone()
+    bars = bars_path([100, 101, 102], t0=ist_ts(6))
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 102.0, "h": 106.6,
+                 "l": 101.8, "c": 106.4})               # break up
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 106.4, "h": 106.5,
+                 "l": 102.4, "c": 102.6})               # closes BACK INSIDE → failed
+    out = run(mk_map([z]), {"5m": r5()}, bars)
+    assert not any(s["setup_type"] == "Breakout" for s in out["setups"])
+
+
+def test_breakdown_short_mirror():
+    z = zone(96.0, 97.0, stack=2, kinds=("SR",), states=("FRESH",),
+             zid="map:bd", side="BELOW")
+    bars = bars_path([100, 99, 98], t0=ist_ts(6))
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 98.0, "h": 98.2,
+                 "l": 93.6, "c": 93.8})                 # displaced break DOWN
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 93.8, "h": 95.95,
+                 "l": 93.5, "c": 94.6})                 # retest 96−tol, holds below
+    pool_dn = {"kind": "PDL", "price": 88.0, "priority": 5, "side": "SELLSIDE",
+               "tf": "1h", "session": None}
+    out = run(mk_map([z], bias="BEARISH", below=[pool_dn]),
+              {"5m": r5(trend="BEARISH")}, bars)
+    assert out["setups"]
+    s = out["setups"][0]
+    assert s["setup_type"] == "Breakdown" and s["direction"] == "SHORT"
+    assert s["entry"] == 96.0 and s["sl"] > 97.0
+
+
+def test_breakout_boost_session_counts_without_fuel():
+    # 20:00 IST overlap: breakouts get the session confluence WITHOUT sweep fuel
+    z = _bo_zone()
+    bars = bars_path([100, 101, 102])                   # default t0 = 20:00 IST
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 102.0, "h": 106.6,
+                 "l": 101.8, "c": 106.4})
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 106.4, "h": 106.5,
+                 "l": 104.05, "c": 105.2})
+    pool_up = {"kind": "PDH", "price": 112.0, "priority": 5, "side": "BUYSIDE",
+               "tf": "1h", "session": None}
+    out = run(mk_map([z], above=[pool_up]), {"5m": r5(trend="BULLISH")}, bars)
+    assert out["setups"]
+    assert any("trend window" in f for f in out["setups"][0]["reasons"])

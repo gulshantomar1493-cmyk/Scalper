@@ -55,6 +55,41 @@ class _Confirm:
         self.kind, self.bar, self.displaced = kind, bar, displaced
 
 
+def _find_breakout(zone: dict, bars: list, atr: float, cfg: V3Config):
+    """Breakout pattern over the recent path: a DISPLACED close through the
+    zone, then a retest that HOLDS the broken level. Returns
+    (direction, break_bar_i, retest_bar_i) or a watching hint string."""
+    if atr <= 0:
+        return None
+    brk_i = brk_dir = None
+    for i, b in enumerate(bars):
+        if abs(b["c"] - b["o"]) < cfg.breakout_body_atr * atr:
+            continue
+        # the displaced candle must actually travel THROUGH the band
+        if b["c"] > zone["hi"] and b["o"] < zone["hi"]:
+            brk_i, brk_dir = i, _LONG        # up through resistance-side zone
+        elif b["c"] < zone["lo"] and b["o"] > zone["lo"]:
+            brk_i, brk_dir = i, _SHORT       # down through support-side zone
+    if brk_i is None:
+        return None
+    if (len(bars) - 1 - brk_i) > cfg.breakout_max_age_bars:
+        return None                          # stale break, momentum spent
+    level = zone["hi"] if brk_dir == _LONG else zone["lo"]
+    tol = cfg.breakout_retest_tol_atr * atr
+    for j in range(brk_i + 1, len(bars)):
+        b = bars[j]
+        touched = (b["l"] <= level + tol) if brk_dir == _LONG else \
+                  (b["h"] >= level - tol)
+        held = (b["c"] > level) if brk_dir == _LONG else (b["c"] < level)
+        failed = (b["c"] < zone["lo"]) if brk_dir == _LONG else \
+                 (b["c"] > zone["hi"])
+        if failed:
+            return None                      # back inside — the break failed
+        if touched and held:
+            return (brk_dir, brk_i, j)
+    return (brk_dir, brk_i, None)            # broke, no retest yet → watch
+
+
 def _find_confirmation(direction: str, zone: dict, bars: list, start_i: int,
                        choch_ts: set, atr: float, cfg: V3Config) -> _Confirm | None:
     """First confirmation AFTER the zone touch — rejection wick, engulfing,
@@ -165,6 +200,137 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
                     "trigger_hint": f"price reaches the zone, then a 5m "
                                     f"rejection / engulfing / CHOCH "
                                     f"{'down' if direction == _SHORT else 'up'}"})
+            continue
+
+        # ---- BREAKOUT / BREAKDOWN first: a displaced close THROUGH the zone
+        # means the zone is no longer a reversal candidate — it is a level that
+        # just changed hands. Trend sessions live on this pattern.
+        bo = _find_breakout(zone, bars, atr, cfg)
+        if bo is not None:
+            bo_dir, brk_i, retest_i = bo
+            level = zone["hi"] if bo_dir == _LONG else zone["lo"]
+            if retest_i is None:
+                watching.append({
+                    "zone_id": zone["id"], "state": "ARMED", "direction": bo_dir,
+                    "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                    "weight": zone["weight"], "explain": zone["explain"],
+                    "trigger_hint": f"displaced break through {round(level, 2)} — "
+                                    f"awaiting the retest-hold"})
+                continue
+            if session["effect"] == "BLOCK":
+                continue
+            brk_bar = bars[brk_i]
+            strong = atr > 0 and abs(brk_bar["c"] - brk_bar["o"]) >= 1.5 * atr
+            aligned = (bias == "BULLISH" and bo_dir == _LONG) or \
+                      (bias == "BEARISH" and bo_dir == _SHORT)
+            with_t5 = (r5.get("trend") == "BULLISH" and bo_dir == _LONG) or \
+                      (r5.get("trend") == "BEARISH" and bo_dir == _SHORT)
+            factors = []
+            if aligned:
+                factors.append(f"HTF bias {bias.lower()} — with the ladder")
+            if zone["stack"] >= 2:
+                factors.append(f"{zone['stack']}-TF level stack ({zone['explain']})")
+            if any(c["state"] == "FRESH" for c in zone.get("components", [])):
+                factors.append("first break of a FRESH level")
+            if "TRENDLINE" in (zone.get("kinds") or []):
+                factors.append("trendline break in the level")
+            if strong:
+                factors.append("strong displacement break (≥1.5×ATR body)")
+            if with_t5:
+                factors.append("5m trend already flowing with the break")
+            if session["effect"] == "BOOST":
+                factors.append(f"session: {session['label']} (trend window)")
+            n = len(factors)
+            if n < cfg.min_issue_confluences:
+                watching.append({
+                    "zone_id": zone["id"], "state": "ARMED", "direction": bo_dir,
+                    "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                    "weight": zone["weight"], "explain": zone["explain"],
+                    "trigger_hint": f"retest held but only {n} of 7 confluences — "
+                                    f"below the {cfg.min_issue_confluences}-factor floor"})
+                continue
+            grade = "A+" if n >= cfg.grade_a_plus else "A"
+            if session["effect"] == "WARN_DOWNGRADE":
+                grade = {"A+": "A", "A": None}.get(grade)
+                if grade is None:
+                    continue
+            entry = round(level, 2)
+            pad = cfg.sl_pad_atr * atr
+            sl = round((zone["lo"] - pad) if bo_dir == _LONG
+                       else (zone["hi"] + pad), 2)
+            tp1, tp2, tp1_pool = _targets(bo_dir, entry, mkt_map)
+            if tp1 is None:
+                continue
+            rr = _net_rr(entry, sl, tp1, cfg)
+            if rr is None or rr < cfg.min_rr_net:
+                watching.append({
+                    "zone_id": zone["id"], "state": "ARMED", "direction": bo_dir,
+                    "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                    "weight": zone["weight"], "explain": zone["explain"],
+                    "trigger_hint": f"break confirmed, but net R:R {rr} < "
+                                    f"{cfg.min_rr_net} to {tp1}"})
+                continue
+            avoid = []
+            if not aligned:
+                avoid.append(f"HTF ladder is {bias} — the break has no higher-TF tailwind")
+            if session["effect"] == "WARN_DOWNGRADE":
+                avoid.append(f"chop window ({session['label']}) — fake-break risk, downgraded")
+            if (len(bars) - 1 - brk_i) > 12:
+                avoid.append("the break is aging — momentum may be spent")
+            hist = memory.get("sweep_history") or []
+            rev = sum(1 for s_ in hist if s_["outcome"] == "REVERSED")
+            if hist and rev > len(hist) / 2:
+                avoid.append("recent raids mostly REVERSED — breakout follow-through unproven")
+            if rr < 2.0:
+                avoid.append(f"net R:R only {rr} — limited room to the first pool")
+            if not avoid:
+                avoid.append("a close back inside the level voids the break — no chasing")
+            kind_word = "Breakout" if bo_dir == _LONG else "Breakdown"
+            ctx = (f"Price displaced through a {zone['stack']}-TF level "
+                   f"({zone['explain']}) and the retest HELD at {entry}. "
+                   f"Draw: {tp1_pool['kind']} at {tp1}. Session: {session['label']}.")
+            setups.append({
+                "id": f"{symbol}:v3:{zone['id']}:BO:{bars[retest_i]['ts']}",
+                "symbol": symbol, "direction": bo_dir, "setup_type": kind_word,
+                "grade": grade,
+                "grade_reason": f"Grade {grade}: {n} of 7 confluences — "
+                                + "; ".join(f[:60] for f in factors) + ".",
+                "confluences": n, "confluences_total": 7,
+                "risk_level": "LOW" if grade == "A+" and aligned else
+                              "MEDIUM" if grade == "A+" or aligned else "HIGH",
+                "entry": entry, "sl": sl, "tp1": tp1,
+                "tp2": (round(tp2, 2) if tp2 else None), "rr": rr,
+                "htf_bias": bias, "ltf_trend": r5.get("trend") or "RANGE",
+                "market_context": ctx, "reasons": factors,
+                "reasons_to_avoid": avoid,
+                "invalidation": f"a decisive 5m close back "
+                                f"{'below' if bo_dir == _LONG else 'above'} "
+                                f"{entry} (inside the level) voids the break",
+                "early_exit": ["the retest level is lost on a closing basis",
+                               "an opposing 5m CHOCH prints",
+                               "no continuation within a few bars of the retest"],
+                "management_notes": [f"risk only to {sl}; size for a fixed small loss",
+                                     "stop to break-even at +1R",
+                                     f"partials at TP1 {tp1}"
+                                     + (f", trail toward TP2 {tp2}" if tp2 else "")],
+                "holding_time": "INTRADAY",
+                "why": {
+                    "why_exists": f"a mapped {zone['stack']}-TF level changed hands "
+                                  f"on displacement",
+                    "why_now": "the retest just held on 5m",
+                    "why_entry": f"the broken level at {entry} (the retest price)",
+                    "why_sl": f"back inside the level at {sl} — the break failed there",
+                    "why_targets": f"next liquidity {tp1_pool['kind']} {tp1}"
+                                   + (f", then the next map zone {tp2}" if tp2 else ""),
+                    "why_edge": f"{n} independent confluences on a displaced "
+                                f"break + retest-hold — continuation, not prediction",
+                },
+                "state": "TRIGGERED",
+                "zone": {"lo": zone["lo"], "hi": zone["hi"],
+                         "explain": zone["explain"], "stack": zone["stack"]},
+                "session": session,
+                "created_ts": _iso(bars[retest_i]["ts"]),
+            })
             continue
 
         came_from = None
