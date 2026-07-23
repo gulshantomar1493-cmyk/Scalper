@@ -40,6 +40,21 @@ per-session splits + FALSE trades + MISSED trades. Deterministic.
 
 Each is one config/logic change + one replay run = objective before/after.
 
+## Calibration log (one change · one replay · one compare · revert if not better)
+
+Baseline for calibration = post-Breakout archetype.
+
+| candidate | change | BTC 30d overall (fixed range) | verdict |
+|---|---|---|---|
+| — | breakout added | −0.02..−0.03R · PF 0.96–0.98 | (archetype) |
+| **C1** | reversals must not fight the HTF ladder (bias-aligned/neutral only) | exp −0.03R→**+0.00R** · PF 0.96→**1.01** · totR −30.9R→**+4.5R** · Zone-Reversal totR −74.9R→**−38.5R** · breakout/breakdown UNCHANGED | **KEEP** (objective +; targeted the weak path; isolation proven) |
+
+C1 is principled (don't catch tops/bottoms against a decided higher-timeframe
+ladder), not curve-fit; it is a `V3Config` flag. Reversals are still net negative
+(−0.21R) — the weak path continues; next candidates (independent, one at a time):
+confirmation quality (displacement/CHOCH-only), HTF-component-zone-only reversals,
+priority≥4 TP pools.
+
 ## Status
 
 - Deployed engine = decision-support with honest grades + avoid-reasons +

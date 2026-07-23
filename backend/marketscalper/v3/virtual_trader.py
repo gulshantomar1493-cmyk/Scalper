@@ -19,6 +19,7 @@ from marketscalper.v3.config import V3Config, DEFAULT
 from marketscalper.v3.session import window_at
 
 _LONG, _SHORT = "LONG", "SHORT"
+_BULLISH, _BEARISH = "BULLISH", "BEARISH"
 
 
 def _iso(ts: int) -> str:
@@ -363,6 +364,19 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
             continue
 
         # ---- build the setup ----
+        # calibration C1: a reversal must NOT fight the HTF ladder. Buying dips in
+        # a bull ladder / selling rallies in a bear ladder is the high-probability
+        # reversal; catching tops/bottoms against a decided ladder is not.
+        if cfg.reversal_bias_aligned_only and bias in (_BULLISH, _BEARISH) \
+                and not ((bias == _BULLISH and direction == _LONG)
+                         or (bias == _BEARISH and direction == _SHORT)):
+            watching.append({
+                "zone_id": zone["id"], "state": "ARMED", "direction": direction,
+                "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                "weight": zone["weight"], "explain": zone["explain"],
+                "trigger_hint": f"counter-ladder {direction.lower()} — the HTF "
+                                f"ladder is {bias.lower()}; reversals only with it"})
+            continue
         fuel = _sweep_fuel(zone, reads, last["ts"], atr, cfg)
         # counter-trend guard (replay-validated): candle patterns AGAINST the 5m
         # trend, with no sweep fuel and no CHOCH, are noise — a trader skips them

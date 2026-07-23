@@ -90,6 +90,9 @@ class V3Config:
                                             # without sweep fuel = noise, skip
     boost_needs_fuel: bool = True      # trend sessions (London/NY) reward SWEEP
                                        # reversals; plain fades there lost 94-97%
+    reversal_bias_aligned_only: bool = True   # calibration C1: a reversal must
+                                       # NOT fight the HTF ladder (bias-aligned or
+                                       # NEUTRAL); counter-ladder fades = watch only
     max_watching_out: int = 6
     max_setups_out: int = 3
 
