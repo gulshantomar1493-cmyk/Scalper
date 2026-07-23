@@ -127,6 +127,7 @@ if (window.Strip) Strip.init($("context-strip"));    // M2.5 context strip (pure
 Dashboard.init();
 Indicators.init(mainChart, window.__msIndicators);   // display-only EMA/SMA/RSI/Volume
 Drawing.init(mainChart, mainSeries);                 // display-only drawing tools
+if (window.V3Overlay) V3Overlay.init(mainChart, mainSeries);   // V3 per-TF read (pure renderer)
 if (window.__msDrawings) {                           // M3: persist per-symbol (storage in ui.js)
   Drawing.setItems(window.__msDrawings.get(activeSymbol));                              // restore on load
   Drawing.onChange(() => window.__msDrawings.save(activeSymbol, Drawing.getItems()));   // save on every edit
@@ -316,6 +317,7 @@ function setTimeframe(tf) {
   }
   loadHistory(activeSymbol, { resetView: true });   // fresh recent-window per tf
   applyAnalysisMode();
+  loadV3();                        // V3: redraw THIS timeframe's trader read
 }
 
 for (const b of document.querySelectorAll(".lv-tf")) {
@@ -346,6 +348,7 @@ function setSymbol(symbol) {
   loadHtf();
   renderSetups();                  // show cached setups for the new symbol, then refresh
   loadSetups();
+  loadV3();                        // V3: the new symbol's read for the active TF
   loadHistory(symbol, { resetView: true });
   applyAnalysisMode();
 }
@@ -1012,6 +1015,31 @@ function renderHtf() {
   if (window.Htf) Htf.render(lastHtf[activeSymbol] || null, htfDirection());
   renderStrip();                   // the context strip reads HTF + the top setup
 }
+
+// ---- V3 Virtual Trader: the active TF's chart read (zones/trendlines/liquidity).
+// app.js owns the network; v3overlay.js only draws. Chart TF -> V3 read TF.
+const V3_TF = { "1m": "5m", "5m": "5m", "15m": "15m", "30m": "15m",
+                "1h": "1h", "1H": "1h", "4h": "4h", "4H": "4h",
+                "1d": "1d", "1D": "1d", "1w": "1d", "1W": "1d", "1M": "1d" };
+const V3_POLL_MS = 60000;
+let lastV3 = {};                   // "symbol|tf" -> payload
+function renderV3() {
+  if (!window.V3Overlay) return;
+  const tf = V3_TF[activeTf] || "1h";
+  V3Overlay.set(replayMode ? null : (lastV3[`${activeSymbol}|${tf}`] || null));
+}
+async function loadV3() {
+  if (!window.V3Overlay || replayMode) return;
+  const tf = V3_TF[activeTf] || "1h";
+  renderV3();                                          // cached first, then refresh
+  try {
+    const data = await api(`/api/v3/analysis?symbol=${encodeURIComponent(activeSymbol)}&tf=${tf}`,
+                           { method: "GET" });
+    lastV3[`${data.symbol}|${data.tf}`] = data;
+    renderV3();
+  } catch (e) { /* transient — next poll retries */ }
+}
+setInterval(loadV3, V3_POLL_MS);
 // M2.5 context strip — the market conversation Q1..Q5, straight from the two frozen
 // caches (/api/htf + /api/setups). Re-rendered whenever either source updates.
 function renderStrip() {
@@ -1327,6 +1355,7 @@ function boot() {
   loadSettings();     // notifications + telegram (settings page)
   loadHtf();          // HTF V1.1 panel (then polled every HTF_POLL_MS)
   loadSetups();       // Trade Setup V2 panel (then polled every SETUPS_POLL_MS)
+  loadV3();           // V3 chart read for the active TF (then polled)
 }
 function resetToLogin() {
   if (window.__msToken) window.__msToken.clear();

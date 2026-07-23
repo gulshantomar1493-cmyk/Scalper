@@ -633,6 +633,10 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
     # Isolated from the engine bus / structure payload / determinism (like the
     # ChartService it reads through); display-only context for the 1m/5m engine.
     htf_service = HtfService(chart_service)
+    # V3 Virtual Trader — L1 Chart Read (per-TF trader's read; compute-on-read
+    # over ChartService, isolated like HtfService; docs/V3/ARCHITECTURE.md).
+    from marketscalper.v3.service import V3AnalysisService
+    v3_service = V3AnalysisService(chart_service)
     # Username/password login (single-user tool): credentials live in the env
     # (git-ignored .env). None set -> /login answers 503 and the frontend falls
     # back to a token in the URL (dev). The API token stays the data-route gate.
@@ -651,7 +655,8 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
                      started_at=started_at, ops_symbols=config.symbols,
                      settings=settings,                       # items 7/8 (live)
                      live_indicators=live_indicators,         # chart UX (live)
-                     live_price=live_bar.current_price)       # Paper V2 B4: live fills
+                     live_price=live_bar.current_price,       # Paper V2 B4: live fills
+                     v3_service=v3_service)                   # V3 L1 chart read
 
     await feed.start()
     await sampler.start()

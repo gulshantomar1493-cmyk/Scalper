@@ -1117,6 +1117,36 @@ def test_structure_toggle_htf_context_and_drawing_wired():
     assert 'src="drawing.js"' in html and "Drawing.init" in app
 
 
+def test_v3_overlay_pure_and_wired():
+    """V3 P1: the per-TF chart read overlay. v3overlay.js is a pure renderer
+    (app.js owns the /api/v3/analysis fetch); it draws zones (with lifecycle
+    state), trendlines (with state) and ranked liquidity for the ACTIVE chart
+    TF, re-fetched on every TF/symbol switch."""
+    js = _read("v3overlay.js")
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "localStorage",
+                   "sessionStorage", "aggregate", "innerHTML"):
+        assert banned not in js, banned                       # pure consumer
+    assert "window.V3Overlay" in js and "attachPrimitive" in js
+    for key in ("zones", "trendlines", "liquidity", "created_at", "priority",
+                "SWEPT", "state"):
+        assert key in js, key                                 # renders the read
+    html = _read("index.html")
+    assert 'src="v3overlay.js"' in html
+    assert html.index("v3overlay.js") < html.index('src="app.js"')
+    app = _read("app.js")
+    assert "/api/v3/analysis" in app and "V3Overlay.init" in app
+    assert "loadV3" in app and "V3_TF" in app                 # TF-mapped fetch
+    # re-drawn on TF switch + symbol switch + initial load
+    assert app.count("loadV3()") >= 3
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
+def test_v3_overlay_is_valid_javascript():
+    result = subprocess.run(["node", "--check", str(FRONTEND / "v3overlay.js")],
+                            capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+
+
 def test_toolbar_overflow_and_fullscreen():
     """Final polish (WORKSPACE-DESIGN item 5): the chart toolbar keeps Indicators /
     Draw / SMC + Auto / Reset visible and tucks Screenshot + Fullscreen into a ⋮

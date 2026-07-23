@@ -134,6 +134,7 @@ def create_app(
     settings=None,
     live_indicators=None,
     live_price=None,
+    v3_service=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
@@ -441,6 +442,20 @@ def create_app(
             return await chart_service.get_chart(
                 symbol, timeframe, start, end,
                 ema=ema_lens or None, sma=_period(sma), rsi=_period(rsi))
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+
+    # ------------------------------------------------------ V3 (Virtual Trader)
+    # L1 Chart Read: per-timeframe trader's read (swings, structure, trendlines,
+    # zones with lifecycle, ranked liquidity, premium/discount). Compute-on-read
+    # over ChartService — ADDITIVE + ISOLATED (no bus, no structure write, no
+    # persistence). The frontend re-draws the active TF's read on every switch.
+    @app.get("/api/v3/analysis", dependencies=[Depends(require_token)])
+    async def api_v3_analysis(symbol: str, tf: str) -> dict:
+        if v3_service is None:
+            raise HTTPException(status_code=503, detail="v3 service not configured")
+        try:
+            return await v3_service.analysis(symbol, tf)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 

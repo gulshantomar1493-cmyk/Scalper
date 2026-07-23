@@ -1289,3 +1289,59 @@ async def test_api_setups_htf_gated(db_conn):
             assert d2["setups"] == [] and "No high-probability" in d2["message"]
     finally:
         await _stop(server, task)
+
+
+# ------------------------------------------------ /api/v3/analysis (V3 L1)
+
+
+class _FakeV3:
+    """Canned V3AnalysisService (the fold is unit-tested in
+    test_v3_chart_read.py); the endpoint test proves route + auth + shape."""
+
+    async def analysis(self, symbol, tf):
+        if tf not in ("5m", "15m", "1h", "4h", "1d"):
+            raise ValueError(f"unknown v3 timeframe {tf!r}")
+        return {"symbol": symbol, "tf": tf, "ready": True, "trend": "BULLISH",
+                "swings": [], "trendlines": [], "zones": [], "liquidity": [],
+                "premium_discount": "DISCOUNT"}
+
+
+def _v3_app(with_service=True):
+    bus = EventBus()
+    return create_app(bus, StateStore(bus), None, TOKEN,
+                      v3_service=_FakeV3() if with_service else None)
+
+
+async def test_api_v3_analysis_route_auth_shape():
+    server, task, addr = await _serve(_v3_app())
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/v3/analysis",
+                             params={"symbol": "BTCUSDT", "tf": "1h"}) as r:
+                assert r.status == 401                      # auth required
+            async with s.get(f"http://{addr}/api/v3/analysis",
+                             params={"symbol": "BTCUSDT", "tf": "1h"},
+                             headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+            async with s.get(f"http://{addr}/api/v3/analysis",
+                             params={"symbol": "BTCUSDT", "tf": "2h"},
+                             headers=AUTH) as r:
+                assert r.status == 400                      # unknown tf
+    finally:
+        await _stop(server, task)
+    assert body["tf"] == "1h" and body["ready"] is True
+    for key in ("trend", "swings", "trendlines", "zones", "liquidity"):
+        assert key in body
+
+
+async def test_api_v3_analysis_503_when_not_configured():
+    server, task, addr = await _serve(_v3_app(with_service=False))
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/v3/analysis",
+                             params={"symbol": "BTCUSDT", "tf": "1h"},
+                             headers=AUTH) as r:
+                assert r.status == 503
+    finally:
+        await _stop(server, task)
