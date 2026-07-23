@@ -665,6 +665,9 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
         _feed_gap_watchdog(store, config.symbols), name="feed-gap-watchdog")
     feed_alerts = asyncio.create_task(                 # items 6/7 feed up/down
         _feed_alert_watcher(feed, alerter), name="feed-alerts")
+    v3_history = asyncio.create_task(                  # V3 rec-history recorder
+        _v3_history_loop(v3_service, pool, chart_service, config.symbols),
+        name="v3-history")
 
     server = uvicorn.Server(uvicorn.Config(app, host=host, port=port, log_level="info"))
     # The composition root owns process lifecycle: route SIGTERM/SIGINT to a
@@ -684,11 +687,35 @@ async def _run(config: Config, feed_cls, token: str, host: str, port: int,
         rollover.cancel()
         watchdog.cancel()
         feed_alerts.cancel()
-        await asyncio.gather(rollover, watchdog, feed_alerts,
+        v3_history.cancel()
+        await asyncio.gather(rollover, watchdog, feed_alerts, v3_history,
                              return_exceptions=True)
         await sampler.stop()
         await feed.stop()
         await pool.close()
+
+
+async def _v3_history_loop(v3_service, pool, chart_service, symbols) -> None:
+    """V3 Trade Recommendation History (live-only): every 60s issue-check each
+    symbol (records new setups, setup_id-deduped) and advance ACTIVE rows on
+    the latest closed 5m candles. Independent of paper trading; errors never
+    stop the loop."""
+    from marketscalper.v3 import history as v3h
+    log = logging.getLogger(__name__)
+    while True:
+        try:
+            for sym in symbols:
+                out = await v3_service.setups(sym)
+                if out.get("setups"):
+                    n = await v3h.record_setups(pool, out["setups"])
+                    if n:
+                        log.info("v3 history: recorded %d new setup(s) %s", n, sym)
+            await v3h.update_active(pool, chart_service)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.warning("v3 history loop error: %s", exc)
+        await asyncio.sleep(60)
 
 
 async def _daily_ops(pool) -> None:

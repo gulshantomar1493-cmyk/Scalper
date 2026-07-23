@@ -1398,3 +1398,34 @@ async def test_api_v3_setups_route_and_shape():
         await _stop(server, task)
     for key in ("session", "setups", "watching", "message"):
         assert key in body
+
+
+async def test_api_v3_history_route(db_conn):
+    from marketscalper.v3 import history as v3h
+    from tests.test_v3_history import _setup, _TxPool
+    await v3h.record_setups(_TxPool(db_conn), [_setup(91)])
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), TxPool(db_conn), TOKEN)
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.get(f"http://{addr}/api/v3/history") as r:
+                assert r.status == 401
+            async with s.get(f"http://{addr}/api/v3/history",
+                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
+                assert r.status == 200
+                body = await r.json()
+            rid = body["items"][0]["id"]
+            async with s.get(f"http://{addr}/api/v3/history/{rid}",
+                             headers=AUTH) as r:
+                assert r.status == 200
+                one = await r.json()
+            async with s.get(f"http://{addr}/api/v3/history",
+                             params={"format": "csv"}, headers=AUTH) as r:
+                assert r.status == 200
+                assert "text/csv" in r.headers["Content-Type"]
+                text = await r.text()
+    finally:
+        await _stop(server, task)
+    assert body["total"] >= 1 and one["analysis"]["reasons"] == ["r1"]
+    assert text.splitlines()[0].startswith("id,ts,symbol")

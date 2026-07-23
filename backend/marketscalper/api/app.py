@@ -475,6 +475,57 @@ def create_app(
             raise HTTPException(status_code=503, detail="v3 service not configured")
         return await v3_service.setups(symbol)
 
+    # Trade Recommendation History — every issued setup, auto-recorded and
+    # permanently searchable (independent of paper trading). Read-only here;
+    # the live loop in main.py records + advances statuses.
+    @app.get("/api/v3/history", dependencies=[Depends(require_token)])
+    async def api_v3_history(symbol: str | None = None, grade: str | None = None,
+                             status: str | None = None,
+                             setup_type: str | None = None,
+                             direction: str | None = None,
+                             session: str | None = None,
+                             date_from: str | None = None,
+                             date_to: str | None = None,
+                             q: str | None = None,
+                             sort: str = "ts", order: str = "desc",
+                             limit: int = 50, offset: int = 0,
+                             format: str | None = None):
+        if pool is None:
+            raise HTTPException(status_code=503, detail="db not configured")
+        from marketscalper.v3 import history as v3h
+        from datetime import datetime as _dt
+
+        def _d(v):
+            if not v:
+                return None
+            try:
+                return _dt.fromisoformat(v.replace("Z", "+00:00"))
+            except ValueError:
+                raise HTTPException(status_code=400, detail=f"bad date {v!r}")
+        limit = max(1, min(int(limit), 500))
+        out = await v3h.list_recommendations(
+            pool, symbol=symbol, grade=grade, status=status,
+            setup_type=setup_type, direction=direction, session=session,
+            date_from=_d(date_from), date_to=_d(date_to), q=q,
+            sort=sort, order=order, limit=limit, offset=max(0, int(offset)))
+        if format == "csv":
+            from fastapi.responses import PlainTextResponse
+            return PlainTextResponse(
+                v3h.to_csv(out["items"]), media_type="text/csv",
+                headers={"Content-Disposition":
+                         "attachment; filename=v3_recommendations.csv"})
+        return out
+
+    @app.get("/api/v3/history/{rec_id}", dependencies=[Depends(require_token)])
+    async def api_v3_history_one(rec_id: int) -> dict:
+        if pool is None:
+            raise HTTPException(status_code=503, detail="db not configured")
+        from marketscalper.v3 import history as v3h
+        rec = await v3h.get_recommendation(pool, rec_id)
+        if rec is None:
+            raise HTTPException(status_code=404, detail="not found")
+        return rec
+
     # ------------------------------------------------------ HTF (V1.1)
     # Higher-timeframe intelligence: 15m/1h/4h/1d SMC analysis + overall
     # bias/confidence/market-story. ADDITIVE and ISOLATED (like /api/chart) —

@@ -25,6 +25,7 @@
     <button class="sb-nav" type="button" data-nav="replay" title="Practice historical trades"><svg viewBox="0 0 24 24"><path d="M7 5l11 7-11 7z"/></svg>Replay</button>
     <button class="sb-nav" type="button" data-nav="paper" title="Paper trading — practice with virtual money (simulation only, no real orders)"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 15h5"/></svg>Paper Trading</button>
     <div class="sb-group">Analytics</div>
+    <button class="sb-nav" type="button" data-nav="history" title="Every engine recommendation, auto-recorded — search why trades won or lost"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3.5 2"/></svg>Rec History</button>
     <button class="sb-nav" type="button" data-nav="review" title="How the recommendations would have performed"><svg viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="4" rx="1"/><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 13l2 2 4-4"/></svg>Trade Review</button>
     <button class="sb-nav" type="button" data-nav="journal" title="Your logged trades, notes and lessons"><svg viewBox="0 0 24 24"><path d="M6 3h9l4 4v14H6z"/><path d="M14 3v4h4M9 12h6M9 16h5"/></svg>Journal</button>
     <button class="sb-nav" type="button" data-nav="analytics" title="Performance dashboard"><svg viewBox="0 0 24 24"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>Analytics</button>
@@ -114,6 +115,7 @@
               <div class="ind-menu">
                 <button id="tb-more" class="tb-btn" type="button" title="More actions" aria-label="More actions">⋮</button>
                 <div id="tb-more-panel" class="ind-panel tb-more-panel" hidden>
+                  <button id="tb-fullchart" class="draw-tool" type="button" title="Open the chart alone in a new tab — full workspace, all tools">🗖 Open Full Chart</button>
                   <button id="tb-fullscreen" class="draw-tool" type="button">⛶ Fullscreen</button>
                   <button id="tb-screenshot" class="draw-tool" type="button">📷 Screenshot</button>
                 </div>
@@ -201,6 +203,16 @@
       </section>
 
       <!-- TRADE REVIEW (Step 4) — display-only performance -->
+      <section class="page" data-page="history">
+        <div class="page-pad">
+          <h2 class="pg-title">Trade Recommendation History</h2>
+          <p class="pg-sub">Every setup the engine issued — auto-recorded, permanently searchable. Independent of paper trading.</p>
+          <div id="hist-filters" class="hist-filters mono"></div>
+          <div id="hist-table" class="hist-table"></div>
+          <div id="hist-pager" class="hist-pager mono"></div>
+          <div id="hist-detail" class="hist-detail" hidden></div>
+        </div>
+      </section>
       <section class="page" data-page="review">
         <header class="pg-head"><div class="pg-title"><b>Trade Review</b><span data-beginner-text>How the recommendations would have performed — display only, no execution.</span></div>
           <button class="pg-refresh" type="button" data-refresh="review">↻ Refresh</button></header>
@@ -395,6 +407,7 @@
   <script src="v3overlay.js"></script>
   <script src="dashboard.js"></script>
   <script src="journal.js"></script>
+  <script src="history.js"></script>
   <script src="paper.js"></script>
   <script src="ops.js"></script>
   <script src="notify.js"></script>

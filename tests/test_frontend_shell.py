@@ -1452,3 +1452,34 @@ def test_v3_setups_watchlist_and_session():
     assert "/api/v3/setups?symbol=" in app
     css = _read("styles.css")
     assert ".su-watch" in css and ".su-session" in css
+
+
+def test_v3_history_page_pure_and_wired():
+    """V3: the Trade Recommendation History page — pure renderer (app.js owns
+    /api/v3/history), filters + sortable table + pagination + CSV + detail."""
+    hj = _read("history.js")
+    assert "window.History" in hj and "renderDetail" in hj
+    for key in ("hist-filters" if False else "filters", "reasons_to_avoid",
+                "points_captured", "CSV", "setup_type", "grade"):
+        assert key in hj, key
+    for banned in ("fetch(", "WebSocket", "localStorage", "innerHTML",
+                   "Math.log", "aggregate"):
+        assert banned not in hj, banned
+    html = _read("index.html")
+    assert 'data-page="history"' in html and 'data-nav="history"' in html
+    assert 'id="hist-table"' in html and 'src="history.js"' in html
+    app = _read("app.js")
+    assert "/api/v3/history" in app and "loadHistoryPage" in app
+    assert "History.render" in app and "History.init" in app
+    css = _read("styles.css")
+    assert ".hist-detail" in css and ".h-table" in css
+
+
+def test_full_chart_mode():
+    """Open Full Chart: the SAME app in a new tab with ?full=1 — chart-only
+    layout, all existing tools intact (no second chart implementation)."""
+    html, app, css = _read("index.html"), _read("app.js"), _read("styles.css")
+    assert 'id="tb-fullchart"' in html
+    assert 'params.get("full")' in app and "fullchart" in app
+    assert 'searchParams.set("full", "1")' in app and "window.open" in app
+    assert "body.fullchart #sidebar" in css and "body.fullchart #quality-panel" in css

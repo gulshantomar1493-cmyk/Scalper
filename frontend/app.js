@@ -17,6 +17,8 @@
 /* ---------------------------------------------------------- configuration */
 
 const params = new URLSearchParams(window.location.search);
+// Full-chart mode (?full=1): same app, chart-only layout — bigger workspace.
+if (params.get("full") === "1") document.body.classList.add("fullchart");
 const API_HOST = params.get("api") || window.location.host || "127.0.0.1:8000";
 // Auth (login-based): a ?token= URL override wins (dev / bookmarks); otherwise
 // the token remembered at login. No token -> the login overlay gates the app
@@ -534,6 +536,47 @@ const paperApi = {
 };
 if (window.Paper) Paper.init(paperApi);
 
+/* ---- V3 Trade Recommendation History page (app.js owns the network) ---- */
+let historyInit = false;
+function historyQuery(params) {
+  const qs = new URLSearchParams();
+  for (const k in params) if (params[k] !== "" && params[k] != null) qs.set(k, params[k]);
+  return qs.toString();
+}
+async function loadHistoryPage(params) {
+  if (!window.History) return;
+  if (!historyInit) {
+    historyInit = true;
+    History.init({
+      filters: $("hist-filters"), table: $("hist-table"),
+      pager: $("hist-pager"), detail: $("hist-detail"),
+    }, {
+      load: (p) => loadHistoryPage(p),
+      open: async (id) => {
+        try { History.renderDetail(await api(`/api/v3/history/${id}`, { method: "GET" })); }
+        catch (e) { note(`history: ${e.message}`); }
+      },
+      csv: async (p) => {
+        try {
+          const resp = await fetch(`${HTTP_BASE}/api/v3/history?${historyQuery({ ...p, format: "csv", limit: 500 })}`,
+                                   { headers: { Authorization: `Bearer ${TOKEN}` } });
+          const blob = await resp.blob();
+          const a = document.createElement("a");
+          a.href = URL.createObjectURL(blob);
+          a.download = "v3_recommendations.csv";
+          a.click();
+          URL.revokeObjectURL(a.href);
+        } catch (e) { note(`csv: ${e.message}`); }
+      },
+    });
+  }
+  try {
+    const data = await api(`/api/v3/history?${historyQuery(params || { limit: 50, offset: 0, sort: "ts", order: "desc" })}`,
+                           { method: "GET" });
+    History.render(data);
+  } catch (e) { note(`history: ${e.message}`); }
+}
+
 function replayBody() {
   const from = $("replay-from").value, to = $("replay-to").value;
   const raw = $("replay-speed").value;
@@ -600,6 +643,7 @@ window.addEventListener("ms-page", (e) => {
   if (e.detail === "journal") { if (window.Journal) Journal.mount($("page-journal")); }
   else if (e.detail === "paper") { if (window.Paper) Paper.mount($("page-paper")); }
   else if (e.detail === "review" || e.detail === "analytics") loadDataPages();
+  else if (e.detail === "history") loadHistoryPage();
 });
 for (const btn of document.querySelectorAll("[data-refresh]")) {
   btn.addEventListener("click", () => {
@@ -1350,6 +1394,14 @@ async function loadSettings() {           // called by boot() after login
     });
     morePanel.querySelectorAll("button").forEach((b) => b.addEventListener("click", () => { morePanel.hidden = true; }));
   }
+  // Open Full Chart: the SAME app in a new tab, chart-only layout (?full=1).
+  // Reuses everything — chart, drawings, indicators, overlays, TF bar, WS.
+  const fc = $("tb-fullchart");
+  if (fc) fc.addEventListener("click", () => {
+    const u = new URL(window.location.href);
+    u.searchParams.set("full", "1");
+    window.open(u.toString(), "_blank");
+  });
   const fs = $("tb-fullscreen");
   if (fs) {
     fs.addEventListener("click", () => {
