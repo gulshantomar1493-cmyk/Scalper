@@ -49,12 +49,16 @@ Baseline for calibration = post-Breakout archetype.
 | — | breakout added | −0.02..−0.03R · PF 0.96–0.98 | (archetype) |
 | **C1** | reversals must not fight the HTF ladder (bias-aligned/neutral only) | exp −0.03R→**+0.00R** · PF 0.96→**1.01** · totR −30.9R→**+4.5R** · Zone-Reversal totR −74.9R→**−38.5R** · breakout/breakdown UNCHANGED | **KEEP** (objective +; targeted the weak path; isolation proven) |
 | **C2** | reversal confirmation must be STRUCTURAL (displaced candle ≥1.2×ATR or 5m CHOCH; plain wick/engulfing = noise) | exp +0.00R→**+0.04R** · PF 1.01→**1.05** · totR +4.5R→**+32.8R** · false 472→**405** · Zone-Reversal: win 16%→21%, totR −38.5R→**−7.2R**, maxDD 48.7→26.0 · breakout/breakdown ~unchanged | **KEEP** |
+| C3 | reversals only at zones with an HTF (1h+) component | BYTE-IDENTICAL to baseline — after C1+C2 every surviving reversal already sits on an HTF-component zone (the map's containment-context pass guarantees it) | **REVERTED** (dead rule; no objective change) |
+| C4 | TP targets only at ★4+ pools | BYTE-IDENTICAL — the engine only ever creates ★3+ pools (PDH/PDL/PWH/PWL ★5, EQH/EQL ★4, SESSION ★3) and the nearest opposing pools used as TP1 are already ★4+ in practice | **REVERTED** (dead rule; no objective change) |
 
 C1/C2 are principled (don't fight the ladder; demand structural evidence),
 not curve-fit; both are `V3Config` flags. After C2, Zone Reversal is close to
 breakeven (−0.09R) and OVERALL is positive (+0.04R, PF 1.05) on this range.
-Next candidates (independent, one at a time): HTF-component-zone-only
-reversals, priority≥4 TP pools, breakdown-quality filters.
+C3/C4 proved to be dead rules (already-enforced constraints) and were reverted
+— the honest outcome of the one-change-one-replay discipline. Next candidate
+class: BREAKDOWN quality (the remaining −23.6R path) and multi-symbol /
+longer-range validation before any profitability claim.
 
 ## Status
 
