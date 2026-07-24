@@ -100,6 +100,16 @@ class V3Config:
     max_watching_out: int = 6
     max_setups_out: int = 3
 
+    # ---- calibration candidates (proven-playbook rules; replay-compared) --
+    breakout_bias_aligned_only: bool = True   # C5 KEPT: breaks must not fight a
+                                       # decided HTF ladder ("trade breaks WITH
+                                       # the higher-TF trend"); replay-validated
+    be_at_1r: bool = False             # C9 REJECTED as a global rule (totR/win
+                                       # fell; reversals damaged). Kept OFF as a
+                                       # replay-experiment knob; archetype-scoped
+                                       # BE is a future candidate.
+    dead_exit_bars: int = 0            # C8 REJECTED (totR & PF fell). OFF knob.
+
     # ---- breakout archetype (one structural addition; replay-compared) --
     breakout_body_atr: float = 1.2     # the break candle must displace (body ≥1.2×ATR)
     breakout_retest_tol_atr: float = 0.25   # retest counts within 0.25×ATR of the level

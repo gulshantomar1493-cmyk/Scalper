@@ -59,6 +59,7 @@ def simulate_outcome(setup: dict, bars5: list[dict], confirm_i: int,
 
     mae = mfe = 0.0
     tp2_hit = False
+    sl_eff = sl                                      # C9: may move to breakeven
     end_i = min(fill_i + cfg.replay_horizon_bars, len(bars5) - 1)
     for i in range(fill_i, end_i + 1):
         b = bars5[i]
@@ -66,10 +67,12 @@ def simulate_outcome(setup: dict, bars5: list[dict], confirm_i: int,
         dn_r = ((entry - b["l"]) if long else (b["h"] - entry)) / risk
         mfe = max(mfe, up_r)
         mae = max(mae, dn_r)
-        sl_hit = (b["l"] <= sl) if long else (b["h"] >= sl)
+        sl_hit = (b["l"] <= sl_eff) if long else (b["h"] >= sl_eff)
         tp_hit = (b["h"] >= tp1) if long else (b["l"] <= tp1)
         if sl_hit:                                   # ambiguity → SL first
-            return {"outcome": "STOPPED", "r": -1.0, "hold": i - fill_i,
+            stopped_r = 0.0 if sl_eff == entry else -1.0
+            return {"outcome": "BREAKEVEN" if stopped_r == 0.0 else "STOPPED",
+                    "r": stopped_r, "hold": i - fill_i,
                     "mae": round(mae, 2), "mfe": round(mfe, 2),
                     "tp2_hit": False}
         if tp_hit:
@@ -77,7 +80,7 @@ def simulate_outcome(setup: dict, bars5: list[dict], confirm_i: int,
             if tp2 is not None:                      # did the runner reach TP2?
                 for j in range(i, end_i + 1):
                     bj = bars5[j]
-                    if (long and bj["l"] <= sl) or (not long and bj["h"] >= sl):
+                    if (long and bj["l"] <= sl_eff) or                             (not long and bj["h"] >= sl_eff):
                         break
                     if (long and bj["h"] >= tp2) or (not long and bj["l"] <= tp2):
                         tp2_hit = True
@@ -85,6 +88,15 @@ def simulate_outcome(setup: dict, bars5: list[dict], confirm_i: int,
             return {"outcome": "TP1", "r": round(r1, 2), "hold": i - fill_i,
                     "mae": round(mae, 2), "mfe": round(mfe, 2),
                     "tp2_hit": tp2_hit}
+        # C9: the card's own management — once +1R prints, stop to breakeven
+        if cfg.be_at_1r and sl_eff != entry and mfe >= 1.0:
+            sl_eff = entry
+        # C8: dead-trade exit — no +1R after N bars means the read was wrong
+        if cfg.dead_exit_bars and (i - fill_i) >= cfg.dead_exit_bars and mfe < 1.0:
+            r = ((b["c"] - entry) if long else (entry - b["c"])) / risk
+            return {"outcome": "DEAD_EXIT", "r": round(r, 2),
+                    "hold": i - fill_i, "mae": round(mae, 2),
+                    "mfe": round(mfe, 2), "tp2_hit": False}
     close = bars5[end_i]["c"]
     r = ((close - entry) if long else (entry - close)) / risk
     return {"outcome": "TIMEOUT", "r": round(r, 2), "hold": end_i - fill_i,
@@ -96,7 +108,8 @@ def simulate_outcome(setup: dict, bars5: list[dict], confirm_i: int,
 def aggregate(trades: list[dict]) -> dict:
     """Pure scoreboard math over simulated trades (EXPIRED excluded from
     performance, counted separately)."""
-    done = [t for t in trades if t["outcome"] in ("TP1", "STOPPED", "TIMEOUT")]
+    done = [t for t in trades if t["outcome"] in
+            ("TP1", "STOPPED", "TIMEOUT", "BREAKEVEN", "DEAD_EXIT")]
     expired = sum(1 for t in trades if t["outcome"] == "EXPIRED")
     if not done:
         return {"n": 0, "expired": expired, "win_rate": None, "avg_r": None,

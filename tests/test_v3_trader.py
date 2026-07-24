@@ -374,3 +374,21 @@ def test_c2_displaced_rejection_confirms():
                  "l": 92.0, "c": 97.8})
     out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, cfg)
     assert out["setups"] and out["setups"][0]["direction"] == "LONG"
+
+
+def test_c5_break_against_ladder_skipped():
+    # C5: a Breakdown while the HTF ladder is BULLISH = trap zone -> watch only
+    z = zone(96.0, 97.0, stack=2, kinds=("SR",), states=("FRESH",),
+             zid="map:bd2", side="BELOW")
+    bars = bars_path([100, 99, 98], t0=ist_ts(6))
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 98.0, "h": 98.2,
+                 "l": 93.6, "c": 93.8})                 # displaced break DOWN
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 93.8, "h": 95.95,
+                 "l": 93.5, "c": 94.6})                 # retest holds
+    pool_dn = {"kind": "PDL", "price": 88.0, "priority": 5, "side": "SELLSIDE",
+               "tf": "1h", "session": None}
+    out = run(mk_map([z], bias="BULLISH", below=[pool_dn]),
+              {"5m": r5(trend="BEARISH")}, bars)
+    assert not any(s["setup_type"] == "Breakdown" for s in out["setups"])
+    assert any("against the bullish HTF ladder" in w["trigger_hint"]
+               for w in out["watching"])

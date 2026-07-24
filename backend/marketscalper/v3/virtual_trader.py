@@ -220,6 +220,17 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
                 continue
             if session["effect"] == "BLOCK":
                 continue
+            # C5: a break against a DECIDED higher-TF ladder is a trap zone —
+            # trade breaks WITH the ladder (or in a neutral ladder), never against
+            if cfg.breakout_bias_aligned_only and bias in (_BULLISH, _BEARISH)                     and not ((bias == _BULLISH and bo_dir == _LONG)
+                             or (bias == _BEARISH and bo_dir == _SHORT)):
+                watching.append({
+                    "zone_id": zone["id"], "state": "ARMED", "direction": bo_dir,
+                    "lo": zone["lo"], "hi": zone["hi"], "distance": 0.0,
+                    "weight": zone["weight"], "explain": zone["explain"],
+                    "trigger_hint": f"break against the {bias.lower()} HTF ladder "
+                                    f"— continuation breaks only"})
+                continue
             brk_bar = bars[brk_i]
             strong = atr > 0 and abs(brk_bar["c"] - brk_bar["o"]) >= 1.5 * atr
             aligned = (bias == "BULLISH" and bo_dir == _LONG) or \

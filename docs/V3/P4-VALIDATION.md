@@ -50,6 +50,9 @@ Baseline for calibration = post-Breakout archetype.
 | **C1** | reversals must not fight the HTF ladder (bias-aligned/neutral only) | exp −0.03R→**+0.00R** · PF 0.96→**1.01** · totR −30.9R→**+4.5R** · Zone-Reversal totR −74.9R→**−38.5R** · breakout/breakdown UNCHANGED | **KEEP** (objective +; targeted the weak path; isolation proven) |
 | **C2** | reversal confirmation must be STRUCTURAL (displaced candle ≥1.2×ATR or 5m CHOCH; plain wick/engulfing = noise) | exp +0.00R→**+0.04R** · PF 1.01→**1.05** · totR +4.5R→**+32.8R** · false 472→**405** · Zone-Reversal: win 16%→21%, totR −38.5R→**−7.2R**, maxDD 48.7→26.0 · breakout/breakdown ~unchanged | **KEEP** |
 | C3 | reversals only at zones with an HTF (1h+) component | BYTE-IDENTICAL to baseline — after C1+C2 every surviving reversal already sits on an HTF-component zone (the map's containment-context pass guarantees it) | **REVERTED** (dead rule; no objective change) |
+| **C5** | breakouts/breakdowns must not fight a decided HTF ladder (continuation breaks only) | totR +32.8R→**+44.5R** · PF 1.05→**1.07** · maxDD 176→**149** · false 405→**348** · Breakout PF 1.17→1.21 · Breakdown −23.6→−13.4 · reversal untouched | **KEEP** |
+| C9 | breakeven stop once +1R prints (global) | totR +32.2R (↓) · PF 1.07 · maxDD 128 (↓↓) · win 16%→11% · Zone-Reversal −7.2→−23.2R (damaged) | **REJECTED** as global (totR/win fell); archetype-scoped BE = future candidate; kept as an OFF replay knob |
+| C8 | dead-trade exit after 36 bars < +1R | totR +26.1R (↓) · PF 1.04 (↓) | **REJECTED**; OFF replay knob |
 | C4 | TP targets only at ★4+ pools | BYTE-IDENTICAL — the engine only ever creates ★3+ pools (PDH/PDL/PWH/PWL ★5, EQH/EQL ★4, SESSION ★3) and the nearest opposing pools used as TP1 are already ★4+ in practice | **REVERTED** (dead rule; no objective change) |
 
 C1/C2 are principled (don't fight the ladder; demand structural evidence),
