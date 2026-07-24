@@ -90,6 +90,10 @@ class V3Config:
                                             # without sweep fuel = noise, skip
     boost_needs_fuel: bool = True      # trend sessions (London/NY) reward SWEEP
                                        # reversals; plain fades there lost 94-97%
+    strict_confirmation: bool = True   # calibration C2: a reversal confirmation
+                                       # must be STRUCTURAL — a displaced candle
+                                       # (body >=1.2xATR) or a 5m CHOCH; plain
+                                       # small-candle wicks/engulfings are noise
     reversal_bias_aligned_only: bool = True   # calibration C1: a reversal must
                                        # NOT fight the HTF ladder (bias-aligned or
                                        # NEUTRAL); counter-ladder fades = watch only

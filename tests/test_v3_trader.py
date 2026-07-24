@@ -65,6 +65,9 @@ POOL_UP = {"kind": "PDH", "price": 106.0, "priority": 5, "side": "BUYSIDE",
            "tf": "1h", "session": None}
 
 
+CFG_LOOSE = V3Config(strict_confirmation=False)   # candle-pattern paths
+
+
 def run(m, reads, bars, cfg=CFG):
     return build_trades("BTCUSDT", m, {}, reads, bars, cfg)
 
@@ -81,7 +84,7 @@ def test_rejection_wick_triggers_long_setup():
                  "l": 94.6, "c": 96.6})                 # rejection bar
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.6, "h": 97.4,
                  "l": 96.4, "c": 97.2})
-    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars)
+    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, CFG_LOOSE)
     assert out["setups"], out
     s = out["setups"][0]
     assert s["direction"] == "LONG" and s["state"] == "TRIGGERED"
@@ -127,7 +130,7 @@ def test_short_mirror_at_supply():
     pool_dn = {"kind": "PDL", "price": 94.0, "priority": 5, "side": "SELLSIDE",
                "tf": "1h", "session": None}
     out = run(mk_map([z], bias="BEARISH", pd_1h="PREMIUM", below=[pool_dn]),
-              {"5m": r5(trend="BEARISH")}, bars)
+              {"5m": r5(trend="BEARISH")}, bars, CFG_LOOSE)
     assert out["setups"] and out["setups"][0]["direction"] == "SHORT"
     assert out["setups"][0]["sl"] > 105.4
 
@@ -139,7 +142,7 @@ def test_wrong_half_blocks_reversal():
     bars = bars_path([100, 98, 96.5])
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.5, "h": 96.7,
                  "l": 94.6, "c": 96.6})
-    out = run(mk_map([z], pd_1h="PREMIUM", above=[POOL_UP]), {"5m": r5()}, bars)
+    out = run(mk_map([z], pd_1h="PREMIUM", above=[POOL_UP]), {"5m": r5()}, bars, CFG_LOOSE)
     assert not out["setups"]
     assert any("premium" in w["trigger_hint"] for w in out["watching"])
 
@@ -151,7 +154,7 @@ def test_rr_floor_blocks_thin_geometry():
     bars = bars_path([100, 98, 96.5], t0=ist_ts(6))
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.5, "h": 96.7,
                  "l": 94.6, "c": 96.6})
-    out = run(mk_map([z], above=[near_pool]), {"5m": r5()}, bars)
+    out = run(mk_map([z], above=[near_pool]), {"5m": r5()}, bars, CFG_LOOSE)
     assert not out["setups"]
     assert any("R:R" in w["trigger_hint"] for w in out["watching"])
 
@@ -161,7 +164,7 @@ def test_block_window_suppresses_setups():
     t0 = ist_ts(4)                                     # 04:00 IST = dead zone
     bars = bars_path([100, 98, 96.5], t0=t0)
     bars.append({"ts": t0 + 3 * 300, "o": 96.5, "h": 96.7, "l": 94.6, "c": 96.6})
-    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars)
+    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, CFG_LOOSE)
     assert not out["setups"]
     assert "session blocked" in out["message"]
 
@@ -208,7 +211,7 @@ def test_plain_fade_in_boost_window_not_boosted_and_floored():
     bars = bars_path([100, 98, 96.5])
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.5, "h": 96.7,
                  "l": 94.6, "c": 96.6})
-    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars)
+    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, CFG_LOOSE)
     assert not out["setups"]
     assert any("trend session" in w["trigger_hint"] or "floor" in w["trigger_hint"]
                for w in out["watching"])
@@ -220,7 +223,7 @@ def test_counter_trend_wick_without_fuel_skipped():
     bars.append({"ts": bars[-1]["ts"] + 300, "o": 97.0, "h": 97.2,
                  "l": 94.6, "c": 96.6})                 # rejection wick
     out = run(mk_map([z], above=[POOL_UP]),
-              {"5m": r5(trend="BEARISH")}, bars)        # 5m trend AGAINST the long
+              {"5m": r5(trend="BEARISH")}, bars, CFG_LOOSE)        # 5m trend AGAINST the long
     assert not out["setups"]
     assert any("counter-trend" in w["trigger_hint"] for w in out["watching"])
 
@@ -337,3 +340,37 @@ def test_breakout_boost_session_counts_without_fuel():
     out = run(mk_map([z], above=[pool_up]), {"5m": r5(trend="BULLISH")}, bars)
     assert out["setups"]
     assert any("trend window" in f for f in out["setups"][0]["reasons"])
+
+
+# ------------------------------------------------------------ calibration C2
+
+def test_c2_strict_blocks_small_candle_confirmation():
+    cfg = V3Config(strict_confirmation=True)
+    z = zone(95.0, 96.0)
+    bars = bars_path([100, 99, 98, 97], t0=ist_ts(6))
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 97.0, "h": 97.2,
+                 "l": 94.6, "c": 96.6})                 # small-body rejection
+    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, cfg)
+    assert not out["setups"]
+    assert any(w["state"] == "ARMED" for w in out["watching"])
+
+
+def test_c2_choch_still_confirms():
+    cfg = V3Config(strict_confirmation=True)
+    z = zone(95.0, 96.0)
+    bars = bars_path([100, 98, 96.5, 95.5, 95.6, 95.55, 95.7], t0=ist_ts(6))
+    reads = {"5m": r5(events=[{"kind": "CHOCH", "direction": "UP",
+                               "ts": bars[6]["ts"], "displaced": False}])}
+    out = run(mk_map([z], above=[POOL_UP]), reads, bars, cfg)
+    assert out["setups"] and out["setups"][0]["direction"] == "LONG"
+
+
+def test_c2_displaced_rejection_confirms():
+    cfg = V3Config(strict_confirmation=True)
+    z = zone(95.0, 96.0)
+    bars = bars_path([100, 99, 98, 97], t0=ist_ts(6))
+    # displaced rejection: body 1.4 > 1.2xATR(1.0), long lower wick
+    bars.append({"ts": bars[-1]["ts"] + 300, "o": 96.4, "h": 98.0,
+                 "l": 92.0, "c": 97.8})
+    out = run(mk_map([z], above=[POOL_UP]), {"5m": r5()}, bars, cfg)
+    assert out["setups"] and out["setups"][0]["direction"] == "LONG"

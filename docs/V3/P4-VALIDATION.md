@@ -48,12 +48,13 @@ Baseline for calibration = post-Breakout archetype.
 |---|---|---|---|
 | — | breakout added | −0.02..−0.03R · PF 0.96–0.98 | (archetype) |
 | **C1** | reversals must not fight the HTF ladder (bias-aligned/neutral only) | exp −0.03R→**+0.00R** · PF 0.96→**1.01** · totR −30.9R→**+4.5R** · Zone-Reversal totR −74.9R→**−38.5R** · breakout/breakdown UNCHANGED | **KEEP** (objective +; targeted the weak path; isolation proven) |
+| **C2** | reversal confirmation must be STRUCTURAL (displaced candle ≥1.2×ATR or 5m CHOCH; plain wick/engulfing = noise) | exp +0.00R→**+0.04R** · PF 1.01→**1.05** · totR +4.5R→**+32.8R** · false 472→**405** · Zone-Reversal: win 16%→21%, totR −38.5R→**−7.2R**, maxDD 48.7→26.0 · breakout/breakdown ~unchanged | **KEEP** |
 
-C1 is principled (don't catch tops/bottoms against a decided higher-timeframe
-ladder), not curve-fit; it is a `V3Config` flag. Reversals are still net negative
-(−0.21R) — the weak path continues; next candidates (independent, one at a time):
-confirmation quality (displacement/CHOCH-only), HTF-component-zone-only reversals,
-priority≥4 TP pools.
+C1/C2 are principled (don't fight the ladder; demand structural evidence),
+not curve-fit; both are `V3Config` flags. After C2, Zone Reversal is close to
+breakeven (−0.09R) and OVERALL is positive (+0.04R, PF 1.05) on this range.
+Next candidates (independent, one at a time): HTF-component-zone-only
+reversals, priority≥4 TP pools, breakdown-quality filters.
 
 ## Status
 

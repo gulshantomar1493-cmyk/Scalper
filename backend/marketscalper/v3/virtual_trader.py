@@ -347,6 +347,10 @@ def build_trades(symbol: str, mkt_map: dict, memory: dict, reads: dict,
         conf = _find_confirmation(direction, zone, bars, touch_i,
                                   choch_up if direction == _LONG else choch_dn,
                                   atr, cfg)
+        # calibration C2: only STRUCTURAL confirmations count — a displaced
+        # candle or a CHOCH. A small rejection wick in chop is not a signal.
+        if conf is not None and cfg.strict_confirmation and                 not (conf.displaced or conf.kind == "5m CHOCH"):
+            conf = None
         # location filter: longs from discount, shorts from premium (1h read)
         loc_ok = pd_1h is None or \
             (direction == _LONG and pd_1h == "DISCOUNT") or \
