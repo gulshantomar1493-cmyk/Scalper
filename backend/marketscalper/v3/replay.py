@@ -227,6 +227,7 @@ class ReplayEngine:
             trades.append({**sim, "id": s["id"], "direction": s["direction"],
                            "grade": s["grade"], "rr_planned": s["rr"],
                            "setup_type": s.get("setup_type"),
+                           "htf_bias": s.get("htf_bias"),
                            "session": (s.get("session") or {}).get("label"),
                            "entry": s["entry"], "sl": s["sl"], "tp1": s["tp1"],
                            "zone": (s.get("zone") or {}).get("explain"),
@@ -271,6 +272,10 @@ class ReplayEngine:
             "by_session": _split(trades, lambda t: t["session"]),
             "by_direction": _split(trades, lambda t: t["direction"]),
             "by_type": _split(trades, lambda t: t.get("setup_type")),
+            "by_regime": _split(trades, lambda t: t.get("htf_bias")),
+            "by_month": _split(trades, lambda t: str(t.get("created_ts", ""))[:7]),
+            "by_type_regime": _split(
+                trades, lambda t: f"{t.get('setup_type')}|{t.get('htf_bias')}"),
             "trades": sorted(trades, key=lambda t: t["created_ts"]),
             "false_trades": false_trades,
             "missed_trades": missed[:20],
