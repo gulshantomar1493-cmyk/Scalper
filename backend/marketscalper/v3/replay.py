@@ -156,6 +156,32 @@ class ReplayEngine:
     async def _candles(self, symbol: str, tf: str, start: datetime,
                        end: datetime) -> list[dict]:
         pad = timedelta(seconds=_TF_SECONDS[tf] * self._cfg.history_bars)
+        if tf == "5m":
+            # the 5m driver is folded from canonical 1m (stored 5m only covers
+            # the recent live-builder era; historical ranges would truncate)
+            chart = await self._charts.get_chart(symbol, "1m", start - pad, end)
+            ones = [{"ts": _parse_ts(c["ts"]), "o": float(c["o"]),
+                     "h": float(c["h"]), "l": float(c["l"]), "c": float(c["c"]),
+                     "v": float(c.get("v") or 0)}
+                    for c in chart["candles"] if c.get("complete", True)]
+            out: list[dict] = []
+            bucket = None
+            for b in ones:
+                key = b["ts"] - (b["ts"] % 300)
+                if bucket is None or bucket["ts"] != key:
+                    if bucket is not None:
+                        out.append(bucket)
+                    bucket = {"ts": key, "o": b["o"], "h": b["h"],
+                              "l": b["l"], "c": b["c"], "v": b["v"]}
+                else:
+                    bucket["h"] = max(bucket["h"], b["h"])
+                    bucket["l"] = min(bucket["l"], b["l"])
+                    bucket["c"] = b["c"]
+                    bucket["v"] += b["v"]
+            # the final bucket may be a partial 5m window — drop it (closed only)
+            if bucket is not None and ones and                     ones[-1]["ts"] == bucket["ts"] + 240:
+                out.append(bucket)
+            return out
         chart = await self._charts.get_chart(symbol, tf, start - pad, end)
         return [{"ts": _parse_ts(c["ts"]), "o": float(c["o"]), "h": float(c["h"]),
                  "l": float(c["l"]), "c": float(c["c"]),
