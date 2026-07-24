@@ -670,15 +670,17 @@ def test_help_js_exists_and_is_wired_before_app():
     assert html.index("help.js") < html.index('src="app.js"')  # loads first
 
 
-def test_index_has_help_center_with_all_topics():
+def test_learn_tab_replaces_help_with_v3_guide():
+    # The old overlay Help Center is REPLACED by the Dashboard -> Learn tab
+    # (the V3 Analysis Guide in simple Hinglish). Every V3 concept is covered.
     html = _read("index.html")
-    assert 'id="help-open"' in html and 'id="help"' in html and 'id="help-close"' in html
-    assert 'id="sidebar-help"' in html                         # global Help button (every page)
-    assert "help-center" in html and "data-help-goto" in html  # sectioned Help Center
-    # every requested Help Center topic is present (Hinglish walkthrough)
-    for topic in ("Getting Started", "Scanner", "Chart", "Trade Setup",
-                  "Indicators", "Market Structure", "BOS", "CHOCH", "Liquidity",
-                  "HTF Signals", "Paper Trading", "Journal", "Settings", "FAQ"):
+    assert 'id="help-open"' in html and 'id="sidebar-help"' in html
+    assert 'id="help"' not in html                             # old overlay removed
+    assert 'id="dash-learn"' in html and 'id="dash-tab-learn"' in html
+    for topic in ("FVG", "Fresh", "Tested", "Broken", "Trendline", "Liquidity",
+                  "Equal High", "Swing High", "CHOCH", "BOS", "Order Block",
+                  "Premium", "Discount", "Breakout", "Breakdown", "Reversal",
+                  "Session Timing", "Confluence"):
         assert topic in html, topic
     assert "ANALYSIS tool" in html                             # core message preserved
 
@@ -695,11 +697,11 @@ def test_key_controls_have_hinglish_tooltips():
 
 def test_help_js_is_a_pure_ui_toggler():
     js = _read("help.js")
-    # no data, no network, no engine math — help is static text + show/hide
+    # no data, no network, no engine math — help now ROUTES to the Learn tab
     for banned in ("fetch(", "WebSocket", "Math.log", "Math.exp", "slope",
                    "intercept", "ATR", "tolerance", "XMLHttpRequest"):
         assert banned not in js, banned
-    assert "getElementById(\"help\")" in js
+    assert "dash-tab-learn" in js and "#/dashboard" in js
 
 
 def test_help_never_auto_opens_and_is_globally_reachable():
@@ -708,7 +710,6 @@ def test_help_never_auto_opens_and_is_globally_reachable():
     assert "ms_help_seen" not in js and "localStorage" not in js
     # both the Live-header ❓ AND the GLOBAL sidebar button open it (every page)
     assert 'getElementById("help-open")' in js and 'getElementById("sidebar-help")' in js
-    assert "data-help-goto" in js                              # topic navigation
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="node not available")
@@ -800,7 +801,8 @@ def test_sidebar_has_six_grouped_nav_items():
     assert 'id="sidebar"' in html
     for grp in ("Trading", "Analytics", "Account"):
         assert f'sb-group">{grp}' in html, grp
-    for nav in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):
+    for nav in ("dashboard", "live", "replay", "paper", "history", "review",
+                "journal", "analytics", "settings"):
         assert f'data-nav="{nav}"' in html, nav
     # honest naming — the Trade Review nav (recommendation performance) is not
     # mislabeled "Paper Trading"; the separate P6 simulator + its Help topic may
@@ -922,13 +924,15 @@ def test_chart_draggable_sltp_order_lines():
         assert sel in css, sel
 
 
-def test_router_has_six_pages_live_default_active():
+def test_router_pages_dashboard_default():
     html = _read("index.html")
-    for pg in ("live", "replay", "paper", "review", "journal", "analytics", "settings"):
+    for pg in ("dashboard", "live", "replay", "paper", "history", "review",
+               "journal", "analytics", "settings"):
         assert f'data-page="{pg}"' in html, pg
-    # the live page is active by default
-    i = html.index('data-page="live"')
-    assert 'class="page active"' in html[i - 60:i]
+    sh = _read("shell.js")
+    # dashboard is the DEFAULT page and every page (incl. history) is routable
+    assert '"dashboard", "live"' in sh and '"history"' in sh
+    assert 'name = "dashboard"' in sh
 
 
 def test_beginner_toggle_present_and_preapplied():
@@ -945,7 +949,9 @@ def test_core_functionality_elements_preserved():
     for el in ('id="chart"', 'id="quality-panel"', 'id="sym-BTCUSDT"',
                'id="replay-start"', 'id="audit-pick"', 'id="conn-text"', 'id="last-event"'):
         assert el in html, el
-    assert 'id="dashboard"' in html and 'id="help"' in html
+    assert 'id="dashboard"' in html                       # analytics overlay
+    assert 'data-page="dashboard"' in html                # the V3 dashboard page
+    assert 'id="help"' not in html                        # old overlay replaced by Learn
 
 
 def test_shell_js_is_navigation_only_no_data():
@@ -1476,10 +1482,48 @@ def test_v3_history_page_pure_and_wired():
 
 
 def test_full_chart_mode():
-    """Open Full Chart: the SAME app in a new tab with ?full=1 — chart-only
-    layout, all existing tools intact (no second chart implementation)."""
+    """Open Full Chart: ALWAYS-VISIBLE buttons (chart toolbar + Dashboard Home)
+    open the SAME app in a new tab with ?full=1 — chart-only layout, all
+    existing tools intact (no second chart implementation)."""
     html, app, css = _read("index.html"), _read("app.js"), _read("styles.css")
-    assert 'id="tb-fullchart"' in html
-    assert 'params.get("full")' in app and "fullchart" in app
+    # visible toolbar button (NOT inside the ⋮ overflow) + the Home button
+    tb = html[html.index("chart-toolbar"):html.index("lv-chartarea")]
+    more = tb[tb.index('id="tb-more-panel"'):]
+    assert 'id="tb-fullchart"' in tb and 'id="tb-fullchart"' not in more
+    assert 'id="home-fullchart"' in html
+    assert "openFullChart" in app and 'params.get("full")' in app
     assert 'searchParams.set("full", "1")' in app and "window.open" in app
     assert "body.fullchart #sidebar" in css and "body.fullchart #quality-panel" in css
+
+
+def test_dashboard_three_tabs_and_home_wiring():
+    """V3 Dashboard: default page with Home / Learn / Trade Recommendations.
+    home.js is a pure renderer (Hinglish mapping of backend values); app.js owns
+    every fetch (maps + setups for BOTH symbols, history for recs)."""
+    html = _read("index.html")
+    for i in ("dash-tab-home", "dash-tab-learn", "dash-tab-recs",
+              "home-cards", "dashrec-active", "dashrec-closed", "dashrec-filters"):
+        assert f'id="{i}"' in html, i
+    hj = _read("home.js")
+    for banned in ("fetch(", "WebSocket", "XMLHttpRequest", "localStorage",
+                   "sessionStorage", "innerHTML", "Math.log", "aggregate"):
+        assert banned not in hj, banned
+    assert "window.Home" in hj and "renderMarket" in hj and "renderRecs" in hj
+    # Hinglish presentation + per-indicator "?" explainers
+    assert "buyers control mein" in hj.lower() or "buyers control" in hj
+    assert "hc-q" in hj and "hc-exp" in hj
+    app = _read("app.js")
+    assert "loadDashboard" in app and "loadDashRecs" in app
+    assert '"BTCUSDT", "ETHUSDT"' in app                       # both symbols
+    assert "status=ACTIVE" in app                              # active section
+    assert "latest 4" in app or "slice(0, 4)" in app           # default fallback
+    css = _read("styles.css")
+    assert ".home-card" in css and ".dr-badge" in css and ".learn-item" in css
+
+
+def test_dashboard_recs_ist_and_colors():
+    hj = _read("home.js")
+    assert "window.IST.dateTime" in hj                          # IST timestamps
+    assert "Target Hit" in hj and "Stop Loss Hit" in hj         # result badges
+    css = _read("styles.css")
+    assert ".dr-b-win" in css and ".dr-b-loss" in css           # green / red

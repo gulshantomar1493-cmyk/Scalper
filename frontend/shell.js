@@ -6,12 +6,12 @@
  * beginner-mode choices persist in localStorage (a UI pref, not the token). */
 (function () {
   "use strict";
-  var PAGES = ["live", "replay", "paper", "review", "journal", "analytics", "settings"];
+  var PAGES = ["dashboard", "live", "replay", "paper", "history", "review", "journal", "analytics", "settings"];
   var PAGE_KEY = "ms_page", BEG_KEY = "ms_beginner";
   var root = document.documentElement;
 
   function show(name) {
-    if (PAGES.indexOf(name) < 0) name = "live";
+    if (PAGES.indexOf(name) < 0) name = "dashboard";
     var pages = document.querySelectorAll(".page");
     for (var i = 0; i < pages.length; i++) {
       pages[i].classList.toggle("active", pages[i].getAttribute("data-page") === name);
@@ -41,12 +41,12 @@
       });
     })(navs[k]);
   }
-  window.addEventListener("hashchange", function () { show(fromHash() || "live"); });
+  window.addEventListener("hashchange", function () { show(fromHash() || "dashboard"); });
 
   // initial route: hash > last saved > live
   var start = fromHash();
   if (!start) { try { start = window.localStorage.getItem(PAGE_KEY); } catch (e) {} }
-  show(PAGES.indexOf(start) >= 0 ? start : "live");
+  show(PAGES.indexOf(start) >= 0 ? start : "dashboard");
 
   // ---- beginner mode (helper text on/off; the head script applied it early) ----
   var bt = document.getElementById("beginner-toggle");
@@ -60,11 +60,4 @@
     setBeginner(root.getAttribute("data-beginner") !== "on");
   });
 
-  // ---- sidebar "Need help?" -> route to Live, then open the existing Madad guide ----
-  var sh = document.getElementById("sidebar-help");
-  if (sh) sh.addEventListener("click", function () {
-    window.location.hash = "#/live";
-    var open = document.getElementById("help-open");
-    if (open) open.click();
-  });
 })();

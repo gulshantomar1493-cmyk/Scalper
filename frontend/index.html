@@ -21,6 +21,7 @@
   <nav id="sidebar">
     <div class="sb-brand"><span class="sb-logo">📈</span><div><b>MarketScalper</b><small>decision support</small></div></div>
     <div class="sb-group">Trading</div>
+    <button class="sb-nav" type="button" data-nav="dashboard" title="Market ka simple summary — beginner friendly"><svg viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></svg>Dashboard</button>
     <button class="sb-nav" type="button" data-nav="live" title="Live analysis"><svg viewBox="0 0 24 24"><path d="M3 12h4l3 8 4-16 3 8h4"/></svg>Live</button>
     <button class="sb-nav" type="button" data-nav="replay" title="Practice historical trades"><svg viewBox="0 0 24 24"><path d="M7 5l11 7-11 7z"/></svg>Replay</button>
     <button class="sb-nav" type="button" data-nav="paper" title="Paper trading — practice with virtual money (simulation only, no real orders)"><svg viewBox="0 0 24 24"><path d="M3 6h18v12H3z"/><path d="M3 10h18M7 15h5"/></svg>Paper Trading</button>
@@ -39,8 +40,134 @@
 
   <div id="main">
     <div id="pages">
+      <!-- ===================== DASHBOARD (default, beginner-friendly) ===================== -->
+      <section class="page" data-page="dashboard">
+        <div class="page-pad dash-wrap">
+          <div class="dash-head">
+            <h2 class="pg-title">Dashboard</h2>
+            <button id="home-fullchart" class="dash-fullchart" type="button" title="Chart ko bade full-screen tab mein kholo">🗖 Open Full Chart</button>
+          </div>
+          <div class="dash-tabs mono" role="tablist">
+            <button id="dash-tab-home" class="dash-tab on" type="button">Home</button>
+            <button id="dash-tab-learn" class="dash-tab" type="button">Learn</button>
+            <button id="dash-tab-recs" class="dash-tab" type="button">Trade Recommendations</button>
+          </div>
+
+          <!-- TAB 1 - HOME: market ka simple Hinglish summary (BTC + ETH) -->
+          <div id="dash-home" class="dash-pane">
+            <div id="home-cards" class="home-cards"><div class="dash-empty">Market summary load ho raha hai…</div></div>
+          </div>
+
+          <!-- TAB 2 - LEARN: V3 Analysis Guide (replaces the old Help/Madad) -->
+          <div id="dash-learn" class="dash-pane" hidden>
+            <div class="learn-wrap">
+              <p class="learn-intro">Ye guide batati hai ki engine chart par kya-kya draw karta hai, wo kyun important hai, aur engine + traders usko kaise use karte hain. Sab simple Hinglish mein. Yaad rahe: <b>ye ANALYSIS tool hai — trade tum khud manually loge.</b></p>
+
+              <details class="learn-item" open><summary>Swing High / Swing Low</summary>
+                <p><b>Kya hai?</b> Chart par local upar ka point (swing high) aur niche ka point (swing low) — jahan se price ne turn liya.</p>
+                <p><b>Kyun important?</b> Market ki poori structure inhi points se banti hai — HH/HL (upar) ya LH/LL (niche).</p>
+                <p><b>Engine kaise use karta hai?</b> Har timeframe par swings detect karke trend, BOS, CHOCH, trendlines aur zones banata hai.</p>
+                <p><b>Traders kaise use karte hain?</b> Swing ke upar/niche stop-loss rakhte hain; break hone par trend change samajhte hain.</p></details>
+
+              <details class="learn-item"><summary>Market Structure (HH / HL / LH / LL)</summary>
+                <p><b>Kya hai?</b> Ye batata hai market upar chal raha hai ya niche. Higher-High + Higher-Low = uptrend; Lower-High + Lower-Low = downtrend.</p>
+                <p><b>Kyun important?</b> Trend ke saath trade karna sabse high-probability hota hai.</p>
+                <p><b>Engine kaise use karta hai?</b> Har TF ki structure se bias ladder banata hai (1D sabse zyada weight). Reversal sirf ladder ke SAATH deta hai, against nahi.</p>
+                <p><b>Traders kaise use karte hain?</b> "Trend is your friend" — structure dekh ke direction choose karte hain.</p></details>
+
+              <details class="learn-item"><summary>BOS — Break of Structure</summary>
+                <p><b>Kya hai?</b> Price ne trend ki direction mein pichhla swing TOD diya — matlab trend continue.</p>
+                <p><b>Kyun important?</b> Confirm karta hai ki current trend zinda hai.</p>
+                <p><b>Engine kaise use karta hai?</b> BOS se trend confirm hota hai; displacement wale BOS ke pichhe Order Block banata hai.</p>
+                <p><b>Traders kaise use karte hain?</b> BOS ke baad pullback par entry dhundhte hain.</p></details>
+
+              <details class="learn-item"><summary>CHOCH — Change of Character</summary>
+                <p><b>Kya hai?</b> Price ne PEHLI baar opposite side ka swing tod diya — trend badalne ka pehla signal.</p>
+                <p><b>Kyun important?</b> Reversal ka sabse reliable structural clue.</p>
+                <p><b>Engine kaise use karta hai?</b> Zone par CHOCH = strongest confirmation; counter-trend setup CHOCH ke bina issue nahi hota.</p>
+                <p><b>Traders kaise use karte hain?</b> CHOCH ke baad naye trend ki taraf position banate hain.</p></details>
+
+              <details class="learn-item"><summary>Liquidity (stops ka pool)</summary>
+                <p><b>Kya hai?</b> Jahan bahut saare traders ke stop-loss pade hote hain — highs ke upar (buy-side) aur lows ke niche (sell-side).</p>
+                <p><b>Kyun important?</b> Price aksar inhi levels ki taraf khichti hai (draw), kyunki wahan orders bhare hue hain.</p>
+                <p><b>Engine kaise use karta hai?</b> Har pool ko rank karta hai (PDH/PDL, weekly = ★5) aur TP targets inhi par rakhta hai. Sweep hone par reversal ka "fuel" maanta hai.</p>
+                <p><b>Traders kaise use karte hain?</b> Liquidity ke paas profit book karte hain, ya sweep ke baad reversal khelte hain.</p></details>
+
+              <details class="learn-item"><summary>Equal High / Equal Low (EQH / EQL)</summary>
+                <p><b>Kya hai?</b> Do ya zyada highs (ya lows) bilkul same level par — double/triple top jaisa.</p>
+                <p><b>Kyun important?</b> Wahan stops ka bada cluster hota hai — magnet ki tarah.</p>
+                <p><b>Engine kaise use karta hai?</b> EQH/EQL ko ★4 liquidity pool banata hai; sweep ke baad track karta hai (reverse hua ya continue).</p>
+                <p><b>Traders kaise use karte hain?</b> Equal highs ke upar ka sweep aksar short ka mauka deta hai (aur ulta).</p></details>
+
+              <details class="learn-item"><summary>Fresh / Tested / Broken Zone</summary>
+                <p><b>Kya hai?</b> Har zone ki life hoti hai: <b>FRESH</b> = abhi tak touch nahi hua (sabse strong) → <b>TESTED</b> = ek baar react ho chuka → <b>WEAK</b> = 3+ baar touch (orders khatam) → <b>BROKEN</b> = price ne close ke saath tod diya → <b>RETIRED</b>.</p>
+                <p><b>Kyun important?</b> Fresh zone par reaction ka chance sabse zyada; baar-baar test hua zone tootne wala hota hai.</p>
+                <p><b>Engine kaise use karta hai?</b> FRESH component ko confluence maanta hai; BROKEN demand role-flip hoke supply ban jaata hai (aur ulta).</p>
+                <p><b>Traders kaise use karte hain?</b> Fresh zone ka pehla retest = classic entry.</p></details>
+
+              <details class="learn-item"><summary>Order Block (OB)</summary>
+                <p><b>Kya hai?</b> Bade move se pehle ki aakhri opposite candle — jahan institutions ne orders bhare the.</p>
+                <p><b>Kyun important?</b> Price wapas aake aksar wahin se react karti hai.</p>
+                <p><b>Engine kaise use karta hai?</b> Displacement BOS ke pichhe OB zone banata hai; entry-zones mein count hota hai.</p>
+                <p><b>Traders kaise use karte hain?</b> OB tak pullback ka wait karke enter karte hain.</p></details>
+
+              <details class="learn-item"><summary>FVG — Fair Value Gap</summary>
+                <p><b>Kya hai?</b> 3 candles ke beech ka price gap — market itni tez bhagi ki beech mein trade hi nahi hua.</p>
+                <p><b>Kyun important?</b> Price aksar is gap ko "fill" karne wapas aati hai.</p>
+                <p><b>Engine kaise use karta hai?</b> Bade FVG (≥0.3×ATR) ko zone banata hai, fill hone tak track karta hai.</p>
+                <p><b>Traders kaise use karte hain?</b> FVG ke 50% par entry lagate hain.</p></details>
+
+              <details class="learn-item"><summary>Trendline</summary>
+                <p><b>Kya hai?</b> 2+ swings ko jodne wali line — rising support ya falling resistance.</p>
+                <p><b>Kyun important?</b> Jitne zyada touches, utni important line — uske aas-paas orders cluster hote hain.</p>
+                <p><b>Engine kaise use karta hai?</b> Har TF par lines lifecycle ke saath banata hai (NEW→VALID→STRONG→WEAK→BROKEN); sirf VALID/STRONG lines zones aur confluence mein count hoti hain.</p>
+                <p><b>Traders kaise use karte hain?</b> Line par bounce, ya line break ke baad retest trade karte hain.</p></details>
+
+              <details class="learn-item"><summary>Premium / Discount</summary>
+                <p><b>Kya hai?</b> Range ke upar wala half = premium (mehnga), niche wala half = discount (sasta).</p>
+                <p><b>Kyun important?</b> Sasta kharido, mehnga becho — discount mein LONG, premium mein SHORT.</p>
+                <p><b>Engine kaise use karta hai?</b> Reversal LONG sirf discount mein, SHORT sirf premium mein allow karta hai.</p>
+                <p><b>Traders kaise use karte hain?</b> Range ka 50% nikaal ke sirf sahi half mein trade karte hain.</p></details>
+
+              <details class="learn-item"><summary>Breakout / Breakdown</summary>
+                <p><b>Kya hai?</b> Price ne resistance ke UPAR (breakout) ya support ke NICHE (breakdown) displacement ke saath close kiya, phir wapas aake level ko HOLD kiya (retest).</p>
+                <p><b>Kyun important?</b> Level ka haath badal gaya — ab wahi level ulta kaam karega. Trend sessions (London/NY) mein ye best pattern hai.</p>
+                <p><b>Engine kaise use karta hai?</b> Displaced break + retest-hold ke baad hi setup deta hai; entry = broken level, SL = level ke andar wapas.</p>
+                <p><b>Traders kaise use karte hain?</b> Break ke baad retest par enter karte hain — chase nahi karte.</p></details>
+
+              <details class="learn-item"><summary>Reversal (Zone Reversal)</summary>
+                <p><b>Kya hai?</b> Price ek strong zone par aayi, wahan se REJECT hui (rejection wick / engulfing / CHOCH), aur wapas mud gayi.</p>
+                <p><b>Kyun important?</b> Zone + confirmation + liquidity sweep = high-probability turn.</p>
+                <p><b>Engine kaise use karta hai?</b> Sirf mapped zone par, HTF ladder ke SAATH, sahi premium/discount half mein, 5m confirmation ke baad — tab setup issue hota hai.</p>
+                <p><b>Traders kaise use karte hain?</b> Sweep ke baad ki rejection candle par entry, wick ke pichhe stop.</p></details>
+
+              <details class="learn-item"><summary>Session Timing (IST)</summary>
+                <p><b>Kya hai?</b> Din ke alag time par market ka behaviour alag hota hai — London+NY overlap (19:30–22:30 IST) sabse best; raat 02:00–05:30 dead zone.</p>
+                <p><b>Engine kaise use karta hai?</b> Dead windows mein setups BLOCK, lunch chop (11:30–13:30) mein grade downgrade, best windows mein breakout ko boost.</p></details>
+
+              <details class="learn-item"><summary>Grade (A+ / A) aur Confluence</summary>
+                <p><b>Kya hai?</b> Grade = kitne independent reasons ek saath agree kar rahe (7 mein se). A+ = 5+, A = 3+. Ye probability % NAHI hai — sirf agreement ka count.</p>
+                <p><b>Kyun important?</b> Jitne zyada reasons, utna strong setup. Engine kabhi fake confidence % nahi dikhata.</p></details>
+            </div>
+          </div>
+
+          <!-- TAB 3 - TRADE RECOMMENDATIONS: active + closed, simple view -->
+          <div id="dash-recs" class="dash-pane" hidden>
+            <div class="dashrec-sec">
+              <div class="dashrec-h">Active Trades <span class="dashrec-sub">abhi chal rahe recommendations</span></div>
+              <div id="dashrec-active" class="dashrec-list"><div class="dash-empty">Loading…</div></div>
+            </div>
+            <div class="dashrec-sec">
+              <div class="dashrec-h">Closed Trades <span class="dashrec-sub">complete ho chuke — result ke saath</span></div>
+              <div id="dashrec-filters" class="dashrec-filters mono"></div>
+              <div id="dashrec-closed" class="dashrec-list"><div class="dash-empty">Loading…</div></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
       <!-- ===================== LIVE (v3 terminal) ===================== -->
-      <section class="page active" data-page="live">
+      <section class="page" data-page="live">
         <header class="lv-top">
           <div class="switcher lv-sym mono">
             <button id="sym-BTCUSDT" type="button" title="Bitcoin">BTCUSDT</button>
@@ -110,12 +237,12 @@
               </div>
               <button id="tb-structure" class="tb-btn" type="button" title="Smart Money Concepts: overlay full market structure (HH/HL/BOS/CHoCH/OB/FVG). Off by default — execution chart stays clean.">≋ SMC</button>
               <span class="tb-spacer"></span>
+              <button id="tb-fullchart" class="tb-btn tb-fullchart" type="button" title="Chart ko bade full-screen tab mein kholo — saare tools waise hi chalenge">🗖 Full Chart</button>
               <button id="tb-autoscale" class="tb-btn" type="button" title="Toggle auto-scale">Auto</button>
               <button id="tb-reset" class="tb-btn" type="button" title="Reset view">⤢ Reset</button>
               <div class="ind-menu">
                 <button id="tb-more" class="tb-btn" type="button" title="More actions" aria-label="More actions">⋮</button>
                 <div id="tb-more-panel" class="ind-panel tb-more-panel" hidden>
-                  <button id="tb-fullchart" class="draw-tool" type="button" title="Open the chart alone in a new tab — full workspace, all tools">🗖 Open Full Chart</button>
                   <button id="tb-fullscreen" class="draw-tool" type="button">⛶ Fullscreen</button>
                   <button id="tb-screenshot" class="draw-tool" type="button">📷 Screenshot</button>
                 </div>
@@ -304,84 +431,6 @@
     </div>
   </div>
 
-  <div id="help" class="help-overlay">
-    <div class="help-panel help-center">
-      <div class="help-head"><h1>MarketScalper — Help Center / Madad</h1><button id="help-close" type="button" class="help-close" title="Band karo (Esc)">✕</button></div>
-      <div class="help-body">
-        <nav class="help-nav" aria-label="Help topics">
-          <button type="button" data-help-goto="h-start" class="active">Getting Started</button>
-          <button type="button" data-help-goto="h-scanner">Scanner</button>
-          <button type="button" data-help-goto="h-chart">Chart</button>
-          <button type="button" data-help-goto="h-setup">Trade Setup</button>
-          <button type="button" data-help-goto="h-ind">Indicators</button>
-          <button type="button" data-help-goto="h-ms">Market Structure</button>
-          <button type="button" data-help-goto="h-bos">BOS</button>
-          <button type="button" data-help-goto="h-choch">CHOCH</button>
-          <button type="button" data-help-goto="h-liq">Liquidity</button>
-          <button type="button" data-help-goto="h-htf">HTF Signals</button>
-          <button type="button" data-help-goto="h-paper">Paper Trading</button>
-          <button type="button" data-help-goto="h-journal">Journal</button>
-          <button type="button" data-help-goto="h-settings">Settings</button>
-          <button type="button" data-help-goto="h-faq">FAQ</button>
-        </nav>
-        <div class="help-content">
-          <section id="h-start" class="help-sec"><h2>🎯 Getting Started</h2>
-            <p>MarketScalper ek <b>market ANALYSIS tool</b> hai — ye khud trade <b>NAHI</b> karta. Ye tumhe batata hai ki <b>kab, kahan aur kyun</b> ek setup ban raha hai. Order tum khud apne exchange par lagate ho.</p>
-            <p><b>Shuru kaise karein:</b> Left sidebar se pages badlo — <b>Live</b> (main screen), Replay, Trade Review, Journal, Analytics, Settings. Live screen par: beech mein candle chart, upar coin + timeframe, right side mein analysis panel.</p>
-            <p>Naye ho? Sidebar mein <b>Beginner Mode</b> ON rakho — har control ke neeche simple helper text dikhega.</p></section>
-          <section id="h-scanner" class="help-sec"><h2>📡 Scanner</h2>
-            <p>Upar green <b>"Scanner running"</b> pill dikhta hai — matlab tool continuously BTC aur ETH ko scan kar raha hai, har minute.</p>
-            <p>Status badalta rehta hai (jaise "Checking liquidity", "Searching trade setups") — ye bata raha hai abhi kya check ho raha hai. <b>"last scan HH:MM"</b> = aakhri scan ka time. Green dot = live connected.</p></section>
-          <section id="h-chart" class="help-sec"><h2>📈 Chart</h2>
-            <ul><li>Green candle = price upar gaya, red = neeche.</li>
-            <li>Upar <b>coin buttons</b> (BTCUSDT / ETHUSDT) — click karke coin badlo; chart apne aap naye coin ke price par fit ho jata hai.</li>
-            <li><b>Timeframe</b> (1m … 1M): 1m/5m par analysis milta hai; bade TF sirf context ke liye.</li>
-            <li>Mouse se zoom/pan karo. <b>Reset</b> = default view wapas. <b>Auto</b> = price auto-fit on/off.</li>
-            <li>Neeche-daayein <b>countdown</b> = current candle band hone mein kitna time.</li>
-            <li><b>Draw</b> menu se trendline / horizontal line / rectangle / fibonacci bana sakte ho.</li></ul></section>
-          <section id="h-setup" class="help-sec"><h2>🎯 Trade Setup</h2>
-            <p>Right side ka <b>Recommendation</b> card = current trade setup.</p>
-            <ul><li><b>LONG</b> (buy) ya <b>SHORT</b> (sell) + grade (A+ best, A, B) + confidence % + stars.</li>
-            <li>Verdict: <b>TRADEABLE</b> = achha setup; <b>BELOW THRESHOLD</b> = abhi kamzor.</li>
-            <li><b>"Why?"</b> par click karke saari safety checks (gates) + reasons dekho.</li>
-            <li><b>Trade Plan</b> card: Entry, Stop-loss, Target 1 &amp; 2, Risk:Reward — ye sirf <b>SUGGESTION</b> hai, order tum khud lagao.</li></ul>
-            <p>Yaad rakho: setup sirf <b>1m/5m</b> par milta hai.</p></section>
-          <section id="h-ind" class="help-sec"><h2>📊 Indicators</h2>
-            <p>Chart par <b>EMA</b> (moving average lines), <b>SMA</b>, <b>RSI</b> aur <b>Volume</b> laga sakte ho. Upar <b>"Indicators ▾"</b> menu se on/off karo aur period (jaise EMA 20/50/200) change karo.</p>
-            <p>Ye sab <b>backend mein</b> compute hote hain — har device par same value.</p></section>
-          <section id="h-ms" class="help-sec"><h2>🏗️ Market Structure</h2>
-            <p>Market kaise move kar raha hai: <b>HH</b> (higher high), <b>HL</b> (higher low), <b>LH</b> (lower high), <b>LL</b> (lower low).</p>
-            <p><b>HH + HL = Uptrend</b> (upar). <b>LH + LL = Downtrend</b> (neeche). Right side ka <b>Market Structure</b> box live events stream karta hai (swings, sweeps, BOS, CHOCH).</p></section>
-          <section id="h-bos" class="help-sec"><h2>⛓️ BOS (Break of Structure)</h2>
-            <p><b>BOS = trend continue</b> hone ka signal. Uptrend mein price last high ke <b>upar close</b> kare = BOS UP (trend aage badh raha). Downtrend mein last low ke <b>neeche</b> = BOS DOWN.</p></section>
-          <section id="h-choch" class="help-sec"><h2>🔄 CHOCH (Change of Character)</h2>
-            <p><b>CHOCH = trend palatne (reverse)</b> ka pehla signal. Uptrend mein price last low ke neeche toot jaye = CHOCH DOWN (uptrend kamzor). Ye ek <b>warning</b> hai — abhi confirm nahi; structure ka wait karo.</p></section>
-          <section id="h-liq" class="help-sec"><h2>💧 Liquidity</h2>
-            <p><b>Liquidity</b> = jahan bahut saare stop-loss orders pade hain — equal highs (<b>EQH</b>) / equal lows (<b>EQL</b>).</p>
-            <p><b>Sweep</b> = price un levels ko touch karke wapas palat jaana (stops hunt karke). <b>Sweep + CHOCH</b> = strong reversal setup.</p></section>
-          <section id="h-htf" class="help-sec"><h2>🔭 HTF Signals</h2>
-            <p>Right panel mein <b>"Higher-Timeframe Bias"</b> — 15m/1h/4h/1d ka overall direction (BULLISH / BEARISH / NEUTRAL) + score + confidence. Har TF ka card: trend, structure, momentum.</p>
-            <p><b>"✓ aligned / ✗ conflicting with your signal"</b> = HTF tumhare 1m/5m signal se agree karta hai ya nahi. Ye sirf <b>context</b> hai — execution 1m/5m par hi hota hai.</p></section>
-          <section id="h-paper" class="help-sec"><h2>🧪 Paper Trading</h2>
-            <p><b>(Aa raha hai / coming soon):</b> virtual paise se real-exchange jaisa practice trading — bina kisi asli order ke, sab kuch hamare apne database mein (100% simulation, safe).</p>
-            <p>Abhi ke liye: <b>Replay</b> page par purane data se practice karo, aur <b>Trade Review</b> mein dekho recommendations ne kaisa perform kiya.</p></section>
-          <section id="h-journal" class="help-sec"><h2>📓 Journal</h2>
-            <p>Apne trades, notes aur lessons <b>log karo</b> — kya socha, entry/exit/SL/TP, kya galti hui, kya seekha, emotion, tags.</p>
-            <p>Purane trades review karke apni mistakes se seekho — ek acha trader apna journal maintain karta hai.</p></section>
-          <section id="h-settings" class="help-sec"><h2>⚙️ Settings</h2>
-            <ul><li><b>Theme</b> (dark / light) aur <b>Beginner Mode</b> on/off.</li>
-            <li><b>Notifications:</b> Telegram + desktop alerts — naya setup aane par ping.</li>
-            <li>Symbols / timeframes / API host ki info.</li></ul></section>
-          <section id="h-faq" class="help-sec"><h2>❓ FAQ</h2>
-            <p><b>Q: Ye tool khud trade karta hai?</b><br>Nahi. Sirf analysis; order tum lagao.</p>
-            <p><b>Q: Signal kyun nahi mil raha?</b><br>Ya to safety gates pass nahi hue, ya score threshold se kam hai.</p>
-            <p><b>Q: Strategy TRUSTED kab hoti hai?</b><br>200+ recommendations par, fees ke baad positive result aane par. Tab tak signals blindly follow mat karo.</p>
-            <p><b>Q: Real paise lagte hain?</b><br>Nahi — ye decision-support tool hai, koi real order nahi.</p>
-            <p><b>Q: Bade timeframe par signal kyun nahi?</b><br>Execution sirf 1m/5m par; bade TF sirf context ke liye.</p></section>
-        </div>
-      </div>
-    </div>
-  </div>
 
   <!-- Login overlay — gates the app until the user signs in (token via /login). -->
   <div id="login-overlay" class="login-overlay" hidden>
@@ -408,6 +457,7 @@
   <script src="dashboard.js"></script>
   <script src="journal.js"></script>
   <script src="history.js"></script>
+  <script src="home.js"></script>
   <script src="paper.js"></script>
   <script src="ops.js"></script>
   <script src="notify.js"></script>

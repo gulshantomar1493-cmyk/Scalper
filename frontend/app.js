@@ -577,6 +577,71 @@ async function loadHistoryPage(params) {
   } catch (e) { note(`history: ${e.message}`); }
 }
 
+/* ---- V3 Dashboard (Home / Learn / Recs) — app.js owns all fetches ---- */
+let dashInit = false;
+function openFullChart() {
+  const u = new URL(window.location.href);
+  u.searchParams.set("full", "1");
+  window.open(u.toString(), "_blank");
+}
+async function loadDashboard() {
+  if (!window.Home) return;
+  if (!dashInit) {
+    dashInit = true;
+    Home.init({}, { fullChart: openFullChart, loadRecs: loadDashRecs });
+    Home.renderRecFilters();
+  }
+  try {
+    const syms = ["BTCUSDT", "ETHUSDT"];
+    const results = await Promise.all(syms.map(async (sym) => {
+      const [map, setups] = await Promise.all([
+        api(`/api/v3/map?symbol=${sym}`, { method: "GET" }).catch(() => null),
+        api(`/api/v3/setups?symbol=${sym}`, { method: "GET" }).catch(() => null),
+      ]);
+      return [sym, { map, setups }];
+    }));
+    Home.renderMarket(Object.fromEntries(results));
+  } catch (e) { note(`dashboard: ${e.message}`); }
+  loadDashRecs();
+}
+// Closed default: aaj ke trades; aaj ka kuch nahi to latest 4. Active always.
+async function loadDashRecs(filters) {
+  if (!window.Home) return;
+  try {
+    const act = await api(`/api/v3/history?status=ACTIVE&limit=50`, { method: "GET" });
+    let closed = [], noteTxt = null;
+    const f = filters || {};
+    const qs = (extra) => {
+      const p = new URLSearchParams({ limit: "100", sort: "ts", order: "desc" });
+      for (const k of ["symbol", "direction", "grade", "status"]) if (f[k]) p.set(k, f[k]);
+      if (extra.date_from) p.set("date_from", extra.date_from);
+      if (extra.date_to) p.set("date_to", extra.date_to);
+      return p.toString();
+    };
+    const notActive = (r) => r.status !== "ACTIVE";
+    if (f.date_from || f.date_to || f.symbol || f.direction || f.grade || f.status) {
+      const out = await api(`/api/v3/history?${qs({ date_from: f.date_from, date_to: f.date_to })}`, { method: "GET" });
+      closed = out.items.filter(notActive);
+    } else {
+      // today (IST) first
+      const now = new Date();
+      const istMidnightUtc = new Date(now.getTime() + 330 * 60000);
+      istMidnightUtc.setUTCHours(0, 0, 0, 0);
+      const fromIso = new Date(istMidnightUtc.getTime() - 330 * 60000).toISOString();
+      const today = await api(`/api/v3/history?${qs({ date_from: fromIso })}`, { method: "GET" });
+      closed = today.items.filter(notActive);
+      if (!closed.length) {
+        const latest = await api(`/api/v3/history?${qs({})}`, { method: "GET" });
+        closed = latest.items.filter(notActive).slice(0, 4);
+        noteTxt = "Aaj ka koi closed trade nahi — latest 4 dikha rahe hain. Purane dekhne ke liye filters use karo.";
+      } else {
+        noteTxt = "Aaj ke closed trades (IST). Purane dekhne ke liye filters use karo.";
+      }
+    }
+    Home.renderRecs(act.items || [], closed, { note: noteTxt });
+  } catch (e) { note(`dashboard recs: ${e.message}`); }
+}
+
 function replayBody() {
   const from = $("replay-from").value, to = $("replay-to").value;
   const raw = $("replay-speed").value;
@@ -644,6 +709,7 @@ window.addEventListener("ms-page", (e) => {
   else if (e.detail === "paper") { if (window.Paper) Paper.mount($("page-paper")); }
   else if (e.detail === "review" || e.detail === "analytics") loadDataPages();
   else if (e.detail === "history") loadHistoryPage();
+  else if (e.detail === "dashboard") loadDashboard();
 });
 for (const btn of document.querySelectorAll("[data-refresh]")) {
   btn.addEventListener("click", () => {
@@ -1397,11 +1463,7 @@ async function loadSettings() {           // called by boot() after login
   // Open Full Chart: the SAME app in a new tab, chart-only layout (?full=1).
   // Reuses everything — chart, drawings, indicators, overlays, TF bar, WS.
   const fc = $("tb-fullchart");
-  if (fc) fc.addEventListener("click", () => {
-    const u = new URL(window.location.href);
-    u.searchParams.set("full", "1");
-    window.open(u.toString(), "_blank");
-  });
+  if (fc) fc.addEventListener("click", openFullChart);
   const fs = $("tb-fullscreen");
   if (fs) {
     fs.addEventListener("click", () => {
@@ -1428,6 +1490,10 @@ function boot() {
   loadSetups();       // Trade Setup V2 panel (then polled every SETUPS_POLL_MS)
   loadV3();           // V3 chart read for the active TF (then polled)
   loadMap();          // V3 market map (strip + memory; then polled)
+  // shell.js dispatched the initial ms-page BEFORE app.js loaded — replay it so
+  // the landing page (dashboard/history/review/...) gets its data.
+  const cur = document.querySelector(".page.active");
+  if (cur) window.dispatchEvent(new CustomEvent("ms-page", { detail: cur.getAttribute("data-page") }));
 }
 function resetToLogin() {
   if (window.__msToken) window.__msToken.clear();
