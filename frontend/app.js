@@ -166,43 +166,105 @@
   if (bx) bx.addEventListener("click", function () { banner(null); });
 
   // ------------------------------------------------------------------ TODAY --
-  function setupCard(s) {
-    var card = el("div", "card setup " + (s.direction > 0 ? "long" : "short"));
+  function viewOnChart(s) {
+    state.chartSym = s.symbol; state.chartTf = s.level_tf; state.ticket = s;
+    syncSeg("chart-sym", "sym", s.symbol); syncSeg("chart-tf", "tf", s.level_tf);
+    go("chart");
+  }
+
+  /* The geometry, drawn to scale. "R:R 8.96" is a number you have to trust;
+     a bar where the green dwarfs the red is a fact you can see in one glance. */
+  function ladder(s) {
+    var risk = Math.abs(s.entry - s.stop), reward = Math.abs(s.target - s.entry);
+    var total = risk + reward || 1;
+    var wrap = el("div", "ladder");
+    var bar = el("div", "ladder-bar");
+    var r = el("i", "risk"); r.style.width = (risk / total * 100).toFixed(2) + "%";
+    var w = el("i", "reward"); w.style.width = (reward / total * 100).toFixed(2) + "%";
+    bar.appendChild(r); bar.appendChild(w);
+    wrap.appendChild(bar);
+
+    var legend = el("div", "ladder-legend");
+    var left = el("span", "risk-l");
+    left.appendChild(document.createTextNode("Risk "));
+    left.appendChild(el("b", null, fmt(risk, 2)));
+    var right = el("span", "reward-l");
+    right.appendChild(el("b", null, fmt(reward, 2)));
+    right.appendChild(document.createTextNode(" reward · " + fmt(s.rr, 2) + "R net"));
+    legend.appendChild(left); legend.appendChild(right);
+    wrap.appendChild(legend);
+    return wrap;
+  }
+
+  function priceCells(s) {
+    var pr = el("div", "rail-prices");
+    [["Entry", s.entry, ""], ["Stop", s.stop, "stop"],
+     ["Target", s.target, "target"], ["Net R:R", s.rr, "rr"]].forEach(function (row) {
+      var c = el("div", "pcell " + row[2]);
+      c.appendChild(el("div", "k", row[0]));
+      c.appendChild(el("div", "v", fmt(row[1], 2)));
+      pr.appendChild(c);
+    });
+    return pr;
+  }
+
+  /* Rank 1 only. Everything the trader needs to decide, without a click. */
+  function setupCard(s, rank) {
+    var card = el("div", "setup rank-" + rank + " " + (s.direction > 0 ? "long" : "short"));
 
     var h = el("div", "setup-h");
     h.appendChild(el("span", "dir " + (s.direction > 0 ? "long" : "short"), s.direction_label));
     h.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
     h.appendChild(el("span", "strat-tag", s.strategy_id));
     var sp = el("div"); sp.style.flex = "1"; h.appendChild(sp);
+    if (rank === 1) h.appendChild(el("span", "rank-badge", "Best setup"));
     var pips = el("div", "filters");
+    pips.title = s.filters_passed + " of 3 trend filters agree";
     for (var i = 0; i < 3; i++) pips.appendChild(el("span", "pip" + (i < s.filters_passed ? " on" : "")));
     h.appendChild(pips);
     card.appendChild(h);
 
-    var pr = el("div", "rail-prices");
-    [["Entry", s.entry, ""], ["Stop", s.stop, "stop"],
-     ["Target", s.target, "target"], ["Net R:R", s.rr, ""]].forEach(function (row) {
-      var c = el("div", "pcell " + row[2]);
-      c.appendChild(el("div", "k", row[0]));
-      c.appendChild(el("div", "v", row[0] === "Net R:R" ? fmt(row[1], 2) : fmt(row[1], 2)));
-      pr.appendChild(c);
-    });
-    card.appendChild(pr);
-
+    card.appendChild(ladder(s));
+    card.appendChild(priceCells(s));
     card.appendChild(el("div", "why", s.reason));
 
     var f = el("div", "setup-f");
-    f.appendChild(el("span", "sub", "risk " + fmt(s.risk_pct, 2) + "% · valid till " + when(s.valid_until_ts)));
+    f.appendChild(el("span", "sub", "risk " + fmt(s.risk_pct, 2) + "% of price · valid till " +
+                                    when(s.valid_until_ts)));
     var gap = el("div"); gap.style.flex = "1"; f.appendChild(gap);
     var b = el("button", "btn primary", "View on chart");
-    b.addEventListener("click", function () {
-      state.chartSym = s.symbol; state.chartTf = s.level_tf; state.ticket = s;
-      syncSeg("chart-sym", "sym", s.symbol); syncSeg("chart-tf", "tf", s.level_tf);
-      go("chart");
-    });
+    b.addEventListener("click", function () { viewOnChart(s); });
     f.appendChild(b);
     card.appendChild(f);
     return card;
+  }
+
+  /* Setups 2..n. Same information, a tenth of the ink — a dozen equally-sized
+     cards makes the reader re-rank what the engine already ranked. */
+  function setupRow(s, i) {
+    var row = el("div", "srow " + (s.direction > 0 ? "long" : "short"));
+    row.style.animationDelay = Math.min(i * 22, 220) + "ms";
+    row.appendChild(el("span", "dir " + (s.direction > 0 ? "long" : "short"), s.direction_label));
+    row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
+
+    var mid = el("div");
+    mid.appendChild(el("div", "strat-tag", s.strategy_id));
+    mid.appendChild(el("div", "meta", s.reason));
+    row.appendChild(mid);
+
+    [["Entry", s.entry, ""], ["Stop", s.stop, "stop"],
+     ["Target", s.target, "target hide-md"], ["R:R", s.rr, ""]].forEach(function (col) {
+      var cell = el("div", "cell " + col[2]);
+      cell.appendChild(el("span", "k", col[0]));
+      cell.appendChild(el("span", "v", fmt(col[1], 2)));
+      row.appendChild(cell);
+    });
+
+    var b = el("button", "btn", "Chart");
+    b.addEventListener("click", function (ev) { ev.stopPropagation(); viewOnChart(s); });
+    row.appendChild(b);
+    row.addEventListener("click", function () { viewOnChart(s); });
+    return row;
   }
 
   function renderToday() {
@@ -210,23 +272,37 @@
       return !state.symFilter || s.symbol === state.symFilter;
     });
     var box = $("setups"); box.textContent = "";
+
     if (!rows.length) {
       var e = el("div", "empty");
       e.appendChild(el("div", "big", "No setup right now"));
-      e.appendChild(el("div", null, "That is a normal and common state. Levels are being watched; nothing has triggered."));
+      e.appendChild(el("div", "sub",
+        "That is a normal and common state — these strategies wait for a level to break " +
+        "with the trend behind it, which happens a few times a week. Levels are being watched."));
       box.appendChild(e);
     } else {
-      rows.forEach(function (s) { box.appendChild(setupCard(s)); });
+      box.appendChild(el("div", "sec-t", rows.length === 1 ? "The setup" : "Best setup"));
+      box.appendChild(setupCard(rows[0], 1));
+      if (rows.length > 1) {
+        box.appendChild(el("div", "sec-t", "Also live · " + (rows.length - 1)));
+        var list = el("div", "setup-list");
+        rows.slice(1).forEach(function (s, i) { list.appendChild(setupRow(s, i)); });
+        box.appendChild(list);
+      }
     }
+
     var longs = rows.filter(function (r) { return r.direction > 0; }).length;
+    var best = rows.length ? fmt(rows[0].rr, 2) + "R" : "—";
     var st = $("today-stats"); st.textContent = "";
-    [["Active setups", rows.length, ""],
-     ["Long / Short", longs + " / " + (rows.length - longs), ""],
-     ["Strategies live", state.catalogue ? state.catalogue.strategies.length : "—", ""],
-     ["Symbols", "BTC · ETH", ""]].forEach(function (s) {
+    [["Active setups", rows.length, rows.length ? "ranked by filters, then R:R" : "watching levels"],
+     ["Long / Short", longs + " / " + (rows.length - longs), "direction split"],
+     ["Best net R:R", best, "after fees and funding"],
+     ["Strategies live", state.catalogue ? state.catalogue.strategies.length : "—", "BTC · ETH"]
+    ].forEach(function (row) {
       var c = el("div", "stat");
-      c.appendChild(el("div", "stat-k", s[0]));
-      c.appendChild(el("div", "stat-v", String(s[1])));
+      c.appendChild(el("div", "stat-k", row[0]));
+      c.appendChild(el("div", "stat-v", String(row[1])));
+      c.appendChild(el("div", "stat-s", row[2]));
       st.appendChild(c);
     });
     $("today-sub").textContent = rows.length + " actionable · updated " +
@@ -713,6 +789,11 @@
     var pos = (p && p.positions ? p.positions : []).filter(function (x) { return x.symbol === state.chartSym; });
     var orders = (p && p.orders ? p.orders : []).filter(function (x) { return x.symbol === state.chartSym; });
 
+    /* An empty book should not sit on top of the price axis just to say it is
+       empty. Shrink to the equity line; it re-expands the moment there is
+       something to show. */
+    var panel = $("pos-panel");
+    if (panel) panel.classList.toggle("idle", !pos.length && !orders.length);
     if (!pos.length && !orders.length) {
       var e = el("div", "pos");
       e.appendChild(el("div", "sub", "No open position or resting order on " + state.chartSym.replace("USDT", "")));

@@ -135,8 +135,10 @@ def test_both_themes_define_every_token_the_stylesheet_uses():
     used = set(re.findall(r"var\((--[a-z0-9-]+)", css))
     dark = css[css.index(":root {"):css.index(':root[data-theme="light"]')]
     light = css[css.index(':root[data-theme="light"]'):]
-    declared_dark = set(re.findall(r"^\s*(--[a-z0-9-]+):", dark, re.M))
-    declared_light = set(re.findall(r"^\s*(--[a-z0-9-]+):", light, re.M))
+    # tokens may share a line (`--s1: 4px;  --s2: 8px;`), so match every
+    # `--name:` in the block rather than only the first on each line
+    declared_dark = set(re.findall(r"(--[a-z0-9-]+)\s*:", dark))
+    declared_light = set(re.findall(r"(--[a-z0-9-]+)\s*:", light))
     missing = used - declared_dark
     assert not missing, f"tokens used but never declared: {sorted(missing)}"
     # every colour token must be overridden for light; sizes/fonts need not be

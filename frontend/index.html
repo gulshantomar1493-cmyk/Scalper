@@ -35,41 +35,49 @@
 
 <!-- ========================== LEFT RAIL ========================== -->
 <nav class="rail">
-  <div class="brand">M</div>
+  <div class="brand">
+    <i>M</i>
+    <div><b>MarketScalper</b><span>Decision support</span></div>
+  </div>
 
+  <div class="rail-group">Trade</div>
   <button class="nav-btn active" data-go="today">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>
-    <span class="tip">Today</span>
+    <span>Today</span><span class="tip">Today</span>
   </button>
   <button class="nav-btn" data-go="chart">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
-    <span class="tip">Chart</span>
+    <span>Chart</span><span class="tip">Chart</span>
   </button>
+
+  <div class="rail-group">Evidence</div>
   <button class="nav-btn" data-go="strategies">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="10" rx="1"/></svg>
-    <span class="tip">Strategies</span>
+    <span>Strategies</span><span class="tip">Strategies</span>
   </button>
   <button class="nav-btn" data-go="history">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-    <span class="tip">History</span>
+    <span>History</span><span class="tip">History</span>
   </button>
+
+  <div class="rail-group">Yours</div>
   <button class="nav-btn" data-go="paper">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>
-    <span class="tip">Paper</span>
+    <span>Paper</span><span class="tip">Paper</span>
   </button>
   <button class="nav-btn" data-go="journal">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 3h11l3 3v15H5z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-    <span class="tip">Journal</span>
+    <span>Journal</span><span class="tip">Journal</span>
   </button>
 
   <div class="rail-sp"></div>
   <button class="nav-btn theme-btn" id="theme" aria-label="Switch between light and dark theme">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
-    <span class="tip">Theme</span>
+    <span>Theme</span><span class="tip">Theme</span>
   </button>
   <button class="nav-btn" id="refresh">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-    <span class="tip">Refresh</span>
+    <span>Refresh</span><span class="tip">Refresh</span>
   </button>
 </nav>
 
@@ -92,8 +100,7 @@
     <div class="scroll">
       <div class="note" id="confidence"></div>
       <div class="stats" id="today-stats"></div>
-      <div class="sec-t">Active setups</div>
-      <div class="grid g-auto" id="setups"></div>
+      <div id="setups"></div>
     </div>
   </section>
 
