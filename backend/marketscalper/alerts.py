@@ -51,18 +51,21 @@ class Alerter:
             log.debug("alerter: no running loop, dropped %s alert", kind)
 
     # ---- alert types ----
-    def trade_setup(self, symbol: str, rec: dict) -> None:
-        high = rec.get("verdict") == "A_PLUS"
+    def trade_setup(self, symbol: str, setup: dict) -> None:
+        """One alert per V4 setup the recorder accepts. `filters_passed` is a
+        named rule count, never a confidence percentage."""
+        passed = setup.get("filters_passed")
+        high = passed is not None and passed >= 3
         title = "🚀 HIGH-CONVICTION SETUP" if high else "📈 Trade Setup"
         text = (
             f"<b>{title}</b>\n"
             f"Symbol: <b>{symbol}</b>\n"
-            f"Direction: <b>{rec.get('direction')}</b>\n"
-            f"Strategy: {rec.get('strategy')}\n"
-            f"Confidence: {rec.get('score')}/100 ({rec.get('verdict')})\n"
-            f"Entry: {rec.get('entry')}\n"
-            f"Stop: {rec.get('sl')}\n"
-            f"Target: {rec.get('tp1')}\n\n"
+            f"Direction: <b>{setup.get('direction_label')}</b>\n"
+            f"Strategy: {setup.get('strategy_id')}\n"
+            f"Filters passed: {passed}/3\n"
+            f"Entry: {setup.get('entry')}\n"
+            f"Stop: {setup.get('stop')}\n"
+            f"Target: {setup.get('target')}  (net R:R {setup.get('rr')})\n\n"
             f"<i>Decision-support only — place any order manually on your exchange.</i>"
         )
         self._send("trade", text)

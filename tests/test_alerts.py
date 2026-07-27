@@ -50,38 +50,41 @@ async def _capture(monkeypatch):
     return sent
 
 
-_REC = {"verdict": "A_PLUS", "direction": "LONG", "strategy": "S1",
-        "score": 88, "entry": 100, "sl": 90, "tp1": 120}
+_SETUP = {"strategy_id": "eth_4h_core", "symbol": "BTCUSDT",
+          "direction_label": "LONG", "filters_passed": 3,
+          "entry": 67200.0, "stop": 66100.0, "target": 78200.0, "rr": 9.62}
 
 
 async def test_trade_setup_sends_when_configured(monkeypatch):
     sent = await _capture(monkeypatch)
-    Alerter(_configured()).trade_setup("BTCUSDT", _REC)
+    Alerter(_configured()).trade_setup("BTCUSDT", _SETUP)
     await asyncio.sleep(0.02)
     assert len(sent) == 1
     tok, chat, text = sent[0]
     assert tok == "T" and chat == "C"
-    assert "BTCUSDT" in text and "LONG" in text and "88/100" in text
-    assert "HIGH-CONVICTION" in text                     # A_PLUS wording
+    assert "BTCUSDT" in text and "LONG" in text and "eth_4h_core" in text
+    assert "3/3" in text                                 # named rule count
+    assert "HIGH-CONVICTION" in text                     # all filters passed
+    assert "%" not in text                               # never a fake confidence
 
 
 async def test_no_send_when_telegram_channel_off(monkeypatch):
     sent = await _capture(monkeypatch)
-    Alerter(_configured(n_over={"telegram": False})).trade_setup("BTCUSDT", _REC)
+    Alerter(_configured(n_over={"telegram": False})).trade_setup("BTCUSDT", _SETUP)
     await asyncio.sleep(0.02)
     assert sent == []
 
 
 async def test_no_send_when_not_verified(monkeypatch):
     sent = await _capture(monkeypatch)
-    Alerter(_configured(t_over={"verified": False})).trade_setup("BTCUSDT", _REC)
+    Alerter(_configured(t_over={"verified": False})).trade_setup("BTCUSDT", _SETUP)
     await asyncio.sleep(0.02)
     assert sent == []
 
 
 async def test_no_send_when_token_or_chat_missing(monkeypatch):
     sent = await _capture(monkeypatch)
-    Alerter(_configured(t_over={"chat_id": ""})).trade_setup("BTCUSDT", _REC)
+    Alerter(_configured(t_over={"chat_id": ""})).trade_setup("BTCUSDT", _SETUP)
     await asyncio.sleep(0.02)
     assert sent == []
 
@@ -89,7 +92,7 @@ async def test_no_send_when_token_or_chat_missing(monkeypatch):
 async def test_trade_toggle_gates_setups_but_not_system(monkeypatch):
     sent = await _capture(monkeypatch)
     a = Alerter(_configured(n_over={"trade_alerts": False}))  # trade off, system on
-    a.trade_setup("BTCUSDT", _REC)
+    a.trade_setup("BTCUSDT", _SETUP)
     a.feed_down()
     await asyncio.sleep(0.02)
     assert len(sent) == 1 and "Feed disconnected" in sent[0][2]

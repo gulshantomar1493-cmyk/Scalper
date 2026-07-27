@@ -5,43 +5,23 @@ access layer — handed in by the caller. No DI container, no registries, no
 lifecycle framework: create_app() is a plain factory.
 
 Endpoints:
-  GET  /health              liveness (unauthenticated — leaks nothing).
-  GET  /candles             history fetch (db.select_candles), Bearer token.
-  WS   /ws?token=...        pushes {"candle": ..., "state_diff": ...} on every
-                            closed candle (§9: frontend renders diffs only).
-  POST /replay/start        run the replay provider over a date range (P0.25).
-  POST /replay/stop         halt replay (no-op when idle).
-  GET  /replay/status       {running, symbol, start, end, speed}.
-  GET  /replay/speeds       the four §10 speeds.
+  GET  /health, /health/ready   liveness / readiness (unauthenticated).
+  POST /login                   env-file credentials -> the API token.
+  GET  /candles                 raw 1m/5m history (db.select_candles).
+  GET  /api/chart               multi-timeframe read-model (ChartService).
+  GET  /api/v4/*                the strategy layer (see v4/api.py).
+  GET/POST/PATCH/DELETE /api/journal   the owner's journal (migration 003).
+  /api/paper/*                  simulation-only paper trading (D31).
+  GET  /ops, /settings/*        operations + runtime settings.
 
-Replay control (roadmap P0.25; isolation per verified defect F2): the app
-owns at most ONE replay instance. Each replay session runs on its OWN
-EventBus with its OWN StateStore and (when composition passes
-`replay_wiring`) its OWN fresh engine pipelines — exactly the determinism
-harness's wiring. Replay candles therefore drive a complete engine chain
-without ever touching the live bus: no out-of-order drops, no duplicate
-persistence, no reconciler leakage, and live processing continues
-untouched underneath. While a replay is active the live WS push is
-suppressed (the chart shows the replay stream); it resumes automatically
-on completion or stop. The concrete provider class is handed in by
-composition as the `replay_provider` argument — this module never imports
-a concrete provider, keeping the P0.19 import boundary intact. Replay
-candles reach the browser through the exact same WebSocket payload as
-live candles; no new protocol.
-
-Backpressure (verified defect F4): the bus-side broadcast never awaits a
-network send. Each client gets a bounded queue drained by its own sender
-task; a slow or blocked client fills its queue and is disconnected — the
-feed, persistence, and engine chain can never stall on a browser socket.
-
-Auth (Decision D3): single static token. REST -> Authorization: Bearer
-<token>; WebSocket -> same token as ?token= query parameter at handshake.
+Auth (Decision D3): single static token, Authorization: Bearer <token>.
 No accounts, no sessions, no OAuth.
 
-Composition note: construct the StateStore BEFORE calling create_app() —
-bus delivery is sequential in subscription order, so the store's update
-runs first and the broadcast's state_diff already contains the candle
-being announced.
+The WebSocket push, the replay-control endpoints and /api/htf were removed
+with the V1/V2/V3 cutover — the V4 terminal polls REST and nothing else
+consumed them (docs/V4/ARCHITECTURE.md §6). The StateStore is still built
+and still tracks the latest closed candle per symbol: paper-trading marks
+and GET /ops read it.
 """
 
 from __future__ import annotations
@@ -49,35 +29,21 @@ from __future__ import annotations
 import asyncio
 import hmac
 import logging
-import math
-from dataclasses import asdict
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 
-from fastapi import (Body, Depends, FastAPI, Header, HTTPException, Query,
-                     WebSocket)
+from fastapi import Body, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from marketscalper import db, telegram
-from marketscalper.analytics import (compute_analytics,
-                                     compute_mae_distribution, journal_list)
-from marketscalper.campaign import (data_quality_audit, expectancy_report)
 from marketscalper.core import paper_service
 from marketscalper.core.bus import EventBus
-from marketscalper.core.live_bar import FormingBar
-from marketscalper.core.setup_engine import build_setups
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle
 
 log = logging.getLogger(__name__)
 
-# V2 backend contract version (docs/V2/API-CONTRACT.md). Bump only on a breaking
-# change to /api/htf or /api/setups; additive fields do NOT bump it.
-CONTRACT_VERSION = "1.0"
-
 _TFS = ("1m", "5m")
-_REPLAY_SYMBOLS = ("BTCUSDT", "ETHUSDT")   # frozen v1 pair
-_REPLAY_SPEEDS = (1, 10, 60, "max")        # §10
-_WS_QUEUE_MAX = 256    # F4: per-client send budget before disconnect
+_DEFAULT_SYMBOLS = ("BTCUSDT", "ETHUSDT")   # frozen v1 pair
 
 
 def _num_or_none(v):
@@ -94,28 +60,6 @@ def _candle_json(c: Candle) -> dict:
     }
 
 
-def _row_to_candle(r) -> Candle:
-    """Stored candle row -> normalized Candle (D19.2 replay-seed reads)."""
-    return Candle(
-        symbol=r["symbol"], tf=r["tf"], ts=r["ts"],
-        o=float(r["o"]), h=float(r["h"]), l=float(r["l"]), c=float(r["c"]),
-        v=float(r["v"]), qv=float(r["qv"]),
-        n_trades=r["n_trades"], taker_buy_v=float(r["taker_buy_v"]),
-    )
-
-
-def _diff_json(diff: dict) -> dict:
-    # Candle fields serialize through _candle_json; engine-state fields
-    # (P1.19: "structure") are already JSON-ready dicts and pass through.
-    return {
-        symbol: {
-            field: _candle_json(value) if isinstance(value, Candle) else value
-            for field, value in fields.items()
-        }
-        for symbol, fields in diff.items()
-    }
-
-
 def create_app(
     bus: EventBus,
     store: StateStore,
@@ -123,29 +67,19 @@ def create_app(
     api_token: str,
     auth_user: str = "",
     auth_password: str = "",
-    replay_provider=None,
-    replay_wiring=None,
-    psych_guard=None,
     chart_service=None,
-    htf_service=None,
     feed_status=None,
     started_at=None,
     ops_symbols=None,
     settings=None,
-    live_indicators=None,
     live_price=None,
-    v3_service=None,
+    v4_service=None,
+    v4_store=None,
 ) -> FastAPI:
     """Build the app around the already-constructed pipeline components.
 
-    replay_provider: the concrete FeedProvider class/factory used for replay
-    (composition passes ReplayFeed), invoked as
-    replay_provider([symbol], session_bus, pool, start, end, speed=speed).
-    None -> the replay endpoints answer 503 (not configured).
-    replay_wiring (F2): callable(bus, store, symbols) wiring fresh engine
-    pipelines onto a replay session's private bus — composition passes
-    _wire_structure_engines so replay drives the full engine chain.
-    None -> replay streams candles without engine output (chart-only)."""
+    Every optional argument is supplied only by live main(); tests pass what
+    they need and the corresponding routes answer 503 when it is missing."""
     # docs + the OpenAPI schema off: the schema would otherwise be served
     # unauthenticated (contract only, but consistent with docs disabled).
     app = FastAPI(title="MarketScalper", docs_url=None, redoc_url=None,
@@ -160,46 +94,6 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "DELETE"],   # PATCH/DELETE: journals
         allow_headers=["Authorization", "Content-Type"],
     )
-    clients: dict[WebSocket, asyncio.Queue] = {}   # F4: per-client queues
-
-    async def _close_quietly(websocket: WebSocket) -> None:
-        try:
-            await websocket.close(code=1013)       # "try again later"
-        except Exception:
-            pass
-
-    async def _sender(websocket: WebSocket, queue: asyncio.Queue) -> None:
-        """Per-client drain task (F4): network sends happen here, never in
-        the bus subscriber — a blocked socket blocks only its own task."""
-        try:
-            while True:
-                await websocket.send_json(await queue.get())
-        except Exception:
-            clients.pop(websocket, None)           # dead client: drop, move on
-
-    def _push(candle: Candle, source_store: StateStore) -> None:
-        """Fan a {candle, state_diff} payload out to every client without
-        awaiting any network send (F4)."""
-        if not clients:
-            source_store.diff()                    # keep diffs consumed
-            return
-        payload = {
-            "candle": _candle_json(candle),
-            "state_diff": _diff_json(source_store.diff()),
-        }
-        for websocket, queue in list(clients.items()):
-            try:
-                queue.put_nowait(payload)
-            except asyncio.QueueFull:
-                # F4: a client this far behind must never stall the
-                # pipeline — drop it; the thin client reconnects and
-                # re-bootstraps via REST (§9).
-                log.warning("ws: dropping slow client (send queue full)")
-                clients.pop(websocket, None)
-                asyncio.ensure_future(_close_quietly(websocket))
-    # at most one replay at a time; lazy latch turns completion into idle
-    replay = {"feed": None, "info": None, "seen_connected": False}
-
     expected_auth = f"Bearer {api_token}"
 
     def require_token(authorization: str | None = Header(default=None)) -> None:
@@ -246,6 +140,14 @@ def create_app(
             raise HTTPException(status_code=401, detail="invalid credentials")
         return {"token": api_token}
 
+    # ---------------------------------------------------------------- V4 ---
+    # The validated strategy layer (docs/V4/ARCHITECTURE.md). Mounted as its own
+    # router so it can be reasoned about — and removed — as one unit.
+    if v4_service is not None:
+        from marketscalper.v4.api import build_router as _v4_router
+        app.include_router(_v4_router(v4_service, require_token,
+                                      history_store=v4_store))
+
     @app.get("/ops", dependencies=[Depends(require_token)])
     async def ops() -> dict:
         """Operational status for the Live status pill + Operations dashboard
@@ -256,7 +158,7 @@ def create_app(
         `feed_status`/`started_at`/`ops_symbols` are injected by main() (live
         only); replay/tests leave them None and the fields degrade gracefully."""
         now = datetime.now(timezone.utc)
-        symbols = list(ops_symbols or _REPLAY_SYMBOLS)
+        symbols = list(ops_symbols or _DEFAULT_SYMBOLS)
         connected = bool(feed_status()) if feed_status is not None else None
 
         db_ok = True
@@ -445,263 +347,6 @@ def create_app(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
 
-    # ------------------------------------------------------ V3 (Virtual Trader)
-    # L1 Chart Read: per-timeframe trader's read (swings, structure, trendlines,
-    # zones with lifecycle, ranked liquidity, premium/discount). Compute-on-read
-    # over ChartService — ADDITIVE + ISOLATED (no bus, no structure write, no
-    # persistence). The frontend re-draws the active TF's read on every switch.
-    @app.get("/api/v3/analysis", dependencies=[Depends(require_token)])
-    async def api_v3_analysis(symbol: str, tf: str) -> dict:
-        if v3_service is None:
-            raise HTTPException(status_code=503, detail="v3 service not configured")
-        try:
-            return await v3_service.analysis(symbol, tf)
-        except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc))
-
-    # L2 Market Map + L3 Market Memory: the merged multi-TF battlefield (stacked
-    # zones, bias ladder, liquidity targets, memory). Same isolation as above.
-    @app.get("/api/v3/map", dependencies=[Depends(require_token)])
-    async def api_v3_map(symbol: str) -> dict:
-        if v3_service is None:
-            raise HTTPException(status_code=503, detail="v3 service not configured")
-        return await v3_service.map(symbol)
-
-    # L4 Virtual Trader + L5 Session Timing: confirmed setups + the watchlist
-    # ("setup ban raha hai"), session-gated per the owner's IST guide.
-    @app.get("/api/v3/setups", dependencies=[Depends(require_token)])
-    async def api_v3_setups(symbol: str) -> dict:
-        if v3_service is None:
-            raise HTTPException(status_code=503, detail="v3 service not configured")
-        return await v3_service.setups(symbol)
-
-    # Trade Recommendation History — every issued setup, auto-recorded and
-    # permanently searchable (independent of paper trading). Read-only here;
-    # the live loop in main.py records + advances statuses.
-    @app.get("/api/v3/history", dependencies=[Depends(require_token)])
-    async def api_v3_history(symbol: str | None = None, grade: str | None = None,
-                             status: str | None = None,
-                             setup_type: str | None = None,
-                             direction: str | None = None,
-                             session: str | None = None,
-                             date_from: str | None = None,
-                             date_to: str | None = None,
-                             q: str | None = None,
-                             sort: str = "ts", order: str = "desc",
-                             limit: int = 50, offset: int = 0,
-                             format: str | None = None):
-        if pool is None:
-            raise HTTPException(status_code=503, detail="db not configured")
-        from marketscalper.v3 import history as v3h
-        from datetime import datetime as _dt
-
-        def _d(v):
-            if not v:
-                return None
-            try:
-                return _dt.fromisoformat(v.replace("Z", "+00:00"))
-            except ValueError:
-                raise HTTPException(status_code=400, detail=f"bad date {v!r}")
-        limit = max(1, min(int(limit), 500))
-        out = await v3h.list_recommendations(
-            pool, symbol=symbol, grade=grade, status=status,
-            setup_type=setup_type, direction=direction, session=session,
-            date_from=_d(date_from), date_to=_d(date_to), q=q,
-            sort=sort, order=order, limit=limit, offset=max(0, int(offset)))
-        if format == "csv":
-            from fastapi.responses import PlainTextResponse
-            return PlainTextResponse(
-                v3h.to_csv(out["items"]), media_type="text/csv",
-                headers={"Content-Disposition":
-                         "attachment; filename=v3_recommendations.csv"})
-        return out
-
-    @app.get("/api/v3/history/{rec_id}", dependencies=[Depends(require_token)])
-    async def api_v3_history_one(rec_id: int) -> dict:
-        if pool is None:
-            raise HTTPException(status_code=503, detail="db not configured")
-        from marketscalper.v3 import history as v3h
-        rec = await v3h.get_recommendation(pool, rec_id)
-        if rec is None:
-            raise HTTPException(status_code=404, detail="not found")
-        return rec
-
-    # ------------------------------------------------------ HTF (V1.1)
-    # Higher-timeframe intelligence: 15m/1h/4h/1d SMC analysis + overall
-    # bias/confidence/market-story. ADDITIVE and ISOLATED (like /api/chart) —
-    # off the engine bus / structure payload / determinism stream. Display-only:
-    # execution stays 1m/5m; HTF only adds context and confidence.
-    @app.get("/api/htf", dependencies=[Depends(require_token)])
-    async def api_htf(symbol: str) -> dict:
-        if htf_service is None:
-            raise HTTPException(status_code=503, detail="htf service not configured")
-        return {"contract_version": CONTRACT_VERSION, **(await htf_service.analyze(symbol))}
-
-    # Trade Engine V2 (Phase 2): HTF bias/story (HtfService) + the live 1m LTF
-    # structure (StateStore) -> HTF-gated, fully-explained setups, or a confident
-    # "No high-probability setup available." Engine-isolated + read-only (like
-    # /api/htf): no bus, no structure write, no persistence -> determinism-safe.
-    @app.get("/api/setups", dependencies=[Depends(require_token)])
-    async def api_setups(symbol: str) -> dict:
-        htf = None
-        if htf_service is not None:
-            try:
-                htf = await htf_service.analyze(symbol)
-            except Exception as exc:              # HTF is context only — never 500 the setups
-                log.warning("setups: htf analyze failed for %s: %s", symbol, exc)
-        st = store.snapshot(symbol)
-        ltf = getattr(st, "structure", None) if st is not None else None
-        c = getattr(st, "last_candle_1m", None) if st is not None else None
-        setups = build_setups(symbol, htf, ltf, c.ts if c is not None else None)
-        overall = ((htf or {}).get("overall") or {})
-        return {
-            "contract_version": CONTRACT_VERSION,
-            "symbol": symbol,
-            "htf_bias": overall.get("bias"),               # BULLISH|BEARISH|NEUTRAL|null
-            "htf_confidence": overall.get("confidence"),   # 0..100 timeframe agreement, or null
-            "market_story": overall.get("market_story"),   # the HTF narrative, or null
-            "setups": [asdict(s) for s in setups],         # ranked best-first; [] = none
-            "message": None if setups else "No high-probability setup available.",
-        }
-
-    # ------------------------------------------------------ journal (P4.8)
-    # The recommendation core + the AUTO journal context (reason_text,
-    # chart_snapshot_path) are immutable — no endpoint writes them. PATCH
-    # touches ONLY the owner's MANUAL outcome fields (db.update_journal_
-    # manual writes exactly those columns).
-
-    def _journal_json(row) -> dict:
-        return {
-            "recommendation_id": row["recommendation_id"],
-            "reason_text": row["reason_text"],
-            "chart_snapshot_path": row["chart_snapshot_path"],
-            "taken": row["taken"], "result": row["result"],
-            "actual_entry": _num_or_none(row["actual_entry"]),
-            "actual_exit": _num_or_none(row["actual_exit"]),
-            "actual_pnl": _num_or_none(row["actual_pnl"]),
-            "actual_r": _num_or_none(row["actual_r"]),
-            "rule_violations": row["rule_violations"],
-            "notes": row["notes"],
-            "tags": list(row["tags"]) if row["tags"] is not None else None,
-        }
-
-    @app.get("/journal/{recommendation_id}",
-             dependencies=[Depends(require_token)])
-    async def get_journal(recommendation_id: int) -> dict:
-        async with pool.acquire() as conn:
-            row = await db.select_journal(conn, recommendation_id)
-        if row is None:
-            raise HTTPException(status_code=404,
-                                detail="no journal for that recommendation")
-        return _journal_json(row)
-
-    @app.patch("/journal/{recommendation_id}",
-               dependencies=[Depends(require_token)])
-    async def patch_journal(recommendation_id: int,
-                            payload: dict = Body(...)) -> dict:
-        # PATCH merge: validate the PROVIDED manual fields; keys absent from
-        # the body keep their existing value (a partial update never wipes
-        # unspecified fields). The AUTO context is never writable here.
-        if "taken" in payload and payload["taken"] is not None \
-                and not isinstance(payload["taken"], bool):
-            raise HTTPException(status_code=400,
-                                detail="taken must be a boolean or null")
-        if "result" in payload and payload["result"] not in (
-                None, "win", "loss", "be"):
-            raise HTTPException(status_code=400,
-                                detail="result must be win|loss|be|null")
-        if "tags" in payload and payload["tags"] is not None and not (
-                isinstance(payload["tags"], list)
-                and all(isinstance(t, str) for t in payload["tags"])):
-            raise HTTPException(status_code=400,
-                                detail="tags must be a list of strings")
-        if "notes" in payload and payload["notes"] is not None \
-                and not isinstance(payload["notes"], str):
-            raise HTTPException(status_code=400,
-                                detail="notes must be a string or null")
-        for k in ("actual_entry", "actual_exit", "actual_pnl", "actual_r"):
-            if k in payload and payload[k] is not None:
-                try:
-                    payload[k] = float(payload[k])
-                except (TypeError, ValueError):
-                    raise HTTPException(status_code=400,
-                                        detail=f"{k} must be a number or null")
-                if not math.isfinite(payload[k]):     # no NaN/inf into numeric
-                    raise HTTPException(status_code=400,
-                                        detail=f"{k} must be finite")
-        async with pool.acquire() as conn:
-            existing = await db.select_journal(conn, recommendation_id)
-            if existing is None:
-                raise HTTPException(
-                    status_code=404,
-                    detail="no journal for that recommendation")
-
-            def merged(key):
-                return payload[key] if key in payload else existing[key]
-
-            await db.update_journal_manual(
-                conn, recommendation_id,
-                taken=merged("taken"), result=merged("result"),
-                actual_entry=merged("actual_entry"),
-                actual_exit=merged("actual_exit"),
-                actual_pnl=merged("actual_pnl"),
-                actual_r=merged("actual_r"),
-                notes=merged("notes"), tags=merged("tags"))
-            row = await db.select_journal(conn, recommendation_id)
-            # P4.9: feed the psychology guard (D23.5). A taken trade WITH a
-            # result counts; anything else drops the record (un-taken /
-            # result cleared). The guard needs the rec's symbol.
-            if psych_guard is not None:
-                if row["taken"] and row["result"]:
-                    rec = await db.select_recommendation(
-                        conn, recommendation_id)
-                    sig = (await db.select_signal(conn, rec["signal_id"])
-                           if rec is not None else None)
-                    if sig is not None:
-                        psych_guard.record_taken(
-                            recommendation_id, datetime.now(timezone.utc),
-                            sig["symbol"], row["result"])
-                else:
-                    psych_guard.forget(recommendation_id)
-        return _journal_json(row)
-
-    # ---------------------------------------------------- analytics (P4.11)
-
-    @app.get("/analytics", dependencies=[Depends(require_token)])
-    async def analytics() -> dict:
-        """Manual + hypothetical stats + system-vs-actual, overall and per
-        strategy / per session. Read-only over the persisted rows."""
-        async with pool.acquire() as conn:
-            return await compute_analytics(conn)
-
-    @app.get("/analytics/mae", dependencies=[Depends(require_token)])
-    async def analytics_mae() -> dict:
-        """P5.2: per-strategy MAE distribution + SL-tuning summary over the
-        evaluator data. Read-only."""
-        async with pool.acquire() as conn:
-            return await compute_mae_distribution(conn)
-
-    @app.get("/campaign/audit", dependencies=[Depends(require_token)])
-    async def campaign_audit() -> dict:
-        """P5.5: data-quality audit over the persisted tables. Read-only."""
-        async with pool.acquire() as conn:
-            return await data_quality_audit(conn)
-
-    @app.get("/campaign/expectancy", dependencies=[Depends(require_token)])
-    async def campaign_expectancy() -> dict:
-        """P5.7: fees-included expectancy report per strategy (the P5.8
-        TRUSTED gate's number). Read-only."""
-        async with pool.acquire() as conn:
-            analytics = await compute_analytics(conn)
-        return expectancy_report(analytics)
-
-    @app.get("/journal", dependencies=[Depends(require_token)])
-    async def journal_list_endpoint(limit: int = 100) -> list:
-        """Recent recommendations + journal context (the P4.12 journal
-        tab), newest first. Read-only."""
-        limit = max(1, min(limit, 500))               # bounded
-        async with pool.acquire() as conn:
-            return await journal_list(conn, limit)
 
     # ------------------------------------------ user journal (P5, full CRUD)
     # The STANDALONE user journal (migration 003) — create / edit / delete /
@@ -924,186 +569,4 @@ def create_app(
             raise HTTPException(status_code=404, detail="position not found or closed")
         return pos
 
-    @app.websocket("/ws")
-    async def ws_endpoint(websocket: WebSocket) -> None:
-        supplied = websocket.query_params.get("token")
-        if supplied is None or not hmac.compare_digest(supplied, api_token):
-            await websocket.close(code=1008)          # policy violation: bad token
-            return
-        await websocket.accept()
-        queue: asyncio.Queue = asyncio.Queue(maxsize=_WS_QUEUE_MAX)
-        clients[websocket] = queue
-        sender = asyncio.create_task(_sender(websocket, queue))
-        try:
-            while True:                               # push-only socket; reads keep
-                await websocket.receive_text()        # the connection state honest
-        except Exception:
-            pass
-        finally:
-            clients.pop(websocket, None)
-            sender.cancel()
-            await asyncio.gather(sender, return_exceptions=True)
-
-    # ---------------------------------------------- replay control (P0.25)
-
-    def _refresh_replay() -> None:
-        """Request-driven idle detection: once a running feed disconnects
-        (range exhausted), clear it — no background watcher tasks."""
-        feed = replay["feed"]
-        if feed is None:
-            return
-        if feed.connected:
-            replay["seen_connected"] = True
-        elif replay["seen_connected"]:
-            replay["feed"] = None
-            replay["info"] = None
-            replay["seen_connected"] = False
-
-    def _require_replay_configured() -> None:
-        if replay_provider is None:
-            raise HTTPException(status_code=503, detail="replay not configured")
-
-    @app.post("/replay/start", dependencies=[Depends(require_token)])
-    async def replay_start(payload: dict = Body(...)) -> dict:
-        _require_replay_configured()
-        _refresh_replay()
-        if replay["feed"] is not None or replay.get("starting"):
-            raise HTTPException(status_code=409, detail="replay already running")
-
-        symbol = payload.get("symbol")
-        if symbol not in _REPLAY_SYMBOLS:
-            raise HTTPException(status_code=400,
-                                detail=f"symbol must be one of {_REPLAY_SYMBOLS}")
-        speed = payload.get("speed")
-        if speed not in _REPLAY_SPEEDS:
-            raise HTTPException(status_code=400,
-                                detail=f"speed must be one of {_REPLAY_SPEEDS}")
-        try:
-            start = datetime.fromisoformat(str(payload.get("start")))
-            end = datetime.fromisoformat(str(payload.get("end")))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="start/end must be ISO datetimes")
-        if start.tzinfo is None or end.tzinfo is None or start >= end:
-            raise HTTPException(status_code=400,
-                                detail="start/end must be timezone-aware and start < end")
-
-        # Reserve the slot BEFORE any await (freeze-audit fix): the guard
-        # above and this flag are one atomic section — a concurrent start
-        # arriving during the seed read / feed launch gets the 409 instead
-        # of orphaning this session.
-        replay["starting"] = True
-        try:
-            # F2: every session runs on its own bus with its own store and
-            # (when composition provides the wiring) its own fresh engine
-            # pipelines — the determinism harness's exact shape. Replay never
-            # touches the live bus: no out-of-order drops, no duplicate
-            # persistence, no reconciler leakage.
-            session_bus = EventBus()
-            session_store = StateStore(session_bus)      # subscribes first
-            if replay_wiring is not None:
-                # D19.2: the same seeding rule as live startup — the 20 days
-                # preceding the replay range warm the RVOL buckets, keeping
-                # replay identical to a live run over the same period.
-                async with pool.acquire() as conn:
-                    rows = await db.select_candles(
-                        conn, symbol, "1m", start - timedelta(days=20), start)
-                seeds = {symbol: [_row_to_candle(r) for r in rows]}
-                replay_wiring(session_bus, session_store, [symbol],
-                              seed_candles=seeds)
-
-            async def replay_broadcast(candle: Candle) -> None:
-                _push(candle, session_store)         # last: diff is complete
-
-            session_bus.subscribe(Candle, replay_broadcast)
-            feed = replay_provider([symbol], session_bus, pool, start, end,
-                                   speed=speed)
-            await feed.start()
-            replay["feed"] = feed
-            replay["info"] = {"symbol": symbol, "start": start.isoformat(),
-                              "end": end.isoformat(), "speed": speed}
-            replay["seen_connected"] = False
-            # Observe activation race-free: connected is set at the very
-            # start of the replay task, BEFORE its first await (the DB
-            # load) — so a zero-delay yield interleaves exactly there and
-            # must see True. (A timer-based poll can miss the whole replay
-            # at ×max.) After this latch, connected=False means finished.
-            for _ in range(100):
-                if feed.connected:
-                    replay["seen_connected"] = True
-                    break
-                await asyncio.sleep(0)
-        finally:
-            replay["starting"] = False
-        log.info("replay: started %s", replay["info"])
-        return {"running": True, **replay["info"]}
-
-    @app.post("/replay/stop", dependencies=[Depends(require_token)])
-    async def replay_stop() -> dict:
-        _require_replay_configured()
-        feed = replay["feed"]
-        if feed is not None:
-            await feed.stop()
-            replay["feed"] = None
-            replay["info"] = None
-            replay["seen_connected"] = False
-            log.info("replay: stopped")
-        return {"running": False}                      # idle stop = no-op success
-
-    @app.get("/replay/status", dependencies=[Depends(require_token)])
-    async def replay_status() -> dict:
-        _require_replay_configured()
-        _refresh_replay()
-        info = replay["info"]
-        if replay["feed"] is None:
-            return {"running": False, "symbol": None, "start": None,
-                    "end": None, "speed": None}
-        return {"running": True, **info}
-
-    @app.get("/replay/speeds", dependencies=[Depends(require_token)])
-    async def replay_speeds() -> dict:
-        return {"speeds": list(_REPLAY_SPEEDS)}
-
-    async def broadcast(candle: Candle) -> None:
-        """Push {candle, state_diff} for every closed candle (§9).
-
-        F2: while a replay session is active it owns the WS stream — the
-        live push is suppressed (diffs stay consumed) and resumes
-        automatically once the replay completes or is stopped. F4: no
-        network send happens here (see _push)."""
-        _refresh_replay()
-        if replay["feed"] is not None:
-            store.diff()
-            return
-        _push(candle, store)
-
-    bus.subscribe(Candle, broadcast)
-
-    def _push_forming(fb: FormingBar) -> None:
-        """Fan a display-only forming-bar payload to every client (no
-        state_diff, no network send in the subscriber — F4). The interim
-        indicator values (backend-computed) ride along so the frontend never
-        extends an indicator itself (owner rule)."""
-        if not clients:
-            return
-        indicators = (live_indicators.interim(fb.symbol, fb.c)
-                      if live_indicators is not None else None)
-        payload = {"forming": {
-            "symbol": fb.symbol, "ts": fb.ts.isoformat(),
-            "o": fb.o, "h": fb.h, "l": fb.l, "c": fb.c, "v": fb.v,
-            "indicators": indicators}}
-        for websocket, queue in list(clients.items()):
-            try:
-                queue.put_nowait(payload)
-            except asyncio.QueueFull:
-                clients.pop(websocket, None)
-                asyncio.ensure_future(_close_quietly(websocket))
-
-    async def forming_broadcast(fb: FormingBar) -> None:
-        """Live forming candle (chart UX item 5). Display-only; suppressed
-        while a replay owns the stream (like the closed-candle broadcast)."""
-        if replay["feed"] is not None:
-            return
-        _push_forming(fb)
-
-    bus.subscribe(FormingBar, forming_broadcast)
     return app

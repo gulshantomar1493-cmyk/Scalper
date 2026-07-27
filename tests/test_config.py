@@ -107,23 +107,6 @@ def test_bad_regime_momentum_values_refuse_to_start(config_dir, monkeypatch,
         load_config(config_dir=config_dir)
 
 
-def test_config_defaults_equal_engine_defaults_byte_identical():
-    # The byte-identical contract: the config-layer D9 defaults must EQUAL
-    # the frozen engine defaults, so an absent config == hardcoded engines.
-    from marketscalper.engines.momentum import MomentumState
-    from marketscalper.engines.momentum import RegimeConfig as EngineRegime
-    cfg_regime = RegimeConfig()
-    eng_regime = EngineRegime()
-    assert (cfg_regime.compression_ratio, cfg_regime.expansion_ratio,
-            cfg_regime.median_window_bars) == (
-        eng_regime.compression_ratio, eng_regime.expansion_ratio,
-        eng_regime.median_window_bars)
-    # MomentumState's default ratio is the momentum config default
-    import inspect
-    sig = inspect.signature(MomentumState.__init__)
-    assert (sig.parameters["shift_accel_atr_ratio"].default
-            == MomentumConfig().shift_accel_atr_ratio == 0.1)
-
 
 def test_shipped_example_file_documents_the_d9_keys():
     # Guard against the real example file drifting from the loader — the

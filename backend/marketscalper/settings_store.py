@@ -30,6 +30,9 @@ DEFAULTS = {
         "desktop": True, "push": False, "telegram": True,
         "trade_alerts": True, "system_alerts": True,
     },
+    # V4 strategy ids the owner has switched OFF from the UI. Absence = enabled,
+    # so a strategy the catalogue adds later starts on, as the catalogue intends.
+    "v4_disabled": [],
 }
 
 
@@ -102,6 +105,9 @@ class SettingsStore:
             if not any(x["token"] == legacy["token"] for x in bots):
                 _add(legacy)
         merged["telegram_bots"] = bots
+        off = raw.get("v4_disabled")
+        if isinstance(off, list):
+            merged["v4_disabled"] = sorted({str(x) for x in off if isinstance(x, str)})
         return merged
 
     def _save(self) -> None:
@@ -146,7 +152,22 @@ class SettingsStore:
         bots = self._data["telegram_bots"]
         return _public(bots[0]) if bots else dict(_EMPTY_PUBLIC)
 
+    def v4_disabled(self) -> set:
+        return set(self._data["v4_disabled"])
+
+    def v4_strategy_enabled(self, strategy_id: str) -> bool:
+        return strategy_id not in self._data["v4_disabled"]
+
     # ---- writes ----
+    def set_v4_strategy(self, strategy_id: str, enabled: bool) -> bool:
+        off = set(self._data["v4_disabled"])
+        (off.discard if enabled else off.add)(strategy_id)
+        new = sorted(off)
+        if new != self._data["v4_disabled"]:
+            self._data["v4_disabled"] = new
+            self._save()
+        return enabled
+
     def set_notifications(self, prefs: dict) -> dict:
         for k in self._data["notifications"]:
             if k in prefs:

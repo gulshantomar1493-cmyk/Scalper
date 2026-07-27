@@ -1,8 +1,7 @@
 """Tests for the FastAPI app (roadmap P0.21) — real server, real clients.
 
-The app runs in-process under uvicorn on an ephemeral port; REST is tested
-with aiohttp and the WebSocket with the websockets client — all existing
-dependencies, no test frameworks added.
+The app runs in-process under uvicorn on an ephemeral port and is driven with
+aiohttp — an existing dependency, no test framework added.
 """
 
 from __future__ import annotations
@@ -13,7 +12,6 @@ from datetime import datetime, timedelta, timezone
 import aiohttp
 import pytest
 import uvicorn
-import websockets
 from conftest import TxPool
 
 from marketscalper import db
@@ -23,7 +21,6 @@ from marketscalper.core.candle_builder import CandleBuilder
 from marketscalper.core.chart_service import ChartService
 from marketscalper.core.state import StateStore
 from marketscalper.providers.base import Candle, Trade
-from marketscalper.providers.replay import ReplayFeed
 
 UTC = timezone.utc
 M0 = datetime(2026, 7, 14, 19, 0, tzinfo=UTC)
@@ -49,22 +46,11 @@ async def _stop(server, task):
     await asyncio.wait_for(task, timeout=5)
 
 
-def _pipeline(pool=None, replay_provider=None, replay_wiring=None):
+def _pipeline(pool=None, **kw):
     """bus + store (subscribed FIRST, per the composition note) + app."""
     bus = EventBus()
     store = StateStore(bus)
-    app = create_app(bus, store, pool, TOKEN, replay_provider=replay_provider,
-                     replay_wiring=replay_wiring)
-    return bus, store, app
-
-
-def _replay_body(speed="max", minutes=5, symbol="BTCUSDT"):
-    return {
-        "symbol": symbol,
-        "start": M0.isoformat(),
-        "end": (M0 + timedelta(minutes=minutes)).isoformat(),
-        "speed": speed,
-    }
+    return bus, store, create_app(bus, store, pool, TOKEN, **kw)
 
 
 async def _seed_candles(db_conn, n=5):
@@ -351,119 +337,8 @@ async def _seed_journal(db_conn) -> int:
     return rec_id
 
 
-async def test_journal_get_and_manual_patch_roundtrip(db_conn):
-    rec_id = await _seed_journal(db_conn)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/journal/{rec_id}") as r:
-                assert r.status == 401                     # Bearer required
-            async with s.get(f"http://{addr}/journal/{rec_id}",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-            assert body["reason_text"].startswith("LONG BTCUSDT")
-            assert body["taken"] is None and body["chart_snapshot_path"] is None
-            # PATCH the owner's MANUAL fields
-            patch = {"taken": True, "result": "win", "actual_entry": 100.5,
-                     "actual_exit": 102.0, "actual_r": 1.8,
-                     "notes": "clean setup", "tags": ["A+", "sweep"]}
-            async with s.patch(f"http://{addr}/journal/{rec_id}",
-                               json=patch, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-            assert body["taken"] is True and body["result"] == "win"
-            assert body["actual_entry"] == 100.5 and body["actual_r"] == 1.8
-            assert body["tags"] == ["A+", "sweep"] and body["notes"] == "clean setup"
-            # AUTO context immutable — reason_text unchanged by the PATCH
-            assert body["reason_text"].startswith("LONG BTCUSDT")
-            # PATCH merge: a partial body preserves unspecified fields
-            async with s.patch(f"http://{addr}/journal/{rec_id}",
-                               json={"notes": "revised"}, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-            assert body["notes"] == "revised"
-            assert body["taken"] is True and body["result"] == "win"  # kept
-            assert body["actual_entry"] == 100.5                       # kept
-    finally:
-        await _stop(server, task)
 
 
-async def test_journal_patch_feeds_psychology_guard(db_conn):
-    """P4.9/D23.5: logging a taken LOSS via PATCH records it in the
-    psychology guard (so a same-symbol signal within 5 min hits revenge)."""
-    from datetime import timezone
-    from marketscalper.engines.psychology import PsychologyGuard
-
-    rec_id = await _seed_journal(db_conn)
-    guard = PsychologyGuard()
-    bus = EventBus()
-    store = StateStore(bus)
-    app = create_app(bus, store, TxPool(db_conn), TOKEN, psych_guard=guard)
-    server, task, addr = await _serve(app)
-    now = datetime.now(timezone.utc)
-    try:
-        # before: the guard is clean
-        assert guard.evaluate(now, "BTCUSDT").passed
-        async with aiohttp.ClientSession() as s:
-            async with s.patch(f"http://{addr}/journal/{rec_id}",
-                               json={"taken": True, "result": "loss"},
-                               headers=AUTH) as r:
-                assert r.status == 200
-        # after: a taken loss on BTCUSDT is recorded -> revenge blocks now
-        st = guard.evaluate(datetime.now(timezone.utc), "BTCUSDT")
-        assert not st.passed and "revenge" in st.detail
-        # un-take -> the record is dropped
-        async with aiohttp.ClientSession() as s:
-            async with s.patch(f"http://{addr}/journal/{rec_id}",
-                               json={"taken": False}, headers=AUTH) as r:
-                assert r.status == 200
-        assert guard.evaluate(datetime.now(timezone.utc), "BTCUSDT").passed
-    finally:
-        await _stop(server, task)
-
-
-async def test_journal_patch_cors_preflight_allowed():
-    """The journal UI (P4.7) is always a foreign origin; a browser sends a
-    CORS preflight for the JSON PATCH. Guard that PATCH + Content-Type are
-    allowed (aiohttp ignores CORS, so this must be asserted explicitly)."""
-    _, _, app = _pipeline()
-    server, task, addr = await _serve(app)
-    preflight = {
-        "Origin": "null",                              # file:// pages send null
-        "Access-Control-Request-Method": "PATCH",
-        "Access-Control-Request-Headers": "authorization, content-type",
-    }
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.options(f"http://{addr}/journal/1",
-                                 headers=preflight) as r:
-                assert r.status == 200                 # preflight accepted
-                allow = r.headers.get("Access-Control-Allow-Methods", "")
-                assert "PATCH" in allow
-    finally:
-        await _stop(server, task)
-
-
-async def test_journal_404_and_validation(db_conn):
-    rec_id = await _seed_journal(db_conn)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/journal/999999", headers=AUTH) as r:
-                assert r.status == 404
-            async with s.patch(f"http://{addr}/journal/999999",
-                               json={"taken": True}, headers=AUTH) as r:
-                assert r.status == 404
-            for bad in ({"result": "great"}, {"taken": "yes"},
-                        {"tags": "notalist"}, {"actual_entry": "abc"}):
-                async with s.patch(f"http://{addr}/journal/{rec_id}",
-                                   json=bad, headers=AUTH) as r:
-                    assert r.status == 400
-    finally:
-        await _stop(server, task)
 
 
 # ------------------------------------------------------------- analytics (P4.11)
@@ -496,428 +371,27 @@ async def _seed_evaluated_rec(db_conn, strategy, outcome, eval_r, result,
     return rec_id
 
 
-async def test_analytics_endpoint_roundtrip(db_conn):
-    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
-    await _seed_evaluated_rec(db_conn, "S1", "sl", -1.0, "loss", -1.0, hour=15)
-    await _seed_evaluated_rec(db_conn, "S2", "tp1", 3.0, "win", 2.5, hour=3)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/analytics") as r:
-                assert r.status == 401                     # Bearer required
-            async with s.get(f"http://{addr}/analytics", headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-        assert body["n_recommendations"] == 3
-        assert set(body["by_strategy"]) == {"S1", "S2"}
-        s1 = body["by_strategy"]["S1"]
-        assert s1["hypothetical"]["wins"] == 1 and s1["hypothetical"]["losses"] == 1
-        assert abs(s1["hypothetical"]["win_rate"] - 0.5) < 1e-9
-        assert s1["manual"]["n_taken"] == 2
-        # system-vs-actual delta present (user vs hypothetical)
-        assert s1["system_vs_actual"]["n"] == 2
-        assert set(body["by_session"]) == {"ASIA", "LONDON", "NY"}
-    finally:
-        await _stop(server, task)
 
 
-async def test_analytics_mae_endpoint(db_conn):
-    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
-    await _seed_evaluated_rec(db_conn, "S1", "sl", -1.0, "loss", -1.0, hour=10)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/analytics/mae") as r:
-                assert r.status == 401                     # Bearer required
-            async with s.get(f"http://{addr}/analytics/mae",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-        assert "S1" in body
-        assert body["S1"]["n_evaluated"] == 2 and body["S1"]["n_winners"] == 1
-        assert len(body["S1"]["mae_histogram"]) == 4
-        assert body["S1"]["sl_preserve_90"] is not None
-    finally:
-        await _stop(server, task)
-
-
-async def test_campaign_audit_and_expectancy_endpoints(db_conn):
-    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/campaign/audit") as r:
-                assert r.status == 401                     # Bearer required
-            async with s.get(f"http://{addr}/campaign/audit",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                audit = await r.json()
-            assert audit["clean"] is True and audit["n_recommendations"] == 1
-            async with s.get(f"http://{addr}/campaign/expectancy",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                rep = await r.json()
-            assert rep["trusted_threshold"] == 200
-            # 1 rec is far below the 200 threshold -> not eligible
-            assert rep["strategies"]["S1"]["sample_sufficient"] is False
-            assert rep["any_trusted_eligible"] is False
-    finally:
-        await _stop(server, task)
-
-
-async def test_journal_list_endpoint(db_conn):
-    await _seed_evaluated_rec(db_conn, "S1", "tp1", 2.0, "win", 1.8, hour=9)
-    await _seed_evaluated_rec(db_conn, "S2", "sl", -1.0, "loss", -1.0, hour=15)
-    _, _, app = _pipeline(pool=TxPool(db_conn))
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/journal") as r:
-                assert r.status == 401                     # Bearer required
-            async with s.get(f"http://{addr}/journal?limit=100",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-        assert len(body) == 2
-        # newest first (hour 15 before hour 9)
-        assert body[0]["strategy"] == "S2" and body[1]["strategy"] == "S1"
-        assert body[0]["eval_outcome"] == "sl" and body[0]["result"] == "loss"
-        assert body[1]["taken"] is True and body[1]["reason_text"] == "x"
-        assert "entry" in body[0] and "status" in body[0]
-    finally:
-        await _stop(server, task)
 
 
 # -------------------------------------------------------------- WebSocket
 
 
-async def test_ws_rejects_bad_token():
-    _, _, app = _pipeline()
-    server, task, addr = await _serve(app)
-    try:
-        with pytest.raises(Exception):                          # 403 handshake or 1008 close
-            async with websockets.connect(f"ws://{addr}/ws?token=wrong") as ws:
-                await asyncio.wait_for(ws.recv(), timeout=2)
-    finally:
-        await _stop(server, task)
 
 
-async def test_ws_pushes_candle_and_state_diff():
-    bus, _, app = _pipeline()
-    CandleBuilder(bus)                                          # trades -> closed candles
-    # prime: the builder discards each symbol's first bucket (startup rule)
-    await bus.publish(Trade(symbol="BTCUSDT", price=1.0, qty=1.0,
-                            ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
-    server, task, addr = await _serve(app)
-    try:
-        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
-            await bus.publish(Trade(symbol="BTCUSDT", price=67200.0, qty=2.0,
-                                    ts=M0 + timedelta(seconds=5), is_buyer_maker=False))
-            await bus.publish(Trade(symbol="BTCUSDT", price=67210.0, qty=1.0,
-                                    ts=M0 + timedelta(seconds=65), is_buyer_maker=True))
-            import json
-            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-        assert msg["candle"]["symbol"] == "BTCUSDT"
-        assert msg["candle"]["tf"] == "1m"
-        assert msg["candle"]["ts"] == M0.isoformat()
-        assert msg["candle"]["o"] == 67200.0 and msg["candle"]["n_trades"] == 1
-        diff = msg["state_diff"]["BTCUSDT"]["last_candle_1m"]
-        assert diff["ts"] == M0.isoformat()                     # store updated before push
-    finally:
-        await _stop(server, task)
 
 
-async def test_replay_endpoints_require_token_and_config():
-    _, _, app = _pipeline()                               # replay NOT configured
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"http://{addr}/replay/start", json=_replay_body()) as r:
-                assert r.status == 401                    # auth first
-            async with s.get(f"http://{addr}/replay/status", headers=AUTH) as r:
-                assert r.status == 503                    # not configured
-            async with s.post(f"http://{addr}/replay/start", json=_replay_body(),
-                              headers=AUTH) as r:
-                assert r.status == 503
-    finally:
-        await _stop(server, task)
 
 
-async def test_replay_start_runs_to_completion_over_existing_ws(db_conn):
-    await _seed_candles(db_conn)
-    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/replay/status", headers=AUTH) as r:
-                assert (await r.json())["running"] is False   # idle initially
 
-            async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
-                async with s.post(f"http://{addr}/replay/start",
-                                  json=_replay_body(speed="max"), headers=AUTH) as r:
-                    assert r.status == 200
-                    body = await r.json()
-                    assert body["running"] is True and body["symbol"] == "BTCUSDT"
-                    assert body["speed"] == "max"
-                import json as _json
-                msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                assert set(msg) == {"candle", "state_diff"}   # existing protocol only
-                assert msg["candle"]["symbol"] == "BTCUSDT"
-
-            for _ in range(100):                              # completion -> idle
-                async with s.get(f"http://{addr}/replay/status", headers=AUTH) as r:
-                    status = await r.json()
-                if status["running"] is False:
-                    break
-                await asyncio.sleep(0.05)
-            assert status == {"running": False, "symbol": None, "start": None,
-                              "end": None, "speed": None}
-    finally:
-        await _stop(server, task)
-
-
-async def test_replay_start_validation(db_conn):
-    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
-    server, task, addr = await _serve(app)
-    bad = [
-        _replay_body(speed=2),                                   # invalid speed
-        {**_replay_body(), "start": _replay_body()["end"],
-         "end": _replay_body()["start"]},                        # start >= end
-        _replay_body(symbol="DOGEUSDT"),                         # invalid symbol
-        {**_replay_body(), "start": "not-a-date"},               # unparseable
-    ]
-    try:
-        async with aiohttp.ClientSession() as s:
-            for payload in bad:
-                async with s.post(f"http://{addr}/replay/start", json=payload,
-                                  headers=AUTH) as r:
-                    assert r.status == 400, payload
-    finally:
-        await _stop(server, task)
-
-
-async def test_replay_second_start_409_then_stop(db_conn):
-    await _seed_candles(db_conn)
-    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.post(f"http://{addr}/replay/start",
-                              json=_replay_body(speed=60), headers=AUTH) as r:
-                assert r.status == 200                           # slow replay: stays running
-            async with s.post(f"http://{addr}/replay/start",
-                              json=_replay_body(speed=60), headers=AUTH) as r:
-                assert r.status == 409                           # already running
-            async with s.post(f"http://{addr}/replay/stop", headers=AUTH) as r:
-                assert r.status == 200 and (await r.json())["running"] is False
-            async with s.get(f"http://{addr}/replay/status", headers=AUTH) as r:
-                assert (await r.json())["running"] is False      # stopped -> idle
-            async with s.post(f"http://{addr}/replay/stop", headers=AUTH) as r:
-                assert r.status == 200                           # idle stop = no-op
-    finally:
-        await _stop(server, task)
-
-
-async def test_replay_speeds_endpoint(db_conn):
-    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/replay/speeds", headers=AUTH) as r:
-                assert await r.json() == {"speeds": [1, 10, 60, "max"]}
-    finally:
-        await _stop(server, task)
-
-
-async def test_ws_carries_structure_payload_verbatim():
-    """P1.19: engine-state dicts written via set_structure ride the same
-    WS diff, JSON-verbatim, next to the candle fields."""
-    bus, store, app = _pipeline()
-    server, task, addr = await _serve(app)
-    try:
-        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
-            payload = {"trend": "BULLISH", "pivots": [
-                {"ts": M0.isoformat(), "kind": "H", "price": 67230.0,
-                 "label": "HH"}], "trendlines": [], "channels": []}
-            store.set_structure("BTCUSDT", payload)        # composition order:
-            candle = Candle(symbol="BTCUSDT", tf="1m", ts=M0,  # before close
-                            o=67200.0, h=67230.0, l=67190.0, c=67215.0,
-                            v=2.0, qv=134430.0, n_trades=10, taker_buy_v=1.5)
-            await bus.publish(candle)
-            import json
-            msg = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-        assert msg["candle"]["symbol"] == "BTCUSDT"
-        diff = msg["state_diff"]["BTCUSDT"]
-        assert diff["structure"] == payload                # verbatim JSON
-        assert diff["last_candle_1m"]["c"] == 67215.0      # candles unaffected
-    finally:
-        await _stop(server, task)
-
-
-async def test_ws_broadcasts_to_all_clients():
-    bus, _, app = _pipeline()
-    CandleBuilder(bus)
-    # prime: the builder discards each symbol's first bucket (startup rule)
-    await bus.publish(Trade(symbol="ETHUSDT", price=1.0, qty=1.0,
-                            ts=M0 - timedelta(minutes=1), is_buyer_maker=False))
-    server, task, addr = await _serve(app)
-    try:
-        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws1, \
-                   websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws2:
-            await bus.publish(Trade(symbol="ETHUSDT", price=3500.0, qty=1.0,
-                                    ts=M0, is_buyer_maker=False))
-            await bus.publish(Trade(symbol="ETHUSDT", price=3501.0, qty=1.0,
-                                    ts=M0 + timedelta(seconds=61), is_buyer_maker=False))
-            import json
-            m1 = json.loads(await asyncio.wait_for(ws1.recv(), timeout=5))
-            m2 = json.loads(await asyncio.wait_for(ws2.recv(), timeout=5))
-        assert m1 == m2
-        assert m1["candle"]["symbol"] == "ETHUSDT"
-    finally:
-        await _stop(server, task)
 
 
 # ------------------------------------- F2/F4 verified-defect regressions
 
 
-async def test_replay_drives_engine_chain_on_isolated_bus(db_conn, caplog):
-    """F2 fix: replay runs fresh pipelines on its own bus — the engine
-    chain produces structure for replayed candles even after live has
-    advanced, and the live bus sees no out-of-order drops."""
-    from marketscalper.main import _wire_structure_engines
-
-    await _seed_candles(db_conn)
-    bus, store, app = _pipeline(pool=TxPool(db_conn),
-                                replay_provider=ReplayFeed,
-                                replay_wiring=_wire_structure_engines)
-    _wire_structure_engines(bus, store, ["BTCUSDT"])       # live pipelines
-    live_ts = M0 + timedelta(days=30)                      # live is far ahead
-    await bus.publish(Candle("BTCUSDT", "1m", live_ts, 100.0, 101.0, 99.0,
-                             100.0, 1.0, 100.0, 1, 0.5))
-    live_structure = store.snapshot("BTCUSDT").structure
-    server, task, addr = await _serve(app)
-    try:
-        with caplog.at_level("WARNING"):
-            async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
-                async with aiohttp.ClientSession() as s:
-                    async with s.post(f"http://{addr}/replay/start",
-                                      json=_replay_body(speed="max"),
-                                      headers=AUTH) as r:
-                        assert r.status == 200
-                import json as _json
-                msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-        assert msg["candle"]["ts"] == M0.isoformat()       # historical candle
-        structure = msg["state_diff"]["BTCUSDT"]["structure"]
-        assert structure["qualification"]["verdict"] == "NO_SIGNAL"  # engines ran
-        assert not any("out-of-order" in r.message for r in caplog.records)
-        assert store.snapshot("BTCUSDT").structure == live_structure  # live untouched
-    finally:
-        await _stop(server, task)
 
 
-async def test_live_push_suppressed_while_replay_runs(db_conn):
-    """F2 fix: while a replay session is active it owns the WS stream;
-    the live push resumes after stop."""
-    import json as _json
-
-    await _seed_candles(db_conn)
-    bus, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed)
-    server, task, addr = await _serve(app)
-
-    def live(minute):
-        return Candle("BTCUSDT", "1m",
-                      M0 + timedelta(days=30, minutes=minute),
-                      100.0, 101.0, 99.0, 100.0, 1.0, 100.0, 1, 0.5)
-
-    try:
-        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as ws:
-            async with aiohttp.ClientSession() as s:
-                async with s.post(f"http://{addr}/replay/start",
-                                  json=_replay_body(speed=60),
-                                  headers=AUTH) as r:
-                    assert r.status == 200                 # slow: stays running
-                await bus.publish(live(0))                 # live during replay
-                msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                assert msg["candle"]["ts"].startswith("2026-07-14")  # replay only
-                async with s.post(f"http://{addr}/replay/stop",
-                                  headers=AUTH) as r:
-                    assert r.status == 200
-                await bus.publish(live(1))                 # live resumes
-                for _ in range(50):                        # drain queued replay
-                    msg = _json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
-                    if not msg["candle"]["ts"].startswith("2026-07-14"):
-                        break
-                expected = (M0 + timedelta(days=30, minutes=1)).isoformat()
-                assert msg["candle"]["ts"] == expected
-    finally:
-        await _stop(server, task)
-
-
-async def test_slow_ws_client_cannot_stall_the_pipeline():
-    """F4 fix: a client that never reads is dropped once its send queue
-    fills; bus publishing never blocks and fresh clients keep working."""
-    import json as _json
-
-    bus, _, app = _pipeline()
-    server, task, addr = await _serve(app)
-
-    def candle(i):
-        return Candle("BTCUSDT", "1m", M0 + timedelta(minutes=i),
-                      100.0, 101.0, 99.0, 100.0, 1.0, 100.0, 1, 0.5)
-
-    try:
-        slow = await websockets.connect(f"ws://{addr}/ws?token={TOKEN}")
-        loop = asyncio.get_event_loop()
-        start_t = loop.time()
-        for i in range(2000):                              # never read `slow`
-            await bus.publish(candle(i))
-        assert loop.time() - start_t < 10.0                # bus never stalled
-        with pytest.raises(Exception):                     # server dropped it
-            while True:
-                await asyncio.wait_for(slow.recv(), timeout=5)
-        async with websockets.connect(f"ws://{addr}/ws?token={TOKEN}") as fresh:
-            await bus.publish(candle(3000))
-            msg = _json.loads(await asyncio.wait_for(fresh.recv(), timeout=5))
-            assert msg["candle"]["ts"] == (M0 + timedelta(minutes=3000)).isoformat()
-    finally:
-        await _stop(server, task)
-
-
-async def test_concurrent_replay_starts_one_wins(db_conn, monkeypatch):
-    """Freeze-audit fix (Volume milestone): the start slot is reserved
-    BEFORE the seed read / feed launch awaits — two concurrent starts
-    yield exactly one 200 and one 409, never two live sessions."""
-    from marketscalper.main import _wire_structure_engines
-    from marketscalper import db as _db
-
-    await _seed_candles(db_conn)
-    real_select = _db.select_candles
-
-    async def slow_select(conn, symbol, tf, start, end):
-        await asyncio.sleep(0.2)                   # widen the race window
-        return await real_select(conn, symbol, tf, start, end)
-
-    monkeypatch.setattr("marketscalper.api.app.db.select_candles",
-                        slow_select)
-    _, _, app = _pipeline(pool=TxPool(db_conn), replay_provider=ReplayFeed,
-                          replay_wiring=_wire_structure_engines)
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async def start():
-                async with s.post(f"http://{addr}/replay/start",
-                                  json=_replay_body(speed=60),
-                                  headers=AUTH) as r:
-                    return r.status
-            statuses = sorted(await asyncio.gather(start(), start()))
-            assert statuses == [200, 409]
-            async with s.post(f"http://{addr}/replay/stop", headers=AUTH) as r:
-                assert r.status == 200
-    finally:
-        await _stop(server, task)
 
 
 # ------------------------------------------------ /api/chart (D26 multi-timeframe)
@@ -1023,20 +497,6 @@ async def test_api_chart_returns_display_indicators(db_conn):
         await _stop(server, task)
 
 
-def test_chart_service_htf_context_pure():
-    # Item 9: 15m..1D carry display-only CONTEXT (never "unavailable"). Pure —
-    # _context is a function of the candles, no DB.
-    cs = ChartService(None)
-    candles = [{"c": 100.0 + i * 0.5, "l": 99.0 + i * 0.5, "h": 101.0 + i * 0.5}
-               for i in range(260)]
-    ctx = cs._context("1h", candles)
-    assert ctx["trend"] == "Bullish" and ctx["bias"] == "Long only"
-    assert ctx["ema_alignment"] == "20 > 50 > 200"
-    assert 0.0 <= ctx["rsi"] <= 100.0 and ctx["support"] < ctx["resistance"]
-    assert "confirmation" in ctx["execution"]
-    assert cs._context("1m", candles) is None              # analysis TF -> no context
-    assert cs._context("1h", candles[:10]) is None         # too few candles
-
 
 # ------------------------------------------------ /api/htf (HTF V1.1)
 
@@ -1058,42 +518,7 @@ def _htf_app(with_service=True):
                       htf_service=_FakeHtf() if with_service else None)
 
 
-async def test_api_htf_requires_token():
-    server, task, addr = await _serve(_htf_app())
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/htf",
-                             params={"symbol": "BTCUSDT"}) as r:
-                assert r.status == 401
-    finally:
-        await _stop(server, task)
 
-
-async def test_api_htf_503_when_not_configured():
-    server, task, addr = await _serve(_htf_app(with_service=False))
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/htf",
-                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
-                assert r.status == 503
-    finally:
-        await _stop(server, task)
-
-
-async def test_api_htf_returns_analysis():
-    server, task, addr = await _serve(_htf_app())
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/htf",
-                             params={"symbol": "ETHUSDT"}, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-    finally:
-        await _stop(server, task)
-    assert set(body) == {"contract_version", "symbol", "timeframes", "overall"}
-    assert body["contract_version"] == "1.0"
-    assert body["symbol"] == "ETHUSDT"
-    assert body["overall"]["bias"] == "BULLISH"
 
 
 # ------------------------------------------------ /api/journal (P5 user journal)
@@ -1240,56 +665,6 @@ async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
         await _stop(server, task)
 
 
-async def test_api_setups_htf_gated(db_conn):
-    """Trade Engine V2: /api/setups returns HTF-gated explained setups from the
-    live LTF structure + HTF bias, or 'No high-probability setup available.'"""
-    bus = EventBus()
-    store = StateStore(bus)
-    m0 = datetime(2026, 7, 21, 12, 0, tzinfo=timezone.utc)
-    await bus.publish(Candle(symbol="BTCUSDT", tf="1m", ts=m0, o=100.0, h=100.0,
-                             l=100.0, c=100.0, v=1.0, qv=100.0, n_trades=1, taker_buy_v=0.5))
-    store.set_structure("BTCUSDT", {
-        "trend": "BULLISH",
-        "liquidity": {"premium_discount": "DISCOUNT",
-                      "sweeps": [{"ts": m0.isoformat(), "side": "LOW", "target": "EQL", "price": 97.9}],
-                      "shifts": [{"sweep_ts": m0.isoformat(), "ts": m0.isoformat()}]},
-        "confluence": [{"direction": "BULL", "lo": 99.5, "hi": 100.5, "count": 3, "htf_magnet": True}],
-        "volume": {"rvol": 1.5, "cum_delta": 120.0},
-        "qualification": {"data_integrity": "PASS"},
-        "signals": [{"strategy": "S1", "direction": "LONG", "entry": 100.0, "sl": 98.0,
-                     "tp1": 104.0, "tp2": 108.0, "created_ts": m0.isoformat(),
-                     "invalid_after_bars": 5, "facts": []}],
-    })
-
-    class _FakeHtf:
-        async def analyze(self, symbol):
-            return {"symbol": symbol, "overall": {"bias": "BULLISH", "confidence": 0.7,
-                                                  "market_story": "4H bullish; drawing to buy-side liquidity."}}
-
-    app = create_app(bus, store, TxPool(db_conn), TOKEN, htf_service=_FakeHtf())
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/setups?symbol=BTCUSDT", headers=AUTH) as r:
-                assert r.status == 200
-                d = await r.json()
-            assert d["contract_version"] == "1.0"                 # frozen contract
-            assert d["htf_bias"] == "BULLISH" and d["message"] is None
-            assert len(d["setups"]) == 1
-            setup = d["setups"][0]
-            assert setup["direction"] == "LONG" and setup["grade"] in ("A+", "A")
-            assert 1.8 <= setup["rr"] <= 1.9 and setup["why"]["why_edge"]   # NET of fees
-            assert setup["htf_bias"] == "BULLISH" and setup["ltf_trend"] == "BULLISH"
-            assert setup["confluences"] <= setup["confluences_total"] == 5
-            assert setup["id"] and setup["grade_reason"].startswith("Grade")   # self-explanatory
-            assert setup["reasons_to_avoid"] and setup["setup_type"] and setup["market_context"]
-            # a symbol with no live structure -> the confident "no setup"
-            async with s.get(f"http://{addr}/api/setups?symbol=ETHUSDT", headers=AUTH) as r:
-                d2 = await r.json()
-            assert d2["setups"] == [] and "No high-probability" in d2["message"]
-    finally:
-        await _stop(server, task)
-
 
 # ------------------------------------------------ /api/v3/analysis (V3 L1)
 
@@ -1312,120 +687,8 @@ def _v3_app(with_service=True):
                       v3_service=_FakeV3() if with_service else None)
 
 
-async def test_api_v3_analysis_route_auth_shape():
-    server, task, addr = await _serve(_v3_app())
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/v3/analysis",
-                             params={"symbol": "BTCUSDT", "tf": "1h"}) as r:
-                assert r.status == 401                      # auth required
-            async with s.get(f"http://{addr}/api/v3/analysis",
-                             params={"symbol": "BTCUSDT", "tf": "1h"},
-                             headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-            async with s.get(f"http://{addr}/api/v3/analysis",
-                             params={"symbol": "BTCUSDT", "tf": "2h"},
-                             headers=AUTH) as r:
-                assert r.status == 400                      # unknown tf
-    finally:
-        await _stop(server, task)
-    assert body["tf"] == "1h" and body["ready"] is True
-    for key in ("trend", "swings", "trendlines", "zones", "liquidity"):
-        assert key in body
 
 
-async def test_api_v3_analysis_503_when_not_configured():
-    server, task, addr = await _serve(_v3_app(with_service=False))
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/v3/analysis",
-                             params={"symbol": "BTCUSDT", "tf": "1h"},
-                             headers=AUTH) as r:
-                assert r.status == 503
-    finally:
-        await _stop(server, task)
 
 
-async def test_api_v3_map_route_and_shape():
-    class _FakeV3Map(_FakeV3):
-        async def map(self, symbol):
-            return {"symbol": symbol, "ready": True, "price": 100.0,
-                    "bias": {"per_tf": {"1h": "BULLISH"}, "overall": "BULLISH"},
-                    "zones": [], "decision_points": [],
-                    "liquidity": {"above": [], "below": [], "draw_above": None,
-                                  "draw_below": None, "swept_recent": []},
-                    "memory": {"day_profile": {}, "session_model": {},
-                               "weekly": {}, "sweep_history": [],
-                               "zone_history": []}}
-    bus = EventBus()
-    app = create_app(bus, StateStore(bus), None, TOKEN, v3_service=_FakeV3Map())
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/v3/map",
-                             params={"symbol": "BTCUSDT"}) as r:
-                assert r.status == 401
-            async with s.get(f"http://{addr}/api/v3/map",
-                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-    finally:
-        await _stop(server, task)
-    for key in ("bias", "zones", "decision_points", "liquidity", "memory"):
-        assert key in body
 
-
-async def test_api_v3_setups_route_and_shape():
-    class _FakeV3S(_FakeV3):
-        async def setups(self, symbol):
-            return {"symbol": symbol, "session": {"rating": 6, "effect": "BOOST",
-                                                  "label": "overlap"},
-                    "setups": [], "watching": [], "message": "No setup right now"}
-    bus = EventBus()
-    app = create_app(bus, StateStore(bus), None, TOKEN, v3_service=_FakeV3S())
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/v3/setups",
-                             params={"symbol": "BTCUSDT"}) as r:
-                assert r.status == 401
-            async with s.get(f"http://{addr}/api/v3/setups",
-                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-    finally:
-        await _stop(server, task)
-    for key in ("session", "setups", "watching", "message"):
-        assert key in body
-
-
-async def test_api_v3_history_route(db_conn):
-    from marketscalper.v3 import history as v3h
-    from tests.test_v3_history import _setup, _TxPool
-    await v3h.record_setups(_TxPool(db_conn), [_setup(91)])
-    bus = EventBus()
-    app = create_app(bus, StateStore(bus), TxPool(db_conn), TOKEN)
-    server, task, addr = await _serve(app)
-    try:
-        async with aiohttp.ClientSession() as s:
-            async with s.get(f"http://{addr}/api/v3/history") as r:
-                assert r.status == 401
-            async with s.get(f"http://{addr}/api/v3/history",
-                             params={"symbol": "BTCUSDT"}, headers=AUTH) as r:
-                assert r.status == 200
-                body = await r.json()
-            rid = body["items"][0]["id"]
-            async with s.get(f"http://{addr}/api/v3/history/{rid}",
-                             headers=AUTH) as r:
-                assert r.status == 200
-                one = await r.json()
-            async with s.get(f"http://{addr}/api/v3/history",
-                             params={"format": "csv"}, headers=AUTH) as r:
-                assert r.status == 200
-                assert "text/csv" in r.headers["Content-Type"]
-                text = await r.text()
-    finally:
-        await _stop(server, task)
-    assert body["total"] >= 1 and one["analysis"]["reasons"] == ["r1"]
-    assert text.splitlines()[0].startswith("id,ts,symbol")

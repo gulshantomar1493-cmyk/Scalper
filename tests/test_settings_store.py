@@ -89,3 +89,30 @@ def test_corrupt_file_falls_back_to_defaults(tmp_path):
     (tmp_path / "settings.json").write_text("{ not json", encoding="utf-8")
     s = SettingsStore(path=tmp_path / "settings.json")
     assert s.notifications()["desktop"] is True         # graceful default
+
+
+# ------------------------------------------------- V4 strategy on/off switch --
+
+def test_v4_strategies_default_to_enabled(tmp_path):
+    s = _store(tmp_path)
+    assert s.v4_disabled() == set()
+    assert s.v4_strategy_enabled("eth_4h_core") is True
+
+
+def test_v4_disable_persists_and_reenable_clears(tmp_path):
+    s = _store(tmp_path)
+    s.set_v4_strategy("eth_4h_core", False)
+    assert s.v4_strategy_enabled("eth_4h_core") is False
+    # a NEW store reading the same file must see the switch
+    assert _store(tmp_path).v4_strategy_enabled("eth_4h_core") is False
+    s.set_v4_strategy("eth_4h_core", True)
+    assert _store(tmp_path).v4_strategy_enabled("eth_4h_core") is True
+    assert _store(tmp_path).v4_disabled() == set()
+
+
+def test_v4_disable_is_idempotent_and_scoped(tmp_path):
+    s = _store(tmp_path)
+    s.set_v4_strategy("eth_1h_fast", False)
+    s.set_v4_strategy("eth_1h_fast", False)
+    assert s.v4_disabled() == {"eth_1h_fast"}
+    assert s.v4_strategy_enabled("eth_4h_core") is True

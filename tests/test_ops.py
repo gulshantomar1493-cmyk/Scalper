@@ -55,37 +55,35 @@ def test_alerts_are_sorted_deterministic():
 # ------------------------------------------------ daily stats snapshot
 
 
-def _analytics(n=3):
-    grp = {"n": n,
-           "hypothetical": {"win_rate": 0.66, "expectancy": 0.84},
-           "manual": {"win_rate": 0.6, "expectancy": 0.55},
-           "system_vs_actual": {"delta": -0.2}}
-    return {"n_recommendations": n, "overall": grp,
-            "by_strategy": {"S1": grp}, "by_session": {}}
+def _performance(n):
+    return {"overall": {"n": n},
+            "by_strategy": {"eth_4h_core": {
+                "n": n, "n_open": 2, "win_rate": 0.66,
+                "avg_net_r": 0.84, "total_r": 4.2}}}
 
 
 def test_daily_summary_lines():
-    out = format_daily_summary(_analytics(5))
+    out = format_daily_summary(_performance(5))
     assert "daily stats snapshot: 5 recommendations" in out
-    assert "S1:" in out
-    assert "hyp_win=66%" in out and "hyp_exp=+0.84R" in out
-    assert "man_win=60%" in out and "sys_vs_actual=-0.20R" in out
+    assert "eth_4h_core:" in out
+    assert "win=66%" in out and "net=+0.84R" in out
+    assert "total=+4.20R" in out and "open=2" in out
 
 
 def test_daily_summary_empty():
-    out = format_daily_summary({"n_recommendations": 0, "by_strategy": {}})
+    out = format_daily_summary({"overall": {"n": 0}, "by_strategy": {}})
     assert "0 recommendations" in out
     assert "(no recommendations today)" in out
 
 
 def test_daily_summary_handles_none_metrics():
-    a = {"n_recommendations": 1, "by_strategy": {"S3": {
-        "n": 1,
-        "hypothetical": {"win_rate": None, "expectancy": None},
-        "manual": {"win_rate": None, "expectancy": None},
-        "system_vs_actual": {"delta": None}}}}
-    out = format_daily_summary(a)
-    assert "hyp_win=—" in out and "man_exp=—" in out
+    """An open-only strategy has no closed trades — the row must render
+    dashes, never a fabricated zero."""
+    perf = {"overall": {"n": 1}, "by_strategy": {
+        "eth_1h_fast": {"n": 0, "n_open": 3, "win_rate": None,
+                        "avg_net_r": None, "total_r": None}}}
+    out = format_daily_summary(perf)
+    assert "win=—" in out and "net=—" in out and "open=3" in out
 
 
 # ------------------------------------------------------ systemd hardening

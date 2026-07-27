@@ -33,7 +33,20 @@ if ! python -c "import pytest_asyncio" >/dev/null 2>&1; then
     exit 1
 fi
 
-echo "[ci] step 1: pytest suite (incl. determinism + conformance + boundary gates)"
+# Static name check. Most route handlers are only exercised by DB-gated tests,
+# so an undefined name inside one can otherwise reach production as a 500. This
+# catches that class before the suite runs, in under a second.
+echo "[ci] step 1: static check (undefined / unused names)"
+if python -c "import pyflakes" >/dev/null 2>&1; then
+    python -m pyflakes backend/marketscalper | grep -v "imported but unused"         | grep -v "assigned to but never used" && {
+        echo "[ci] FAIL: undefined names above." >&2; exit 1; }
+    echo "[ci]   clean"
+else
+    echo "[ci] FAIL: pyflakes is not installed (pip install -e .[dev])." >&2
+    exit 1
+fi
+
+echo "[ci] step 2: pytest suite (incl. determinism + conformance + boundary gates)"
 python -m pytest
 
 echo "[ci] all gates passed"

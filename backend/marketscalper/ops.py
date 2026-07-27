@@ -2,7 +2,7 @@
 
 Pure utilities for the live forward-run: feed-gap detection (alert when a
 symbol's closed-candle stream stalls) and the daily stats-snapshot
-formatter (one summary line per strategy from the analytics read-model).
+formatter (one summary line per strategy from the V4 performance read-model).
 Composition (main.py) drives the async watchdog / daily task; these
 helpers stay pure and testable. Live-only — never run in replay/tests.
 """
@@ -42,22 +42,23 @@ def _r(v):
     return "—" if v is None else f"{v:+.2f}R"
 
 
-def format_daily_summary(analytics: dict) -> str:
-    """A compact daily stats snapshot from compute_analytics output — the
-    §11 P4.13 daily log line (one row per strategy: n, hyp/manual win rate
-    and expectancy). Pure formatting."""
-    n = analytics.get("n_recommendations", 0)
+def format_daily_summary(performance: dict) -> str:
+    """A compact daily stats snapshot from the V4 performance read-model —
+    the §11 P4.13 daily log line (one row per strategy: n, win rate, net R
+    per trade, total R). Pure formatting."""
+    overall = performance.get("overall") or {}
+    n = overall.get("n", 0)
     lines = [f"daily stats snapshot: {n} recommendation"
              f"{'' if n == 1 else 's'}"]
-    by_strategy = analytics.get("by_strategy", {})
+    by_strategy = performance.get("by_strategy") or {}
     if not by_strategy:
         lines.append("  (no recommendations today)")
     for strat in sorted(by_strategy):
         s = by_strategy[strat]
-        h, m = s["hypothetical"], s["manual"]
         lines.append(
-            f"  {strat}: n={s['n']} "
-            f"hyp_win={_pct(h['win_rate'])} hyp_exp={_r(h['expectancy'])} "
-            f"man_win={_pct(m['win_rate'])} man_exp={_r(m['expectancy'])} "
-            f"sys_vs_actual={_r(s['system_vs_actual']['delta'])}")
+            f"  {strat}: n={s.get('n', 0)} "
+            f"win={_pct(s.get('win_rate'))} "
+            f"net={_r(s.get('avg_net_r'))} "
+            f"total={_r(s.get('total_r'))} "
+            f"open={s.get('n_open', 0)}")
     return "\n".join(lines)
