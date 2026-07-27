@@ -33,6 +33,16 @@ DEFAULTS = {
     # V4 strategy ids the owner has switched OFF from the UI. Absence = enabled,
     # so a strategy the catalogue adds later starts on, as the catalogue intends.
     "v4_disabled": [],
+    # When to shout. proximity_pct is how close price must come to a resting
+    # entry before it is worth a message — these orders sit for hours, so the
+    # useful alert is "it is approaching", not "it filled".
+    "alerts": {
+        "on_new_setup": True,
+        "on_approach": True,
+        "on_trigger": True,
+        "on_close": True,
+        "proximity_pct": 0.25,
+    },
 }
 
 
@@ -105,6 +115,18 @@ class SettingsStore:
             if not any(x["token"] == legacy["token"] for x in bots):
                 _add(legacy)
         merged["telegram_bots"] = bots
+        a = raw.get("alerts")
+        if isinstance(a, dict):
+            for k, v in a.items():
+                if k not in merged["alerts"]:
+                    continue
+                if k == "proximity_pct":
+                    try:
+                        merged["alerts"][k] = max(0.01, min(float(v), 10.0))
+                    except (TypeError, ValueError):
+                        pass                       # keep the default
+                else:
+                    merged["alerts"][k] = bool(v)
         off = raw.get("v4_disabled")
         if isinstance(off, list):
             merged["v4_disabled"] = sorted({str(x) for x in off if isinstance(x, str)})
@@ -151,6 +173,23 @@ class SettingsStore:
     def telegram_public(self) -> dict:
         bots = self._data["telegram_bots"]
         return _public(bots[0]) if bots else dict(_EMPTY_PUBLIC)
+
+    def alerts(self) -> dict:
+        return dict(self._data["alerts"])
+
+    def set_alerts(self, prefs: dict) -> dict:
+        for k in self._data["alerts"]:
+            if k not in prefs:
+                continue
+            if k == "proximity_pct":
+                try:
+                    self._data["alerts"][k] = max(0.01, min(float(prefs[k]), 10.0))
+                except (TypeError, ValueError):
+                    raise ValueError("proximity_pct must be a number")
+            else:
+                self._data["alerts"][k] = bool(prefs[k])
+        self._save()
+        return self.alerts()
 
     def v4_disabled(self) -> set:
         return set(self._data["v4_disabled"])

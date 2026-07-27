@@ -91,7 +91,10 @@ def create_app(
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
-        allow_methods=["GET", "POST", "PATCH", "DELETE"],   # PATCH/DELETE: journals
+        # PUT: settings; PATCH/DELETE: journal entries. A verb missing here is
+        # invisible to the server-side tests (aiohttp ignores CORS) and blocks
+        # the real browser 100% of the time — it has now bitten twice.
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
         allow_headers=["Authorization", "Content-Type"],
     )
     expected_auth = f"Bearer {api_token}"
@@ -237,8 +240,17 @@ def create_app(
     async def get_settings() -> dict:
         _require_settings()
         return {"notifications": settings.notifications(),
+                "alerts": settings.alerts(),
                 "telegram": settings.telegram_public(),        # legacy first-bot view
                 "telegram_bots": settings.telegram_bots_public()}
+
+    @app.put("/settings/alerts", dependencies=[Depends(require_token)])
+    async def put_alerts(payload: dict = Body(...)) -> dict:
+        _require_settings()
+        try:
+            return {"alerts": settings.set_alerts(payload or {})}
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
 
     @app.put("/settings/notifications", dependencies=[Depends(require_token)])
     async def put_notifications(payload: dict = Body(...)) -> dict:

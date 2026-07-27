@@ -142,6 +142,7 @@
     if (page === "paper" || page === "strategies") loadPerformance();
     if (page === "paper" && !(state.histRows || []).length) loadHistory();
     if (page === "journal") loadJournal();
+    if (page === "settings") loadSettings();
   }
   document.querySelectorAll(".nav-btn[data-go]").forEach(function (b) {
     b.addEventListener("click", function () { go(b.dataset.go); });
@@ -267,6 +268,71 @@
     return row;
   }
 
+  /* A filled setup is a LIVE position — it needs managing, not deciding, so it
+     gets its own section above the ones still waiting for a level to break. */
+  function activeRow(r, i) {
+    var lng = Number(r.direction) > 0;
+    var row = el("div", "srow " + (lng ? "long" : "short"));
+    row.style.animationDelay = Math.min(i * 22, 200) + "ms";
+    row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+    row.appendChild(el("span", "sym", String(r.symbol).replace("USDT", "")));
+
+    var mid = el("div");
+    mid.appendChild(el("div", "strat-tag", r.strategy_id));
+    var fill = r.fill_price != null ? r.fill_price : r.entry;
+    mid.appendChild(el("div", "meta", "filled " + fmt(fill, 2) + " · " + when(r.filled_ts || r.decision_ts)));
+    row.appendChild(mid);
+
+    var px = state.lastQuote[r.symbol];
+    var risk = Math.abs(fill - r.stop);
+    var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
+
+    [["Stop", r.stop, "stop"], ["Target", r.target, "target hide-md"],
+     ["Now", px, ""]].forEach(function (col) {
+      var cell = el("div", "cell " + col[2]);
+      cell.appendChild(el("span", "k", col[0]));
+      cell.appendChild(el("span", "v", col[1] == null ? "—" : fmt(col[1], 2)));
+      row.appendChild(cell);
+    });
+    var pnl = el("div", "cell");
+    pnl.appendChild(el("span", "k", "Open R"));
+    var v = el("span", "v " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
+               openR == null ? "—" : sign(openR, 2) + "R");
+    pnl.appendChild(v);
+    row.appendChild(pnl);
+
+    var b = el("button", "btn", "Chart");
+    b.addEventListener("click", function (ev) {
+      ev.stopPropagation();
+      viewOnChart({ symbol: r.symbol, level_tf: r.level_tf || "4h" });
+    });
+    row.appendChild(b);
+    return row;
+  }
+
+  function renderActive() {
+    var box = $("active"); if (!box) return;
+    var rows = (state.active || []).filter(function (r) {
+      return !state.symFilter || r.symbol === state.symFilter;
+    });
+    box.textContent = "";
+    if (!rows.length) return;                    // no section at all when empty
+    var t = el("div", "sec-t");
+    t.appendChild(document.createTextNode("Active trades · " + rows.length));
+    t.appendChild(el("span", "sub", "entry filled, running against the stop"));
+    box.appendChild(t);
+    var list = el("div", "setup-list");
+    rows.forEach(function (r, i) { list.appendChild(activeRow(r, i)); });
+    box.appendChild(list);
+  }
+
+  function loadActive() {
+    return api("/api/v4/history?status=FILLED&limit=50").then(function (d) {
+      state.active = d.rows || [];
+      renderActive(); renderToday();
+    }).catch(function () { state.active = []; });
+  }
+
   function renderToday() {
     var rows = state.setups.filter(function (s) {
       return !state.symFilter || s.symbol === state.symFilter;
@@ -281,7 +347,11 @@
         "with the trend behind it, which happens a few times a week. Levels are being watched."));
       box.appendChild(e);
     } else {
-      box.appendChild(el("div", "sec-t", rows.length === 1 ? "The setup" : "Best setup"));
+      var head = el("div", "sec-t");
+      head.appendChild(document.createTextNode(
+        rows.length === 1 ? "Trade setup" : "Trade setups · " + rows.length));
+      head.appendChild(el("span", "sub", "waiting for the level to break"));
+      box.appendChild(head);
       box.appendChild(setupCard(rows[0], 1));
       if (rows.length > 1) {
         box.appendChild(el("div", "sec-t", "Also live · " + (rows.length - 1)));
@@ -294,7 +364,8 @@
     var longs = rows.filter(function (r) { return r.direction > 0; }).length;
     var best = rows.length ? fmt(rows[0].rr, 2) + "R" : "—";
     var st = $("today-stats"); st.textContent = "";
-    [["Active setups", rows.length, rows.length ? "ranked by filters, then R:R" : "watching levels"],
+    [["Trade setups", rows.length, rows.length ? "ranked by filters, then R:R" : "watching levels"],
+     ["Active trades", (state.active || []).length, "entry filled, running"],
      ["Long / Short", longs + " / " + (rows.length - longs), "direction split"],
      ["Best net R:R", best, "after fees and funding"],
      ["Strategies live", state.catalogue ? state.catalogue.strategies.length : "—", "BTC · ETH"]
@@ -1114,6 +1185,141 @@
       .catch(function () { $("jr-status").textContent = "not saved"; });
   });
 
+  // ---------------------------------------------------------------- SETTINGS --
+  /* Telegram is the channel that works when the app is CLOSED, which for a tool
+     built on resting orders is the only channel that matters. Everything here
+     is a thin editor over GET/PUT /settings. */
+  function toggleRow(label, hint, checked, onChange) {
+    var r = el("label", "pref");
+    var box = document.createElement("input");
+    box.type = "checkbox"; box.checked = !!checked;
+    box.addEventListener("change", function () { onChange(box.checked, box); });
+    var lab = el("div", "pref-t");
+    lab.appendChild(el("div", null, label));
+    if (hint) lab.appendChild(el("div", "sub", hint));
+    var sw = el("span", "toggle");
+    sw.appendChild(box); sw.appendChild(el("span", "track"));
+    r.appendChild(lab); r.appendChild(sw);
+    return r;
+  }
+
+  function saveAlerts(patch) {
+    return post("/settings/alerts", patch, "PUT").then(function (d) {
+      state.settings.alerts = d.alerts; return d.alerts;
+    });
+  }
+
+  function renderSettings() {
+    var d = state.settings; if (!d) return;
+    var a = d.alerts || {}, n = d.notifications || {};
+
+    var ab = $("alert-prefs"); ab.textContent = "";
+    ab.appendChild(toggleRow("Price approaching an entry",
+      "The one that matters — a resting order sits for hours, so “it is coming” " +
+      "is actionable and “it filled” is just news.",
+      a.on_approach, function (v) { saveAlerts({ on_approach: v }); }));
+
+    var prox = el("label", "pref");
+    var pt = el("div", "pref-t");
+    pt.appendChild(el("div", null, "How close is “approaching”"));
+    pt.appendChild(el("div", "sub", "percent of price away from the entry level"));
+    var inp = document.createElement("input");
+    inp.className = "inp"; inp.type = "number"; inp.step = "0.05";
+    inp.min = "0.01"; inp.max = "10"; inp.style.width = "88px";
+    inp.value = a.proximity_pct;
+    inp.addEventListener("change", function () {
+      saveAlerts({ proximity_pct: Number(inp.value) })
+        .then(function (out) { inp.value = out.proximity_pct; })
+        .catch(function () { inp.value = a.proximity_pct; });
+    });
+    prox.appendChild(pt); prox.appendChild(inp);
+    ab.appendChild(prox);
+
+    ab.appendChild(toggleRow("A new setup is found", "when a strategy first issues it",
+      a.on_new_setup, function (v) { saveAlerts({ on_new_setup: v }); }));
+    ab.appendChild(toggleRow("Entry triggered", "the resting order filled",
+      a.on_trigger, function (v) { saveAlerts({ on_trigger: v }); }));
+    ab.appendChild(toggleRow("Trade closed", "target, stop or time exit, with the net R",
+      a.on_close, function (v) { saveAlerts({ on_close: v }); }));
+
+    var cb = $("channel-prefs"); cb.textContent = "";
+    [["telegram", "Telegram", "works with the app closed"],
+     ["trade_alerts", "Trade alerts", "setups, entries and exits"],
+     ["system_alerts", "System alerts", "feed disconnects and errors"],
+     ["desktop", "Desktop notifications", "only while a tab is open"]
+    ].forEach(function (row) {
+      cb.appendChild(toggleRow(row[1], row[2], n[row[0]], function (v) {
+        var patch = {}; patch[row[0]] = v;
+        post("/settings/notifications", patch, "PUT").then(function (out) {
+          state.settings.notifications = out.notifications;
+        });
+      }));
+    });
+
+    var bots = $("tg-bots"); bots.textContent = "";
+    var list = d.telegram_bots || [];
+    if (!list.length) {
+      bots.appendChild(el("div", "sub", "No bot connected — alerts will not leave the browser."));
+    }
+    list.forEach(function (b) {
+      var r = el("div", "bot");
+      var left = el("div");
+      left.appendChild(el("div", "bot-n", "@" + (b.bot_username || "bot")));
+      left.appendChild(el("div", "sub", "chat " + b.chat_id +
+        (b.verified ? " · verified" : " · not verified")));
+      r.appendChild(left);
+      var sp = el("div"); sp.style.flex = "1"; r.appendChild(sp);
+      var t = el("button", "btn", "Send test");
+      t.addEventListener("click", function () {
+        t.disabled = true; t.textContent = "Sending…";
+        post("/settings/telegram/test", {})
+          .then(function () { t.textContent = "Sent ✓"; })
+          .catch(function () { t.textContent = "Failed"; })
+          .then(function () { setTimeout(function () {
+            t.disabled = false; t.textContent = "Send test"; }, 2000); });
+      });
+      var x = el("button", "btn", "Remove");
+      x.addEventListener("click", function () {
+        if (!window.confirm("Remove this bot? Alerts stop going to that chat.")) return;
+        api("/settings/telegram/" + b.id, { method: "DELETE" }).then(loadSettings);
+      });
+      r.appendChild(t); r.appendChild(x);
+      bots.appendChild(r);
+    });
+
+    var about = $("about-box"); about.textContent = "";
+    [["API host", HTTP.replace(/^https?:\/\//, "")],
+     ["Symbols", "BTCUSDT · ETHUSDT"],
+     ["Strategies", state.catalogue ? state.catalogue.strategies.length + " in the catalogue" : "—"],
+     ["Execution", "none — this tool never places an order"]
+    ].forEach(function (row) {
+      var line = el("div", "pref");
+      var t2 = el("div", "pref-t"); t2.appendChild(el("div", null, row[0]));
+      line.appendChild(t2); line.appendChild(el("div", "sub", row[1]));
+      about.appendChild(line);
+    });
+  }
+
+  function loadSettings() {
+    return api("/settings").then(function (d) {
+      state.settings = d; renderSettings();
+    }).catch(function () {});
+  }
+
+  $("tg-verify").addEventListener("click", function () {
+    var btn = $("tg-verify"), err = $("tg-err"), tok = $("tg-token");
+    if (!tok.value.trim()) return;
+    btn.disabled = true; btn.textContent = "Verifying…"; err.hidden = true;
+    post("/settings/telegram/verify", { token: tok.value.trim() })
+      .then(function (d) {
+        if (!d.ok) throw new Error(d.error || "Telegram rejected that token.");
+        tok.value = "";
+        return loadSettings();
+      })
+      .catch(function (e) { err.textContent = String(e.message || e); err.hidden = false; })
+      .then(function () { btn.disabled = false; btn.textContent = "Verify & connect"; });
+  });
+
   // ------------------------------------------------------------------- BOOT --
   function loadCatalogue() {
     return api("/api/v4/strategies").then(function (d) {
@@ -1145,9 +1351,10 @@
     loadSetups();
     loadPerformance();
     loadQuotes();
+    loadActive();
   }
 
   if (TOKEN) boot(); else showGate();
   setInterval(function () { if (TOKEN) loadQuotes(); }, 30000);
-  setInterval(function () { if (TOKEN) loadSetups(); }, 60000);
+  setInterval(function () { if (TOKEN) { loadSetups(); loadActive(); } }, 60000);
 })();

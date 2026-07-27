@@ -26,6 +26,20 @@ class Alerter:
         self._settings = settings
         self._tasks: set = set()          # keep refs so tasks aren't GC'd early
 
+    def _enabled(self, key: str) -> bool:
+        """Per-event switch from the Settings page, re-read every send so a
+        toggle takes effect without a restart."""
+        try:
+            return bool(self._settings.alerts().get(key, True))
+        except Exception:
+            return True
+
+    def proximity_pct(self) -> float:
+        try:
+            return float(self._settings.alerts().get("proximity_pct", 0.25))
+        except Exception:
+            return 0.25
+
     def _telegram_targets(self, kind: str) -> list:
         """Every (token, chat_id) that should receive this alert kind — ALL
         verified bots, so alerts fan out to every configured chat/device at
@@ -51,9 +65,52 @@ class Alerter:
             log.debug("alerter: no running loop, dropped %s alert", kind)
 
     # ---- alert types ----
+    def setup_approaching(self, symbol: str, setup: dict, price: float, away_pct: float) -> None:
+        """Price is closing on a resting entry. THE alert that matters: these
+        orders sit for hours, so "it is coming" is actionable and "it filled"
+        is just news."""
+        if not self._enabled("on_approach"):
+            return
+        long_ = int(setup.get("direction", 1)) > 0
+        self._send("trade", "\n".join([
+            "<b>⏳ APPROACHING ENTRY</b>",
+            f"<b>{symbol}</b> {'LONG' if long_ else 'SHORT'} — {setup.get('strategy_id')}",
+            f"Price {price:,.2f} is {away_pct:.2f}% from the entry "
+            f"{float(setup['entry']):,.2f}",
+            f"Stop {float(setup['stop']):,.2f} · Target {float(setup['target']):,.2f}"
+            f" · {setup.get('rr')}R net",
+            "",
+            "<i>Decision-support only — place any order manually.</i>",
+        ]))
+
+    def trade_triggered(self, symbol: str, row: dict) -> None:
+        if not self._enabled("on_trigger"):
+            return
+        long_ = int(row.get("direction", 1)) > 0
+        self._send("trade", "\n".join([
+            "<b>▶ ENTRY TRIGGERED</b>",
+            f"<b>{symbol}</b> {'LONG' if long_ else 'SHORT'} — {row.get('strategy_id')}",
+            f"Filled {float(row.get('fill_price') or row['entry']):,.2f}",
+            f"Stop {float(row['stop']):,.2f} · Target {float(row['target']):,.2f}",
+        ]))
+
+    def trade_closed(self, symbol: str, row: dict) -> None:
+        if not self._enabled("on_close"):
+            return
+        net = row.get("net_r") or 0.0
+        status = str(row.get("status", "")).upper()
+        self._send("trade", "\n".join([
+            f"<b>{'✅' if net > 0 else '❌'} TRADE CLOSED — {status}</b>",
+            f"<b>{symbol}</b> {row.get('strategy_id')}",
+            f"Result <b>{net:+.2f}R</b> net of fees and funding",
+            f"Held {row.get('hold_minutes')} min",
+        ]))
+
     def trade_setup(self, symbol: str, setup: dict) -> None:
         """One alert per V4 setup the recorder accepts. `filters_passed` is a
         named rule count, never a confidence percentage."""
+        if not self._enabled("on_new_setup"):
+            return
         passed = setup.get("filters_passed")
         high = passed is not None and passed >= 3
         title = "🚀 HIGH-CONVICTION SETUP" if high else "📈 Trade Setup"

@@ -116,3 +116,35 @@ def test_v4_disable_is_idempotent_and_scoped(tmp_path):
     s.set_v4_strategy("eth_1h_fast", False)
     assert s.v4_disabled() == {"eth_1h_fast"}
     assert s.v4_strategy_enabled("eth_4h_core") is True
+
+
+# ---------------------------------------------------------------- alerts --
+
+def test_alert_defaults(tmp_path):
+    a = _store(tmp_path).alerts()
+    assert a["on_approach"] is True and a["proximity_pct"] == 0.25
+
+
+def test_alert_prefs_persist_and_clamp(tmp_path):
+    s = _store(tmp_path)
+    s.set_alerts({"proximity_pct": 0.4, "on_close": False})
+    reread = _store(tmp_path).alerts()          # must survive a reload
+    assert reread["proximity_pct"] == 0.4 and reread["on_close"] is False
+    assert s.set_alerts({"proximity_pct": 99})["proximity_pct"] == 10.0
+    assert s.set_alerts({"proximity_pct": 0})["proximity_pct"] == 0.01
+
+
+def test_alert_prefs_reject_nonsense(tmp_path):
+    import pytest
+    with pytest.raises(ValueError):
+        _store(tmp_path).set_alerts({"proximity_pct": "soon"})
+
+
+def test_a_saved_alerts_file_reloads_without_error(tmp_path):
+    """Regression: a stray self-assignment made _load raise KeyError on any
+    file that carried proximity_pct — i.e. every file written after one save."""
+    s = _store(tmp_path)
+    s.set_alerts({"proximity_pct": 0.5, "on_trigger": False})
+    fresh = _store(tmp_path)                    # re-reads the file it just wrote
+    assert fresh.alerts()["proximity_pct"] == 0.5
+    assert fresh.alerts()["on_trigger"] is False

@@ -182,3 +182,97 @@ async def test_cycle_fetches_one_tape_per_symbol():
     rec = V4Recorder(_FakeSvc(), _FakeStore(rows), chart)
     await rec.cycle()
     assert len(chart.requested) == 2          # two symbols, two fetches
+
+
+# --------------------------------------------------------------- alerting --
+# "The market is coming into range" is the alert that matters for a resting
+# stop order — it sits for hours, so a fill notice arrives too late to act on.
+
+class _Alerts:
+    def __init__(self, pct=0.25):
+        self.pct = pct
+        self.approach, self.triggered, self.closed = [], [], []
+
+    def proximity_pct(self):
+        return self.pct
+
+    def setup_approaching(self, sym, setup, price, away):
+        self.approach.append((setup["setup_key"], round(away, 4)))
+
+    def trade_triggered(self, sym, row):
+        self.triggered.append(row["setup_key"])
+
+    def trade_closed(self, sym, row):
+        self.closed.append((row["setup_key"], row["status"]))
+
+    def trade_setup(self, sym, setup):
+        pass
+
+
+def _tape_at(price, first_ts, n=40):
+    return bars([(price, price, price, price)] * n, start=first_ts)
+
+
+@pytest.mark.asyncio
+async def test_alerts_when_price_comes_into_range_of_a_resting_entry():
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 60 * 60
+    row = _row("k1", ts); row["entry"] = 100.0; row["stop"] = 90.0; row["target"] = 200.0
+    alerts = _Alerts(pct=0.25)
+    chart = _FakeChart(ts - 600, [(99.8, 99.8, 99.8, 99.8)] * 80)   # 0.20% away
+    rec = V4Recorder(_FakeSvc(), _FakeStore([row]), chart, alerter=alerts)
+
+    await rec.cycle()
+    assert alerts.approach == [("k1", 0.2)]
+    await rec.cycle()
+    assert len(alerts.approach) == 1, "must not re-alert every 60s cycle"
+
+
+@pytest.mark.asyncio
+async def test_no_approach_alert_while_price_is_still_far():
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 60 * 60
+    row = _row("k1", ts); row["entry"] = 100.0; row["stop"] = 90.0; row["target"] = 200.0
+    alerts = _Alerts(pct=0.25)
+    chart = _FakeChart(ts - 600, [(98.0, 98.0, 98.0, 98.0)] * 80)   # 2% away
+    await V4Recorder(_FakeSvc(), _FakeStore([row]), chart, alerter=alerts).cycle()
+    assert alerts.approach == []
+
+
+@pytest.mark.asyncio
+async def test_trigger_and_close_alerts_fire_once_each():
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 120 * 60
+    row = _row("k1", ts); row["entry"] = 100.0; row["stop"] = 90.0; row["target"] = 200.0
+    alerts = _Alerts()
+    first = ts - 600
+    prices = [(95, 96, 94, 95)] * 12 + [(99, 210, 99, 205)] * 30   # trigger then target
+    store = _FakeStore([row])
+    rec = V4Recorder(_FakeSvc(), store, _FakeChart(first, prices), alerter=alerts)
+    await rec.cycle()
+    assert alerts.closed == [("k1", TP)]
+    assert ("k1", TP) in alerts.closed and alerts.approach == []
+
+
+@pytest.mark.asyncio
+async def test_a_cancelled_setup_is_not_announced_as_a_closed_trade():
+    """It never filled — telling the owner a trade "closed" would be a lie."""
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 600 * 60
+    row = _row("k1", ts); row["entry"] = 500.0; row["stop"] = 450.0; row["target"] = 900.0
+    alerts = _Alerts()
+    chart = _FakeChart(ts - 600, [(100, 101, 99, 100)] * 700)      # never reaches 500
+    await V4Recorder(_FakeSvc(), _FakeStore([row]), chart, alerter=alerts).cycle()
+    assert alerts.closed == [] and alerts.triggered == []

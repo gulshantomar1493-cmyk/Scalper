@@ -666,25 +666,27 @@ async def test_candles_endpoint_unchanged_by_chart_feature(db_conn):
 
 
 
-# ------------------------------------------------ /api/v3/analysis (V3 L1)
+# ------------------------------------------------------------------- CORS
 
 
-class _FakeV3:
-    """Canned V3AnalysisService (the fold is unit-tested in
-    test_v3_chart_read.py); the endpoint test proves route + auth + shape."""
-
-    async def analysis(self, symbol, tf):
-        if tf not in ("5m", "15m", "1h", "4h", "1d"):
-            raise ValueError(f"unknown v3 timeframe {tf!r}")
-        return {"symbol": symbol, "tf": tf, "ready": True, "trend": "BULLISH",
-                "swings": [], "trendlines": [], "zones": [], "liquidity": [],
-                "premium_discount": "DISCOUNT"}
-
-
-def _v3_app(with_service=True):
-    bus = EventBus()
-    return create_app(bus, StateStore(bus), None, TOKEN,
-                      v3_service=_FakeV3() if with_service else None)
+async def test_cors_allows_every_verb_the_frontend_uses():
+    """A verb missing from allow_methods is invisible to these tests (aiohttp
+    ignores CORS) but blocks the real browser on every call. It has bitten
+    twice: PATCH for the journal, then PUT for the settings toggles."""
+    _, _, app = _pipeline()
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            for verb in ("GET", "POST", "PUT", "PATCH", "DELETE"):
+                async with s.options(
+                        f"http://{addr}/settings/alerts",
+                        headers={"Origin": "http://example.test",
+                                 "Access-Control-Request-Method": verb}) as r:
+                    assert r.status == 200, verb
+                    allowed = r.headers.get("Access-Control-Allow-Methods", "")
+                    assert verb in allowed, f"{verb} missing from {allowed!r}"
+    finally:
+        await _stop(server, task)
 
 
 

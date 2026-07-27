@@ -15,7 +15,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from . import config as C
-from .outcome import advance, TERMINAL
+from .outcome import advance, CANCELLED, FILLED, OPEN, TERMINAL
 from .service import to_arrays
 
 log = logging.getLogger(__name__)
@@ -29,6 +29,8 @@ class V4Recorder:
         self._store = store
         self._chart = chart_service
         self._alerter = alerter            # live-only; None in replay/tests
+        self._approached: set = set()      # setup_keys already shouted about
+        self._filled: set = set()          # setup_keys already reported as live
         self.cycles = 0
         self.recorded = 0
         self.resolved = 0
@@ -92,7 +94,10 @@ class V4Recorder:
             if b is not None:
                 tape[sym] = b
 
+        live_keys = set()
         for row in open_rows:
+            key = row["setup_key"]
+            live_keys.add(key)
             bars = tape.get(row["symbol"])
             if bars is None:
                 continue
@@ -101,14 +106,47 @@ class V4Recorder:
                 out = advance(setup, bars)
             except Exception as exc:
                 self.errors += 1
-                log.warning("v4 recorder: advance failed for %s: %s", row.get("setup_key"), exc)
+                log.warning("v4 recorder: advance failed for %s: %s", key, exc)
                 continue
+
+            self._notify(row, out, bars)
+
             if out.status in TERMINAL:
-                if await self._store.apply_outcome(row["setup_key"], out):
+                if await self._store.apply_outcome(key, out):
                     self.resolved += 1
-                    log.info("v4: %s -> %s (%.3fR)", row["setup_key"], out.status,
+                    log.info("v4: %s -> %s (%.3fR)", key, out.status,
                              out.net_r if out.net_r is not None else 0.0)
+                    if self._alerter is not None and out.status != CANCELLED:
+                        self._alerter.trade_closed(row["symbol"], {**row,
+                                                                   "status": out.status,
+                                                                   "net_r": out.net_r,
+                                                                   "hold_minutes": out.hold_minutes})
+        # a resolved setup can never approach or trigger again — do not leak
+        self._approached &= live_keys
+        self._filled &= live_keys
         self.cycles += 1
+
+    def _notify(self, row: dict, out, bars: dict) -> None:
+        """Approach + trigger alerts. Each fires at most once per setup: a
+        60-second loop would otherwise message on every cycle for hours."""
+        if self._alerter is None or not len(bars["c"]):
+            return
+        key = row["setup_key"]
+        price = float(bars["c"][-1])
+        entry = float(row["entry"])
+
+        if out.status == FILLED and key not in self._filled:
+            self._filled.add(key)
+            self._approached.add(key)          # already past "approaching"
+            self._alerter.trade_triggered(row["symbol"], {**row, "fill_price": out.fill_price})
+            return
+
+        if out.status != OPEN or key in self._approached or not entry:
+            return
+        away = abs(price - entry) / entry * 100.0
+        if away <= self._alerter.proximity_pct():
+            self._approached.add(key)
+            self._alerter.setup_approaching(row["symbol"], row, price, away)
 
     async def run(self) -> None:
         log.info("v4 recorder started (%d strategies, %ds cycle)",

@@ -70,6 +70,11 @@
     <span>Journal</span><span class="tip">Journal</span>
   </button>
 
+  <button class="nav-btn" data-go="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 8.4a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
+    <span>Settings</span><span class="tip">Settings</span>
+  </button>
+
   <div class="rail-sp"></div>
   <button class="nav-btn theme-btn" id="theme" aria-label="Switch between light and dark theme">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
@@ -100,6 +105,7 @@
     <div class="scroll">
       <div class="note" id="confidence"></div>
       <div class="stats" id="today-stats"></div>
+      <div id="active"></div>
       <div id="setups"></div>
     </div>
   </section>
@@ -295,6 +301,45 @@
       </form>
       <div class="sec-t">Entries</div>
       <div class="grid g-auto" id="jr-list"></div>
+    </div>
+  </section>
+
+  <!-- =========================== SETTINGS =========================== -->
+  <section class="page" data-page="settings">
+    <header class="topbar">
+      <h1>Settings</h1>
+      <span class="sub">Alerts reach you when the app is closed — Telegram is the backend channel</span>
+    </header>
+    <div class="scroll">
+      <div class="sec-t">Telegram</div>
+      <div class="card">
+        <div class="card-b">
+          <p class="sub" style="margin-top:0">
+            Create a bot with <b>@BotFather</b>, send it any message, then paste its token here.
+            The chat is detected automatically. The token is stored on the server only —
+            never in the database, never in a backup.
+          </p>
+          <div class="row-form">
+            <input class="inp" id="tg-token" placeholder="123456:ABC-DEF..." autocomplete="off">
+            <button class="btn primary" id="tg-verify">Verify &amp; connect</button>
+          </div>
+          <div class="gate-err" id="tg-err" role="alert" hidden></div>
+          <div id="tg-bots"></div>
+        </div>
+      </div>
+
+      <div class="sec-t">When to alert me</div>
+      <div class="card">
+        <div class="card-b" id="alert-prefs"></div>
+      </div>
+
+      <div class="sec-t">Channels</div>
+      <div class="card">
+        <div class="card-b" id="channel-prefs"></div>
+      </div>
+
+      <div class="sec-t">This install</div>
+      <div class="card"><div class="card-b" id="about-box"></div></div>
     </div>
   </section>
 

@@ -81,6 +81,25 @@ def test_every_backend_call_goes_through_the_wrappers():
     assert len(fetches) == 3, f"expected api()/post()/login only, found {len(fetches)}"
 
 
+def test_the_alert_settings_are_reachable_from_the_ui():
+    """Telegram is the only channel that works with the app closed, so it must
+    be configurable without editing a file on the server."""
+    html, src = _read(HTML), _read(APP)
+    assert 'data-page="settings"' in html and 'id="tg-token"' in html
+    assert "/settings/telegram/verify" in src
+    assert "/settings/alerts" in src
+    assert "proximity_pct" in src
+
+
+def test_today_separates_waiting_setups_from_running_trades():
+    """A filled setup needs managing; a pending one needs deciding. Mixing
+    them into one list is what made the old screen unreadable."""
+    html, src = _read(HTML), _read(APP)
+    assert 'id="active"' in html and 'id="setups"' in html
+    assert "status=FILLED" in src            # active = the entry actually filled
+    assert "Active trades" in src and "Trade setups" in src
+
+
 def test_an_unauthenticated_visitor_gets_a_login_screen():
     """Production requires credentials; without this the terminal renders
     empty and every call 401s behind a 'backend unreachable' banner."""
@@ -111,7 +130,8 @@ def test_every_screen_exists_and_has_a_nav_button():
     html = _read(HTML)
     pages = set(re.findall(r'data-page="([a-z]+)"', html))
     navs = set(re.findall(r'data-go="([a-z]+)"', html))
-    assert pages == {"today", "chart", "strategies", "history", "paper", "journal"}
+    assert pages == {"today", "chart", "strategies", "history", "paper",
+                     "journal", "settings"}
     assert navs == pages, f"nav/page mismatch: {navs ^ pages}"
 
 
