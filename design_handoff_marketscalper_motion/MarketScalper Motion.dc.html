@@ -1,0 +1,1505 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="brand/icon-180.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root {
+  --ground: #06070a; --deep: #040507; --surf: #0e1116; --surf-2: #14181f;
+  --glass: rgba(14,17,22,.66); --glass-2: rgba(20,24,31,.72);
+  --line: #1e232c; --line-soft: #14181f;
+  --ink: #f2f4f8; --ink-2: #98a2b1; --ink-3: #5b6472;
+  --accent: #4c82f7; --accent-dim: #2f5fcc; --accent-glow: rgba(76,130,247,.16);
+  --up: #00c07f; --up-bg: rgba(0,192,127,.12); --down: #ff5b5b; --down-bg: rgba(255,91,91,.12);
+  --grid: #12161d; --scheme: dark; --vig: rgba(4,5,7,.9);
+}
+:root[data-theme="light"] {
+  --ground: #f4f6f9; --deep: #e9edf3; --surf: #ffffff; --surf-2: #f0f3f7;
+  --glass: rgba(255,255,255,.78); --glass-2: rgba(240,243,247,.82);
+  --line: #dce2ea; --line-soft: #ebeff4;
+  --ink: #0e1420; --ink-2: #48546a; --ink-3: #78849a;
+  --accent: #2563eb; --accent-dim: #1d4ed8; --accent-glow: rgba(37,99,235,.10);
+  --up: #059669; --up-bg: rgba(5,150,105,.11); --down: #dc2626; --down-bg: rgba(220,38,38,.10);
+  --grid: #e7ebf1; --scheme: light; --vig: rgba(233,237,243,.9);
+}
+html, body { height: 100%; margin: 0; }
+body { background: var(--ground); color-scheme: var(--scheme); }
+a { color: var(--accent); text-decoration: none; }
+a:hover { color: var(--ink); }
+::selection { background: var(--accent-glow); }
+@keyframes rise { from { opacity: 0; transform: translateY(28px); } to { opacity: 1; transform: none; } }
+@keyframes riseIn { from { opacity: 0; transform: translateY(34px) scale(.985); } 40% { opacity: 1; } to { opacity: 1; transform: none; } }
+@keyframes fadeUp { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+@keyframes para { from { transform: translateY(6%); } to { transform: translateY(-6%); } }
+@keyframes paraSlow { from { transform: translateY(3%) scale(1.04); } to { transform: translateY(-3%) scale(1.04); } }
+@keyframes drift { from { transform: translateX(0); } to { transform: translateX(-50%); } }
+@keyframes flow { 0% { offset-distance: 0%; opacity: 0; } 12% { opacity: 1; } 88% { opacity: 1; } 100% { offset-distance: 100%; opacity: 0; } }
+@keyframes dash { to { stroke-dashoffset: -220; } }
+@keyframes dashdraw { from { stroke-dashoffset: 2400; } to { stroke-dashoffset: 0; } }
+@keyframes tickA { 0%, 100% { transform: scaleY(.68) translateY(0); } 30% { transform: scaleY(1) translateY(0); } 62% { transform: scaleY(.52) translateY(0); } }
+@keyframes tickB { 0%, 100% { transform: scaleY(1); } 34% { transform: scaleY(.62); } 68% { transform: scaleY(.86); } }
+@keyframes tickC { 0%, 100% { transform: scaleY(.82); } 44% { transform: scaleY(.46); } 74% { transform: scaleY(1); } }
+@keyframes scalp { 0%, 60% { transform: translateX(-160%); opacity: 0; } 66% { opacity: .9; } 90% { transform: translateX(60%); opacity: .9; } 100% { transform: translateX(160%); opacity: 0; } }
+@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: .45; transform: scale(1.7); } }
+@keyframes ladder { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+@keyframes sweepline { 0% { transform: translateX(-100%); } 100% { transform: translateX(220%); } }
+@keyframes bob { 0%, 100% { transform: translateY(0); opacity: .5; } 50% { transform: translateY(7px); opacity: 1; } }
+@keyframes glow { 0%, 100% { opacity: .5; } 50% { opacity: .95; } }
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001s !important; animation-iteration-count: 1 !important; } }
+</style>
+</helmet>
+
+<div style="display: grid; grid-template-columns: 84px 1fr; height: 100vh; overflow: hidden; background: var(--ground); color: var(--ink); font-family: Inter, system-ui, sans-serif; font-size: 14px; line-height: 1.5; -webkit-font-smoothing: antialiased;">
+
+  <nav style="border-right: 1px solid var(--line); background: linear-gradient(180deg, var(--surf), var(--deep)); display: flex; flex-direction: column; align-items: center; padding: 20px 0 18px; gap: 6px; z-index: 30;">
+    <a href="#hero" title="MarketScalper" style="position: relative; width: 40px; height: 40px; border-radius: 12px; overflow: hidden; background: linear-gradient(150deg, #5b8cff, var(--accent-dim)); display: block; box-shadow: 0 8px 24px var(--accent-glow); margin-bottom: 22px; transition: 260ms cubic-bezier(.2,.7,.3,1);" style-hover="transform: translateY(-2px) rotate(-4deg) scale(1.06); box-shadow: 0 12px 30px var(--accent-glow);">
+      <svg viewBox="0 0 32 32" style="width: 40px; height: 40px; display: block;">
+        <mask id="msCut">
+          <rect width="32" height="32" fill="#fff"></rect>
+          <rect x="1" y="14.6" width="30" height="2.6" rx="1.3" fill="#000" transform="rotate(-38 16 16)"></rect>
+        </mask>
+        <g fill="#ffffff" mask="url(#msCut)">
+          <rect x="7.6" y="8" width="3.6" height="16" rx="1.8" opacity=".72" style="transform-box: fill-box; transform-origin: 50% 100%; animation: tickA 2.8s cubic-bezier(.4,0,.4,1) infinite;"></rect>
+          <rect x="14.2" y="7.5" width="3.6" height="16.5" rx="1.8" style="transform-box: fill-box; transform-origin: 50% 100%; animation: tickB 2.8s cubic-bezier(.4,0,.4,1) infinite;"></rect>
+          <rect x="20.8" y="8" width="3.6" height="16" rx="1.8" opacity=".72" style="transform-box: fill-box; transform-origin: 50% 100%; animation: tickC 2.8s cubic-bezier(.4,0,.4,1) infinite;"></rect>
+        </g>
+      </svg>
+      <span style="position: absolute; inset: -20%; pointer-events: none; display: grid; place-items: center; transform: rotate(-38deg); overflow: hidden;">
+        <span style="width: 80%; height: 3px; border-radius: 2px; background: linear-gradient(90deg, transparent, #fff, transparent); animation: scalp 5.2s cubic-bezier(.5,0,.3,1) infinite; opacity: 0;"></span>
+      </span>
+    </a>
+    <a href="#hero" title="Overview" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>
+    </a>
+    <a href="#setup" title="Setup" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M4 12h4l3-7 3 14 3-7h3"/></svg>
+    </a>
+    <a href="#chart" title="Chart" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
+    </a>
+    <a href="#pipeline" title="Pipeline" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 6h1.5a2 2 0 0 1 2 2v2M14 18h1.5a2 2 0 0 0 2-2v-2M7 12l3-5M7 12l3 5"/></svg>
+    </a>
+    <a href="#queue" title="Queue" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M4 6h16M4 12h16M4 18h10"/></svg>
+    </a>
+    <a href="#strategies" title="Strategies" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="10" rx="1"/></svg>
+    </a>
+    <a href="#history" title="History" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
+    </a>
+    <a href="#paper" title="Paper" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>
+    </a>
+    <a href="#journal" title="Journal" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M5 3h11l3 3v15H5z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
+    </a>
+    <a href="#settings" title="Settings" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><circle cx="12" cy="12" r="3"/><path d="M4.6 15a1.7 1.7 0 0 0-1.6-1 2 2 0 0 1 0-4 1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6 2 2 0 0 1 4 0 1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3 2 2 0 1 1 2.8 2.8 1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1 2 2 0 0 1 0 4 1.7 1.7 0 0 0-1.6 1"/></svg>
+    </a>
+    <a href="#evidence" title="Evidence" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg>
+    </a>
+    <div style="flex: 1;"></div>
+    <button onClick="{{ toggleTheme }}" title="Theme" style="width: 44px; height: 40px; border-radius: 10px; display: grid; place-items: center; color: var(--ink-3); background: transparent; border: 0; cursor: pointer; transition: 180ms cubic-bezier(.2,.7,.3,1);" style-hover="color: var(--ink); background: var(--surf-2);">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 18px; height: 18px; stroke-width: 1.7;"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
+    </button>
+  </nav>
+
+  <main style="overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth; position: relative;">
+
+    <section id="hero" style="position: relative; min-height: 100vh; display: flex; flex-direction: column; justify-content: center; padding: 96px 64px 72px; overflow: hidden; isolation: isolate;">
+      <div style="position: absolute; inset: -10% -2%; z-index: -3; background-image: linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px); background-size: 100% 68px, 68px 100%; mask-image: radial-gradient(120% 90% at 50% 40%, #000 30%, transparent 78%); animation: paraSlow linear both; animation-timeline: view(); animation-range: cover 0% cover 100%;"></div>
+      <div style="position: absolute; inset: 0; z-index: -3; background: radial-gradient(70% 55% at 22% 30%, var(--accent-glow), transparent 70%), radial-gradient(50% 45% at 88% 78%, rgba(0,192,127,.10), transparent 70%); animation: glow 9s ease-in-out infinite;"></div>
+      <div style="position: absolute; left: 0; right: 0; bottom: -2%; height: 74%; z-index: -2; opacity: .3; mask-image: linear-gradient(90deg, transparent 6%, #000 46%), linear-gradient(180deg, transparent 4%, #000 34%); mask-composite: intersect; animation: para linear both; animation-timeline: view(); animation-range: cover 0% cover 100%;">{{ heroCandles }}</div>
+      <div style="position: absolute; inset: 0; z-index: -1; background: linear-gradient(180deg, var(--ground) 6%, transparent 32%, color-mix(in oklch, var(--vig), transparent 40%));"></div>
+
+      <div style="position: absolute; top: 28px; right: 64px; display: flex; align-items: center; gap: 10px;">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2);">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: {{ feedColor }}; box-shadow: 0 0 0 3px var(--up-bg); animation: pulse 2s ease-in-out infinite;"></span>{{ feedLabel }}
+        </div>
+        <div style="padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--glass); backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 10.5px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); white-space: nowrap;">{{ clock }}</div>
+      </div>
+
+      <div style="max-width: 1180px; animation: rise 900ms cubic-bezier(.16,.84,.3,1) both;">
+        <div style="display: flex; align-items: center; gap: 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 26px;">
+          <span style="width: 34px; height: 1px; background: var(--accent);"></span>BTCUSDT · ETHUSDT · 1m primary / 5m context
+        </div>
+        <h1 style="margin: 0; font-size: clamp(40px, 5.6vw, 82px); line-height: .98; letter-spacing: -.038em; font-weight: 700; max-width: 20ch; text-wrap: balance;">Signal feed nahi — deterministic setup engine.</h1>
+        <p style="margin: 28px 0 0; max-width: 62ch; font-size: 17px; line-height: 1.6; color: var(--ink-2); text-wrap: pretty;">Har closed candle ek hi pipeline se guzarti hai, live ho ya replay — structure, trendline, liquidity, smart-money aur volume engines, phir qualification gates, phir geometry. Koi repaint nahi, koi confidence % nahi. Ek time pe ek ranked recommendation.</p>
+
+        <div style="display: flex; flex-wrap: wrap; gap: 14px; margin-top: 44px;">{{ tickers }}</div>
+
+        <div style="display: flex; gap: 12px; margin-top: 44px;">
+          <a href="#setup" style="display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600; font-size: 13.5px; border: 1px solid var(--accent); transition: 200ms cubic-bezier(.2,.7,.3,1);" style-hover="transform: translateY(-2px); box-shadow: 0 12px 30px var(--accent-glow); color: #fff;">Abhi ka recommendation
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 15px; height: 15px; stroke-width: 2;"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+          </a>
+          <a href="#pipeline" style="display: inline-flex; align-items: center; gap: 10px; padding: 13px 22px; border-radius: 10px; background: var(--glass); color: var(--ink); font-weight: 600; font-size: 13.5px; border: 1px solid var(--line); backdrop-filter: blur(10px); transition: 200ms cubic-bezier(.2,.7,.3,1);" style-hover="border-color: var(--ink-3); transform: translateY(-2px); color: var(--ink);">Decide kaise karta hai</a>
+        </div>
+      </div>
+
+      <div style="position: absolute; bottom: 26px; left: 50%; display: flex; flex-direction: column; align-items: center; gap: 8px; color: var(--ink-3); font-family: 'JetBrains Mono', monospace; font-size: 10px; letter-spacing: .2em; text-transform: uppercase; animation: bob 2.4s ease-in-out infinite;">scroll karo
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" style="width: 14px; height: 14px; stroke-width: 1.8;"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
+      </div>
+    </section>
+
+    <section id="setup" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground) 40%);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">01 · Recommendation</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Setup, poore scale pe</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <div style="display: inline-flex; background: var(--surf-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 3px;">{{ symbolTabs }}</div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 620px), 1fr)); gap: 20px; align-items: start;">
+
+        <div style="position: relative; overflow: hidden; border: 1px solid var(--line); border-radius: 20px; background: linear-gradient(180deg, var(--surf), var(--deep)); box-shadow: 0 2px 6px rgba(0,0,0,.30), 0 30px 70px rgba(0,0,0,.34); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 4% cover 30%;">
+          <span style="position: absolute; inset: 0 auto 0 0; width: 3px; background: {{ dirColor }};"></span>
+          <span style="position: absolute; top: 0; left: 0; right: 0; height: 1px; overflow: hidden;"><span style="position: absolute; inset: 0; width: 40%; background: linear-gradient(90deg, transparent, var(--accent), transparent); animation: sweepline 4.5s cubic-bezier(.5,0,.5,1) infinite;"></span></span>
+
+          <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 22px 26px 16px 29px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700; letter-spacing: .1em; padding: 5px 10px; border-radius: 6px; background: {{ dirBg }}; color: {{ dirColor }};">{{ dirLabel }}</span>
+            <span style="font-size: 26px; font-weight: 700; letter-spacing: -.03em;">{{ symShort }}</span>
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); border: 1px solid var(--line); padding: 4px 10px; border-radius: 999px;">{{ stratId }}</span>
+            <div style="flex: 1;"></div>
+            <span style="display: inline-flex; align-items: center; gap: 7px; font-size: 10px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); background: var(--accent-glow); border: 1px solid var(--accent-dim); padding: 5px 11px; border-radius: 999px;">Rank 1</span>
+            <div style="display: flex; gap: 4px;" title="trend filters agreeing">{{ pips }}</div>
+          </div>
+
+          <div style="padding: 6px 26px 22px 29px;">{{ ladder }}</div>
+
+          <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 132px), 1fr)); gap: 1px; background: var(--line-soft); border-top: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft);">{{ priceCells }}</div>
+
+          <p style="margin: 0; padding: 22px 26px 0 29px; font-size: 14.5px; line-height: 1.6; color: var(--ink-2); max-width: 72ch; text-wrap: pretty;">{{ reason }}</p>
+
+          <div style="display: flex; align-items: center; gap: 14px; flex-wrap: wrap; padding: 22px 26px 24px 29px;">
+            <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .04em;">invalid: {{ invalidates }} · {{ validTill }} tak valid</span>
+            <div style="flex: 1;"></div>
+            <a href="#chart" style="display: inline-flex; align-items: center; gap: 9px; padding: 11px 18px; border-radius: 9px; background: var(--accent); color: #fff; font-weight: 600; font-size: 13px; border: 1px solid var(--accent); transition: 200ms cubic-bezier(.2,.7,.3,1);" style-hover="transform: translateY(-2px); box-shadow: 0 10px 26px var(--accent-glow); color: #fff;">Chart pe dekho</a>
+          </div>
+        </div>
+
+        <div style="display: flex; flex-direction: column; gap: 20px;">
+          <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 4% cover 32%;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--line-soft); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;">Position sizing</div>
+            <div style="padding: 20px;">
+              <label style="display: block; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); font-weight: 600; margin-bottom: 12px;">Har trade ka risk · {{ riskLabel }}</label>
+              <input type="range" min="0.1" max="3" step="0.1" value="{{ riskPct }}" onInput="{{ setRisk }}" style="width: 100%; accent-color: var(--accent); cursor: pointer;">
+              <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 22px;">{{ sizingCells }}</div>
+              <div style="margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); display: flex; justify-content: space-between; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--ink-3);">
+                <span>paper equity</span><span style="color: var(--ink-2);">{{ equityFmt }}</span>
+              </div>
+            </div>
+          </div>
+
+          <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 4% cover 36%;">
+            <div style="padding: 16px 20px; border-bottom: 1px solid var(--line-soft); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;">Strategy</div>
+            <div style="display: flex; flex-direction: column;">{{ strategyTabs }}</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="chart" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">02 · Levels</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Geometry kahan baithi hai</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <div style="display: inline-flex; background: var(--surf-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 3px;">{{ tfTabs }}</div>
+      </div>
+
+      <div style="position: relative; height: 62vh; min-height: 420px; border: 1px solid var(--line); border-radius: 20px; overflow: hidden; background: linear-gradient(180deg, var(--surf), var(--deep)); box-shadow: 0 2px 6px rgba(0,0,0,.28), 0 30px 70px rgba(0,0,0,.32); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 2% cover 28%;">
+        <div style="position: absolute; inset: 0;">{{ liveChart }}</div>
+        <div style="position: absolute; top: 16px; left: 20px; z-index: 5; background: var(--glass); border: 1px solid var(--line); border-radius: 10px; padding: 11px 14px; font-family: 'JetBrains Mono', monospace; font-size: 11.5px; color: var(--ink-2); backdrop-filter: blur(10px); letter-spacing: .02em;">{{ legend }}</div>
+        <div style="position: absolute; bottom: 16px; left: 20px; z-index: 5; display: flex; gap: 7px;">
+          <kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; background: var(--glass-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; color: var(--ink-3); backdrop-filter: blur(6px);">F fullscreen</kbd>
+          <kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; background: var(--glass-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; color: var(--ink-3); backdrop-filter: blur(6px);">L levels</kbd>
+          <kbd style="font-family: 'JetBrains Mono', monospace; font-size: 10px; background: var(--glass-2); border: 1px solid var(--line); border-radius: 5px; padding: 4px 7px; color: var(--ink-3); backdrop-filter: blur(6px);">R replay</kbd>
+        </div>
+        <div style="position: absolute; top: 16px; right: 20px; z-index: 5; display: flex; align-items: center; gap: 8px; padding: 8px 13px; border-radius: 999px; background: var(--glass); border: 1px solid var(--line); backdrop-filter: blur(10px); font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-2);">
+          <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--up); animation: pulse 1.8s ease-in-out infinite;"></span>{{ streamLabel }}
+        </div>
+      </div>
+    </section>
+
+    <section id="pipeline" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground));">
+      <div style="margin-bottom: 44px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">03 · Pipeline</div>
+        <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05; max-width: 22ch;">Tick se recommendation tak, ek hi raasta</h2>
+        <p style="margin: 20px 0 0; max-width: 60ch; font-size: 15.5px; color: var(--ink-2); line-height: 1.6;">Live aur replay mein bilkul same code path — isi wajah se backtest ka number yahan kuch matlab rakhta hai.</p>
+      </div>
+
+      <div style="position: relative; display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 14px;">{{ pipelineStages }}</div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; margin-top: 44px;">{{ gates }}</div>
+    </section>
+
+    <section id="queue" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">04 · Queue</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Baaki live setups, already ranked</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .06em;">pehle filters pass, phir net R:R</span>
+      </div>
+      <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24);">{{ queueRows }}</div>
+    </section>
+
+    <section id="strategies" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground) 40%);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">05 · Strategies</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Teen strategies, teen alag chaal</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .06em; max-width: 34ch; line-height: 1.6;">backtest evidence aur live paper — kabhi merge nahi hote</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 16px;">{{ strategyCards }}</div>
+
+      <div style="margin: 44px 0 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3);">Research ne reject kiya — dobara mat laao</div>
+      <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden;">{{ rejectedRows }}</div>
+    </section>
+
+    <section id="history" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">06 · History</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Har recommendation ka record</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <div style="display: inline-flex; background: var(--surf-2); border: 1px solid var(--line); border-radius: 9px; padding: 3px; gap: 3px;">{{ histTabs }}</div>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 14px; margin-bottom: 20px;">{{ histStats }}</div>
+      <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24);">{{ histRows }}</div>
+    </section>
+
+    <section id="paper" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground));">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">07 · Paper</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Paper book — sirf simulated</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .06em; max-width: 30ch; line-height: 1.6;">koi exchange connection nahi, koi real order nahi</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 170px), 1fr)); gap: 14px;">{{ paperStats }}</div>
+      <div style="margin: 24px 0 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3);">Equity curve · cumulative R, closed trades</div>
+      <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); padding: 22px; box-shadow: 0 1px 3px rgba(0,0,0,.24);">{{ equityCurve }}</div>
+      <div style="margin: 34px 0 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3);">Per-strategy attribution</div>
+      <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24);">{{ attributionRows }}</div>
+    </section>
+
+    <section id="journal" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line);">
+      <div style="display: flex; align-items: flex-end; gap: 24px; flex-wrap: wrap; margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div>
+          <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">08 · Journal</div>
+          <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05;">Aapka apna record</h2>
+        </div>
+        <div style="flex: 1;"></div>
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--ink-3); letter-spacing: .06em; max-width: 32ch; line-height: 1.6;">engine ne kya kaha usse alag — jo aapne kiya wo</span>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr)); gap: 16px;">{{ journalCards }}</div>
+    </section>
+
+    <section id="settings" style="position: relative; padding: 108px 64px; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground));">
+      <div style="margin-bottom: 34px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">09 · Settings</div>
+        <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05; max-width: 26ch;">Alert tab bhi aaye jab app band ho</h2>
+      </div>
+
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 20px; align-items: start;">
+        <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 4% cover 30%;">
+          <div style="padding: 16px 22px; border-bottom: 1px solid var(--line-soft); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;">Telegram</div>
+          <div style="padding: 22px;">
+            <p style="margin: 0 0 18px; font-size: 13.5px; color: var(--ink-2); line-height: 1.6;">@BotFather se bot banao, use koi bhi message bhejo, phir token yahan paste kar do. Chat khud detect ho jaata hai. Token sirf server pe rehta hai — database mein nahi, backup mein nahi.</p>
+            <div style="display: flex; gap: 10px; flex-wrap: wrap;">
+              <input placeholder="123456:ABC-DEF…" style="flex: 1; min-width: 200px; background: var(--surf-2); border: 1px solid var(--line); color: var(--ink); padding: 11px 13px; border-radius: 9px; font-family: 'JetBrains Mono', monospace; font-size: 12px;">
+              <button style="border: 1px solid var(--accent); background: var(--accent); color: #fff; padding: 11px 18px; border-radius: 9px; font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; white-space: nowrap; transition: 200ms cubic-bezier(.2,.7,.3,1);" style-hover="transform: translateY(-2px); box-shadow: 0 10px 26px var(--accent-glow);">Verify &amp; connect</button>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; margin-top: 18px; padding: 14px 16px; background: var(--surf-2); border: 1px solid var(--line); border-radius: 12px;">
+              <span style="width: 7px; height: 7px; border-radius: 50%; background: var(--up); box-shadow: 0 0 0 3px var(--up-bg); animation: pulse 2s ease-in-out infinite;"></span>
+              <span style="font-family: 'JetBrains Mono', monospace; font-size: 13px;">@ms_scalp_bot</span>
+              <div style="flex: 1;"></div>
+              <span style="font-size: 11.5px; color: var(--ink-3);">connected · chat detected</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="border: 1px solid var(--line); border-radius: 18px; background: var(--surf); overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,.24); animation: riseIn linear both; animation-timeline: view(); animation-range: entry 4% cover 34%;">
+          <div style="padding: 16px 22px; border-bottom: 1px solid var(--line-soft); font-size: 10px; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); font-weight: 600;">Alert kab bheje</div>
+          <div style="padding: 6px 22px 14px;">{{ alertPrefs }}</div>
+        </div>
+      </div>
+
+      <div style="margin: 34px 0 14px; font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; color: var(--ink-3);">Ye install</div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr)); gap: 14px;">{{ aboutCells }}</div>
+    </section>
+
+    <section id="evidence" style="position: relative; padding: 108px 64px 0; border-top: 1px solid var(--line); background: linear-gradient(180deg, var(--deep), var(--ground));">
+      <div style="margin-bottom: 40px; animation: fadeUp linear both; animation-timeline: view(); animation-range: entry 8% cover 26%;">
+        <div style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .22em; text-transform: uppercase; color: var(--ink-3); margin-bottom: 14px;">10 · Evidence</div>
+        <h2 style="margin: 0; font-size: clamp(28px, 3vw, 44px); letter-spacing: -.03em; font-weight: 700; line-height: 1.05; max-width: 24ch;">Gate pass hone tak kuch bhi TRUSTED nahi</h2>
+      </div>
+      <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 14px;">{{ evidenceCells }}</div>
+
+      <footer style="margin-top: 92px; padding: 34px 0 40px; border-top: 1px solid var(--line); display: flex; gap: 26px; flex-wrap: wrap; align-items: baseline;">
+        <span style="font-family: 'JetBrains Mono', monospace; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-3);">MarketScalper · v1.0.0-foundation</span>
+        <span style="flex: 1;"></span>
+        <span style="font-size: 11.5px; color: var(--ink-3); max-width: 64ch; line-height: 1.6;">Sirf decision support. MarketScalper kabhi order place, modify ya close nahi karta — har recommendation aap khud manually execute karte ho aur outcome khud log karte ho. Yahan ke figures simulated paper results hain, realised P&amp;L nahi.</span>
+      </footer>
+    </section>
+
+  </main>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script data-props="{&quot;equity&quot;:{&quot;editor&quot;:&quot;int&quot;,&quot;default&quot;:10000,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:1000,&quot;max&quot;:250000,&quot;step&quot;:1000,&quot;unit&quot;:&quot;$&quot;,&quot;section&quot;:&quot;Paper&quot;},&quot;tickMs&quot;:{&quot;editor&quot;:&quot;range&quot;,&quot;default&quot;:250,&quot;tsType&quot;:&quot;number&quot;,&quot;min&quot;:250,&quot;max&quot;:3000,&quot;step&quot;:50,&quot;unit&quot;:&quot;ms&quot;,&quot;section&quot;:&quot;Motion&quot;},&quot;showGrid&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Chart&quot;}}">
+class Component extends DCLogic {
+  state = {
+    sym: "ETHUSDT", strat: "s1", tf: "4h", riskPct: 0.5,
+    px: { ETHUSDT: 3849.12, BTCUSDT: 118102.45 },
+    prev: { ETHUSDT: 3846.0, BTCUSDT: 118140.0 },
+    candles: null, live: false, clock: "", histFilter: "",
+    theme: "dark"
+  };
+
+  // ---------------------------------------------------------------- data ----
+  book() {
+    return {
+      ETHUSDT: {
+        s1: { dir: 1, entry: 3842.6, stop: 3788.2, target: 4029.4, filters: 3,
+              reason: "4h swing low 3,788 ka sweep ek hi candle mein reject ho gaya; 1m order flow bid-side absorption pe flip hua aur price ne level wapas reclaim kar liya. Teeno trend filters long ke saath hain.",
+              invalid: "3,782.0 ke neeche close" },
+        s2: { dir: 1, entry: 3861.0, stop: 3818.4, target: 3968.6, filters: 2,
+              reason: "Impulse leg ke 0.5 retracement mein pullback, 5m context abhi bhi up-trend mein. Pullback pe volume sookh gaya aur reclaim candle pe wapas aaya.",
+              invalid: "3,812.0 ke neeche close" },
+        s3: { dir: -1, entry: 3872.8, stop: 3906.1, target: 3789.5, filters: 2,
+              reason: "Ascending trendline ka break fail hua — wick 3,884 ke paar gaya aur andar hi close hua, breakout entries trap ho gayin. Short failed break ke against hai, trend ke against nahi.",
+              invalid: "3,910.0 ke upar close" }
+      },
+      BTCUSDT: {
+        s1: { dir: 1, entry: 117640.0, stop: 116820.0, target: 119980.0, filters: 3,
+              reason: "117,000 handle ke neeche ki liquidity li gayi aur do 1m candles ke andar reclaim ho gayi; book depth bid pe wapas bani aur 5m context ne apna higher low kabhi nahi khoya.",
+              invalid: "116,700 ke neeche close" },
+        s2: { dir: 1, entry: 118310.0, stop: 117450.0, target: 120460.0, filters: 2,
+              reason: "118,000 reclaim ke baad pehle pullback pe continuation entry. 5m pe trend filters agree karte hain; 1m stack abhi settle ho raha hai, isliye sweep se neeche rank hai.",
+              invalid: "117,380 ke neeche close" },
+        s3: { dir: -1, entry: 118240.0, stop: 119460.0, target: 114980.0, filters: 3,
+              reason: "119,4xx pe descending trendline ka fake-break — wick paar, close andar, aur next candle pe sweep unwind. Trapped longs ke against short.",
+              invalid: "119,520 ke upar close" }
+      }
+    };
+  }
+
+  strategies() {
+    return [
+      { id: "s1", code: "S1", name: "Liquidity Sweep Reversal", note: "level liya, phir reclaim kiya" },
+      { id: "s2", code: "S2", name: "Trend Pullback Continuation", note: "trend ke saath retracement" },
+      { id: "s3", code: "S3", name: "Trendline Fake-Break Trap", note: "wick paar, close andar" }
+    ];
+  }
+
+  cur() {
+    const b = this.book()[this.state.sym];
+    return b[this.state.strat] || b.s1;
+  }
+  stratId() {
+    const s = { s1: "sweep_reversal", s2: "trend_pullback", s3: "tl_fake_break" }[this.state.strat];
+    return this.state.sym.replace("USDT", "").toLowerCase() + "_" + this.state.tf + "_" + s;
+  }
+  dec() { return this.state.sym === "BTCUSDT" ? 0 : 2; }
+  fmt(n, d) {
+    if (n === null || n === undefined || isNaN(n)) return "—";
+    const dd = d === undefined ? 2 : d;
+    return Number(n).toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd });
+  }
+
+  // -------------------------------------------------------------- lifecycle -
+  componentDidMount() {
+    document.documentElement.dataset.theme = "dark";
+    this.setState({ candles: this.seed(this.state.sym), clock: new Date().toLocaleTimeString() });
+    this.tryLive();
+    this.tick = setInterval(() => this.step(), Math.max(200, this.props.tickMs ?? 900));
+    this.sec = setInterval(() => this.setState({ clock: new Date().toLocaleTimeString() }), 1000);
+  }
+  componentWillUnmount() { clearInterval(this.tick); clearInterval(this.sec); }
+
+  /* Real backend if it is reachable: same contract as frontend/app.js —
+     GET /api/v4/quotes with a Bearer token. Otherwise the page runs a
+     deterministic simulation and says so, because a trading surface must
+     never look live while it is stale. */
+  async tryLive() {
+    try {
+      const qs = new URLSearchParams(location.search);
+      const host = qs.get("api") || "127.0.0.1:8000";
+      const token = qs.get("token") || localStorage.getItem("ms_token") || "";
+      const r = await fetch(location.protocol + "//" + host + "/api/v4/quotes", {
+        headers: token ? { Authorization: "Bearer " + token } : {}
+      });
+      if (!r.ok) throw new Error(r.status);
+      const d = await r.json();
+      const px = {};
+      Object.keys(d.quotes || {}).forEach(k => { px[k] = d.quotes[k].price; });
+      if (Object.keys(px).length) {
+        this.setState(s => ({ live: true, px: Object.assign({}, s.px, px) }));
+        this.poll = setInterval(() => this.tryLive(), 4000);
+      }
+    } catch (e) { /* simulation stands */ }
+  }
+
+  step() {
+    this.setState(s => {
+      const px = {}, prev = {};
+      Object.keys(s.px).forEach(k => {
+        prev[k] = s.px[k];
+        const vol = k === "BTCUSDT" ? 34 : 1.6;
+        px[k] = s.live ? s.px[k] : Math.max(1, s.px[k] + (Math.random() - 0.494) * vol);
+      });
+      const c = (s.candles || []).slice();
+      if (c.length) {
+        const last = Object.assign({}, c[c.length - 1]);
+        last.c = px[s.sym];
+        last.h = Math.max(last.h, last.c);
+        last.l = Math.min(last.l, last.c);
+        last.live = true;
+        c[c.length - 1] = last;
+        this.ticks = (this.ticks || 0) + 1;
+        if (this.ticks % 9 === 0) {
+          c.shift();
+          c.push({ o: last.c, h: last.c, l: last.c, c: last.c, live: true });
+        }
+      }
+      return { px, prev, candles: c };
+    });
+  }
+
+  seed(sym) {
+    const base = sym === "BTCUSDT" ? 118102 : 3849;
+    const vol = sym === "BTCUSDT" ? 620 : 26;
+    let seed = sym === "BTCUSDT" ? 731337 : 20260727;
+    const rand = () => (seed = (seed * 1103515245 + 12345) % 2147483648) / 2147483648;
+    let px = base * 0.965;
+    const out = [];
+    for (let i = 0; i < 96; i++) {
+      const o = px;
+      const c = o + (rand() - 0.46) * vol + (base * 0.035) / 96;
+      const h = Math.max(o, c) + rand() * vol * 0.5;
+      const l = Math.min(o, c) - rand() * vol * 0.5;
+      px = c;
+      out.push({ o, h, l, c });
+    }
+    out[out.length - 1].c = this.state.px[sym];
+    return out;
+  }
+
+  // ------------------------------------------------------------- primitives -
+  lbl(t, extra) {
+    return React.createElement("div", { style: Object.assign({
+      fontSize: 10, letterSpacing: ".16em", textTransform: "uppercase",
+      color: "var(--ink-3)", fontWeight: 600
+    }, extra || {}) }, t);
+  }
+
+  /* Odometer: each digit is a 0-9 column that slides. Built here rather than in
+     the template because the slide must survive a re-render on every tick. */
+  odo(text, size, color) {
+    const chars = String(text).split("");
+    return React.createElement("span", {
+      style: {
+        display: "inline-flex", fontFamily: "'JetBrains Mono', monospace",
+        fontVariantNumeric: "tabular-nums", fontSize: size, fontWeight: 600,
+        letterSpacing: "-.02em", color: color || "var(--ink)", lineHeight: 1.1
+      }
+    }, chars.map((ch, i) => {
+      if (!/[0-9]/.test(ch)) return React.createElement("span", { key: i, style: { opacity: ch === "," ? 0.45 : 1 } }, ch);
+      return React.createElement("span", {
+        key: i,
+        style: { display: "inline-block", height: size * 1.1, overflow: "hidden", width: size * 0.6 }
+      }, React.createElement("span", {
+        style: {
+          display: "block",
+          transform: "translateY(" + (-Number(ch) * 10) + "%)",
+          transition: "transform 420ms cubic-bezier(.2,.8,.2,1)"
+        }
+      }, "0123456789".split("").map(d => React.createElement("span", {
+        key: d, style: { display: "block", height: size * 1.1, textAlign: "center" }
+      }, d))));
+    }));
+  }
+
+  card(children, style) {
+    return React.createElement("div", {
+      style: Object.assign({
+        border: "1px solid var(--line)", borderRadius: 16, background: "var(--surf)",
+        padding: "18px 20px", boxShadow: "0 1px 3px rgba(0,0,0,.22)"
+      }, style || {})
+    }, children);
+  }
+
+  // ------------------------------------------------------------- renderables
+  tickers() {
+    return ["ETHUSDT", "BTCUSDT"].map(k => {
+      const up = this.state.px[k] >= (this.state.prev[k] ?? this.state.px[k]);
+      const d = k === "BTCUSDT" ? 2 : 2;
+      const chg = ((this.state.px[k] / (k === "BTCUSDT" ? 116980 : 3771) - 1) * 100);
+      return React.createElement("div", {
+        key: k,
+        style: {
+          display: "flex", alignItems: "center", gap: 18, padding: "16px 22px",
+          border: "1px solid var(--line)", borderRadius: 16,
+          background: "var(--glass)", backdropFilter: "blur(14px)",
+          boxShadow: "0 1px 3px rgba(0,0,0,.22)", minWidth: 260
+        }
+      },
+        React.createElement("div", null,
+          this.lbl(k.replace("USDT", "") + " / USDT", { marginBottom: 8 }),
+          this.odo(this.fmt(this.state.px[k], d), 30, up ? "var(--up)" : "var(--down)")
+        ),
+        React.createElement("div", { style: { flex: 1 } }),
+        React.createElement("div", { style: { textAlign: "right" } },
+          React.createElement("div", {
+            style: {
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 12.5, fontWeight: 600,
+              color: chg >= 0 ? "var(--up)" : "var(--down)"
+            }
+          }, (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%"),
+          React.createElement("div", {
+            style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: "var(--ink-3)", marginTop: 4, letterSpacing: ".08em" }
+          }, this.state.live ? "BINANCE WS" : "SIMULATED")
+        )
+      );
+    });
+  }
+
+  heroCandles() {
+    const c = this.state.candles || [];
+    if (!c.length) return null;
+    const hi = Math.max.apply(null, c.map(x => x.h)), lo = Math.min.apply(null, c.map(x => x.l));
+    const rng = (hi - lo) || 1;
+    const row = c.map((k, i) => {
+      const up = k.c >= k.o;
+      const top = (1 - (k.h - lo) / rng) * 100, bot = (1 - (k.l - lo) / rng) * 100;
+      const bt = (1 - (Math.max(k.o, k.c) - lo) / rng) * 100, bb = (1 - (Math.min(k.o, k.c) - lo) / rng) * 100;
+      return React.createElement("div", {
+        key: i,
+        style: { position: "absolute", left: (i / c.length * 100) + "%", width: (100 / c.length) + "%", top: top + "%", bottom: (100 - bot) + "%", display: "flex", justifyContent: "center" }
+      },
+        React.createElement("div", { style: { width: 1, background: up ? "var(--up)" : "var(--down)", opacity: 0.55 } }),
+        React.createElement("div", {
+          style: {
+            position: "absolute", left: "22%", right: "22%",
+            top: ((bt - top) / (bot - top || 1) * 100) + "%",
+            height: (Math.abs(bb - bt) / (bot - top || 1) * 100) + "%",
+            minHeight: 1, background: up ? "var(--up)" : "var(--down)", opacity: 0.7,
+            transition: "top 400ms linear, height 400ms linear"
+          }
+        })
+      );
+    });
+    return React.createElement("div", { style: { position: "absolute", inset: 0 } }, row);
+  }
+
+  liveChart() {
+    const c = this.state.candles || [];
+    if (!c.length) return null;
+    const s = this.cur();
+    const hi = Math.max.apply(null, c.map(x => x.h).concat([s.target, s.stop, s.entry]));
+    const lo = Math.min.apply(null, c.map(x => x.l).concat([s.target, s.stop, s.entry]));
+    const pad = (hi - lo) * 0.08, H = hi + pad, L = lo - pad, rng = H - L;
+    const y = v => (1 - (v - L) / rng) * 100;
+    const d = this.dec();
+
+    const grid = React.createElement("div", {
+      key: "g",
+      style: {
+        position: "absolute", inset: 0,
+        backgroundImage: "linear-gradient(var(--grid) 1px, transparent 1px), linear-gradient(90deg, var(--grid) 1px, transparent 1px)",
+        backgroundSize: "100% 11.11%, 5% 100%", opacity: this.props.showGrid === false ? 0 : 1
+      }
+    });
+
+    const zone = (a, b, color) => React.createElement("div", {
+      key: "z" + color,
+      style: {
+        position: "absolute", left: 0, right: 74, top: Math.min(y(a), y(b)) + "%",
+        height: Math.abs(y(a) - y(b)) + "%", background: color, pointerEvents: "none"
+      }
+    });
+
+    const line = (v, color, style, tag) => React.createElement("div", {
+      key: tag,
+      style: {
+        position: "absolute", left: 0, right: 0, top: y(v) + "%",
+        borderTop: "1px " + style + " " + color, pointerEvents: "none",
+        transition: "top 500ms cubic-bezier(.2,.8,.2,1)"
+      }
+    },
+      React.createElement("span", {
+        style: {
+          position: "absolute", right: 8, top: -10, fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10.5, fontWeight: 600, color: "#fff", background: color,
+          padding: "2px 7px", borderRadius: 4, letterSpacing: ".04em", whiteSpace: "nowrap"
+        }
+      }, tag + " " + this.fmt(v, d))
+    );
+
+    const bars = c.map((k, i) => {
+      const up = k.c >= k.o;
+      const col = up ? "var(--up)" : "var(--down)";
+      const top = y(k.h), bot = y(k.l);
+      const bt = y(Math.max(k.o, k.c)), bb = y(Math.min(k.o, k.c));
+      return React.createElement("div", {
+        key: i,
+        style: {
+          position: "absolute", left: (i / c.length * 92) + "%", width: (92 / c.length) + "%",
+          top: top + "%", bottom: (100 - bot) + "%", display: "flex", justifyContent: "center",
+          filter: k.live ? "drop-shadow(0 0 6px " + (up ? "rgba(0,192,127,.5)" : "rgba(255,91,91,.5)") + ")" : "none"
+        }
+      },
+        React.createElement("div", { style: { width: 1, background: col } }),
+        React.createElement("div", {
+          style: {
+            position: "absolute", left: "20%", right: "20%",
+            top: ((bt - top) / (bot - top || 1) * 100) + "%",
+            height: (Math.abs(bb - bt) / (bot - top || 1) * 100) + "%",
+            minHeight: 1, background: col, borderRadius: 1
+          }
+        })
+      );
+    });
+
+    const px = this.state.px[this.state.sym];
+
+    return React.createElement("div", { style: { position: "absolute", inset: 0, overflow: "hidden" } },
+      grid,
+      zone(s.entry, s.target, "rgba(0,192,127,.07)"),
+      zone(s.entry, s.stop, "rgba(255,91,91,.07)"),
+      bars,
+      line(s.target, "var(--up)", "dashed", "TP"),
+      line(s.entry, "var(--accent)", "solid", "ENTRY"),
+      line(s.stop, "var(--down)", "dashed", "SL"),
+      React.createElement("div", {
+        key: "px",
+        style: {
+          position: "absolute", left: 0, right: 0, top: y(px) + "%",
+          borderTop: "1px dotted var(--ink-2)", transition: "top 300ms linear"
+        }
+      }, React.createElement("span", {
+        style: {
+          position: "absolute", right: 8, top: -10, fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10.5, fontWeight: 600, color: "var(--ink)", background: "var(--surf-2)",
+          border: "1px solid var(--line)", padding: "2px 7px", borderRadius: 4
+        }
+      }, this.fmt(px, d)))
+    );
+  }
+
+  ladder() {
+    const s = this.cur();
+    const risk = Math.abs(s.entry - s.stop), reward = Math.abs(s.target - s.entry);
+    const total = risk + reward || 1;
+    const d = this.dec();
+    return React.createElement("div", null,
+      React.createElement("div", {
+        style: { display: "flex", height: 12, borderRadius: 7, overflow: "hidden", background: "var(--surf-2)", border: "1px solid var(--line-soft)" }
+      },
+        React.createElement("i", {
+          key: "r",
+          style: {
+            display: "block", height: "100%", background: "var(--down)",
+            width: (risk / total * 100).toFixed(2) + "%", transformOrigin: "left",
+            animation: "ladder 900ms cubic-bezier(.2,.8,.2,1) both",
+            animationTimeline: "view()", animationRange: "entry 6% cover 34%"
+          }
+        }),
+        React.createElement("i", {
+          key: "w",
+          style: {
+            display: "block", height: "100%",
+            background: "linear-gradient(90deg, var(--up), color-mix(in oklch, var(--up), #fff 22%))",
+            width: (reward / total * 100).toFixed(2) + "%", transformOrigin: "left",
+            animation: "ladder 1100ms 120ms cubic-bezier(.2,.8,.2,1) both",
+            animationTimeline: "view()", animationRange: "entry 6% cover 40%"
+          }
+        })
+      ),
+      React.createElement("div", {
+        style: { display: "flex", justifyContent: "space-between", marginTop: 10, fontFamily: "'JetBrains Mono', monospace", fontSize: 11.5, letterSpacing: ".04em" }
+      },
+        React.createElement("span", { style: { color: "var(--down)" } }, "risk " + this.fmt(risk, d)),
+        React.createElement("span", { style: { color: "var(--up)" } }, this.fmt(reward, d) + " reward · " + (reward / risk).toFixed(2) + "R net")
+      )
+    );
+  }
+
+  priceCells() {
+    const s = this.cur(), d = this.dec();
+    const rr = Math.abs(s.target - s.entry) / Math.abs(s.entry - s.stop);
+    return [
+      ["Entry", s.entry, "var(--ink)"],
+      ["Stop", s.stop, "var(--down)"],
+      ["Target", s.target, "var(--up)"],
+      ["Net R:R", rr, "var(--ink)"]
+    ].map(([k, v, col], i) => React.createElement("div", {
+      key: k, style: { background: "var(--surf)", padding: "18px 18px", minWidth: 0 }
+    },
+      this.lbl(k, { marginBottom: 9 }),
+      this.odo(k === "Net R:R" ? v.toFixed(2) : this.fmt(v, d), 20, col)
+    ));
+  }
+
+  pips() {
+    const n = this.cur().filters;
+    return [0, 1, 2].map(i => React.createElement("span", {
+      key: i,
+      style: {
+        width: 8, height: 8, borderRadius: 3,
+        background: i < n ? "var(--accent)" : "var(--surf-2)",
+        boxShadow: i < n ? "0 0 10px var(--accent-glow)" : "none",
+        transition: "background 300ms"
+      }
+    }));
+  }
+
+  symbolTabs() {
+    return ["ETHUSDT", "BTCUSDT"].map(k => {
+      const on = this.state.sym === k;
+      return React.createElement("button", {
+        key: k,
+        onClick: () => this.setState({ sym: k, candles: this.seed(k) }),
+        style: {
+          border: 0, background: on ? "var(--ground)" : "transparent",
+          color: on ? "var(--ink)" : "var(--ink-3)", padding: "8px 16px",
+          font: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer",
+          borderRadius: 7, boxShadow: on ? "0 1px 2px rgba(0,0,0,.3)" : "none",
+          transition: "180ms cubic-bezier(.2,.7,.3,1)"
+        }
+      }, k);
+    });
+  }
+
+  tfTabs() {
+    return ["5m", "15m", "1h", "4h", "1d"].map(k => {
+      const on = this.state.tf === k;
+      return React.createElement("button", {
+        key: k,
+        onClick: () => this.setState({ tf: k }),
+        style: {
+          border: 0, background: on ? "var(--ground)" : "transparent",
+          color: on ? "var(--ink)" : "var(--ink-3)", padding: "8px 14px",
+          font: "inherit", fontSize: 12, fontWeight: 600, cursor: "pointer",
+          borderRadius: 7, boxShadow: on ? "0 1px 2px rgba(0,0,0,.3)" : "none",
+          transition: "180ms cubic-bezier(.2,.7,.3,1)"
+        }
+      }, k === "1d" ? "1D" : k);
+    });
+  }
+
+  strategyTabs() {
+    return this.strategies().map(st => {
+      const on = this.state.strat === st.id;
+      const s = this.book()[this.state.sym][st.id];
+      const rr = Math.abs(s.target - s.entry) / Math.abs(s.entry - s.stop);
+      return React.createElement("button", {
+        key: st.id,
+        onClick: () => this.setState({ strat: st.id }),
+        style: {
+          display: "flex", alignItems: "center", gap: 12, width: "100%", textAlign: "left",
+          padding: "15px 20px", border: 0, borderTop: "1px solid var(--line-soft)",
+          background: on ? "var(--surf-2)" : "transparent", cursor: "pointer", font: "inherit",
+          position: "relative", transition: "background 180ms"
+        }
+      },
+        on ? React.createElement("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: "var(--accent)" } }) : null,
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700,
+            color: on ? "var(--accent)" : "var(--ink-3)", width: 20
+          }
+        }, st.code),
+        React.createElement("span", { style: { flex: 1, minWidth: 0 } },
+          React.createElement("span", { style: { display: "block", fontSize: 13, fontWeight: 600, color: on ? "var(--ink)" : "var(--ink-2)" } }, st.name),
+          React.createElement("span", { style: { display: "block", fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 } }, st.note)
+        ),
+        React.createElement("span", {
+          style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 12, fontWeight: 600, color: on ? "var(--ink)" : "var(--ink-3)" }
+        }, rr.toFixed(2) + "R")
+      );
+    });
+  }
+
+  sizingCells() {
+    const s = this.cur(), d = this.dec();
+    const eq = this.props.equity ?? 10000;
+    const riskCash = eq * (this.state.riskPct / 100);
+    const perUnit = Math.abs(s.entry - s.stop) || 1;
+    const qty = riskCash / perUnit;
+    const notional = qty * s.entry;
+    return [
+      ["Risk", "$" + this.fmt(riskCash, 2), "var(--down)"],
+      ["Quantity", this.fmt(qty, this.state.sym === "BTCUSDT" ? 4 : 3), "var(--ink)"],
+      ["Notional", "$" + this.fmt(notional, 2), "var(--ink)"],
+      ["Stop distance", this.fmt(perUnit, d), "var(--ink-2)"]
+    ].map(([k, v, col]) => React.createElement("div", { key: k },
+      this.lbl(k, { marginBottom: 7 }),
+      React.createElement("div", {
+        style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 16, fontWeight: 600, color: col, letterSpacing: "-.01em" }
+      }, v)
+    ));
+  }
+
+  pipelineStages() {
+    const stages = [
+      ["Feed", "Binance WS — aggTrade · kline_1m · bookTicker"],
+      ["Candle builder", "1m primary, 5m context — official klines se zero mismatch"],
+      ["Engines", "structure · trendline · liquidity · smart money · volume"],
+      ["Qualification", "pehle hard gates, phir ranking score"],
+      ["Trade plan", "entry, stop, targets aur invalidation"],
+      ["Recommendation", "manual execution, manual outcome log"]
+    ];
+    return stages.map(([t, sub], i) => React.createElement("div", {
+      key: t,
+      style: {
+        position: "relative", border: "1px solid var(--line)", borderRadius: 16,
+        background: i === stages.length - 1 ? "linear-gradient(160deg, var(--accent-glow), var(--surf))" : "var(--surf)",
+        padding: "20px 20px 22px", overflow: "hidden",
+        animation: "riseIn linear both", animationTimeline: "view()",
+        animationRange: "entry 2% cover " + (24 + i * 5) + "%"
+      }
+    },
+      React.createElement("div", {
+        style: { position: "absolute", top: 0, left: 0, right: 0, height: 1, background: "var(--line)" }
+      }, React.createElement("div", {
+        style: {
+          position: "absolute", top: 0, left: 0, width: "36%", height: 1,
+          background: "linear-gradient(90deg, transparent, var(--accent), transparent)",
+          animation: "sweepline " + (3 + i * 0.35) + "s linear infinite"
+        }
+      })),
+      React.createElement("div", {
+        style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, color: "var(--ink-3)", letterSpacing: ".16em", marginBottom: 14 }
+      }, String(i + 1).padStart(2, "0")),
+      React.createElement("div", { style: { fontSize: 16, fontWeight: 650, letterSpacing: "-.015em", marginBottom: 8 } }, t),
+      React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.55 } }, sub)
+    ));
+  }
+
+  gates() {
+    return [
+      ["No repaint", "Closed candle kabhi revise nahi hoti. 14:01 pe jo aapne padha, log mein hamesha wahi rahega."],
+      ["Replay-first", "Live jaane se pehle har engine 90 din ke recorded tape pe bilkul same code path chalata hai."],
+      ["Fake confidence nahi", "Filters passed aur net R:R fact hain. \"78% confidence\" fact nahi hai, isliye wo badge yahan nahi hai."]
+    ].map(([t, sub], i) => React.createElement("div", {
+      key: t,
+      style: {
+        border: "1px solid var(--line)", borderLeft: "2px solid var(--accent)",
+        borderRadius: 14, background: "var(--surf)", padding: "20px 22px",
+        animation: "fadeUp linear both", animationTimeline: "view()",
+        animationRange: "entry 4% cover " + (26 + i * 6) + "%"
+      }
+    },
+      React.createElement("div", { style: { fontSize: 14.5, fontWeight: 650, marginBottom: 8 } }, t),
+      React.createElement("div", { style: { fontSize: 12.5, color: "var(--ink-3)", lineHeight: 1.6 } }, sub)
+    ));
+  }
+
+  queueRows() {
+    const rows = [];
+    ["ETHUSDT", "BTCUSDT"].forEach(sym => {
+      this.strategies().forEach(st => {
+        const s = this.book()[sym][st.id];
+        if (sym === this.state.sym && st.id === this.state.strat) return;
+        rows.push({ sym, st, s });
+      });
+    });
+    rows.sort((a, b) => (b.s.filters - a.s.filters) ||
+      (Math.abs(b.s.target - b.s.entry) / Math.abs(b.s.entry - b.s.stop) -
+       Math.abs(a.s.target - a.s.entry) / Math.abs(a.s.entry - a.s.stop)));
+
+    return rows.map((r, i) => {
+      const lng = r.s.dir > 0;
+      const d = r.sym === "BTCUSDT" ? 0 : 2;
+      const rr = Math.abs(r.s.target - r.s.entry) / Math.abs(r.s.entry - r.s.stop);
+      const cell = (k, v, col) => React.createElement("div", { key: k, style: { textAlign: "right" } },
+        this.lbl(k, { marginBottom: 4 }),
+        React.createElement("span", {
+          style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 13, color: col || "var(--ink)" }
+        }, this.fmt(v, d))
+      );
+      return React.createElement("div", {
+        key: r.sym + r.st.id,
+        onClick: () => this.setState({ sym: r.sym, strat: r.st.id, candles: this.seed(r.sym) }),
+        style: {
+          display: "grid", alignItems: "center", gap: 16,
+          gridTemplateColumns: "76px 56px minmax(120px, 1.4fr) repeat(4, minmax(70px, 96px))",
+          padding: "16px 22px", borderTop: i ? "1px solid var(--line-soft)" : "0",
+          position: "relative", cursor: "pointer", transition: "background 160ms",
+          animation: "fadeUp linear both", animationTimeline: "view()",
+          animationRange: "entry 2% cover " + (20 + i * 5) + "%"
+        }
+      },
+        React.createElement("span", { style: { position: "absolute", left: 0, top: 0, bottom: 0, width: 2, background: lng ? "var(--up)" : "var(--down)" } }),
+        React.createElement("span", {
+          style: {
+            justifySelf: "start", fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5,
+            fontWeight: 700, letterSpacing: ".1em", padding: "4px 9px", borderRadius: 5,
+            background: lng ? "var(--up-bg)" : "var(--down-bg)", color: lng ? "var(--up)" : "var(--down)"
+          }
+        }, lng ? "LONG" : "SHORT"),
+        React.createElement("span", { style: { justifySelf: "start", fontWeight: 700, fontSize: 15, letterSpacing: "-.02em" } }, r.sym.replace("USDT", "")),
+        React.createElement("div", { style: { minWidth: 0 } },
+          React.createElement("div", { style: { fontSize: 13, fontWeight: 600, color: "var(--ink-2)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" } }, r.st.name),
+          React.createElement("div", {
+            style: { fontSize: 11.5, color: "var(--ink-3)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }
+          }, r.s.reason)
+        ),
+        cell("Entry", r.s.entry),
+        cell("Stop", r.s.stop, "var(--down)"),
+        cell("Target", r.s.target, "var(--up)"),
+        React.createElement("div", { key: "rr", style: { textAlign: "right" } },
+          this.lbl("R:R", { marginBottom: 4 }),
+          React.createElement("span", {
+            style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 650 }
+          }, rr.toFixed(2))
+        )
+      );
+    });
+  }
+
+  evidenceCells() {
+    return [
+      ["Logged recommendations", "41 / 200", "P5 validation gate", "var(--ink)"],
+      ["Candle mismatch", "0", "90 din replay, dono symbols", "var(--up)"],
+      ["TRUSTED strategies", "0", "abhi tak koi gate pass nahi kiya", "var(--ink-2)"],
+      ["Paper expectancy", "+0.31R", "provisional — sirf 41 trades", "var(--up)"]
+    ].map(([k, v, sub, col], i) => React.createElement("div", {
+      key: k,
+      style: {
+        border: "1px solid var(--line)", borderRadius: 16, background: "var(--surf)",
+        padding: "20px 22px", animation: "riseIn linear both",
+        animationTimeline: "view()", animationRange: "entry 2% cover " + (22 + i * 5) + "%"
+      }
+    },
+      this.lbl(k, { marginBottom: 12 }),
+      React.createElement("div", {
+        style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 30, fontWeight: 600, letterSpacing: "-.03em", color: col }
+      }, v),
+      React.createElement("div", { style: { fontSize: 12, color: "var(--ink-3)", marginTop: 8 } }, sub)
+    ));
+  }
+
+  // ------------------------------------------------- strategies / evidence --
+  /* DESIGN LAW rule 4: backtest evidence and live paper results never share a
+     visual container. Here they sit in two separated wells inside one card. */
+  perf() {
+    return {
+      s1: { on: true,  bt: [214, 47.2, 0.42], lv: [19, 42.1, 0.36] },
+      s2: { on: true,  bt: [186, 51.1, 0.28], lv: [14, 42.9, 0.19] },
+      s3: { on: false, bt: [132, 43.9, 0.35], lv: [8, 37.5, -0.05] }
+    };
+  }
+
+  metric(k, val, col) {
+    return React.createElement("div", { key: k },
+      React.createElement("div", { style: { fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, marginBottom: 5 } }, k),
+      React.createElement("div", { style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 15, fontWeight: 600, color: col || "var(--ink)" } }, val)
+    );
+  }
+
+  well(title, sub, v, raised) {
+    return React.createElement("div", {
+      key: title,
+      style: { background: raised ? "var(--surf-2)" : "transparent", padding: "16px 20px", borderTop: "1px solid var(--line-soft)" }
+    },
+      React.createElement("div", { style: { display: "flex", alignItems: "baseline", gap: 8, marginBottom: 12, flexWrap: "wrap" } },
+        this.lbl(title),
+        React.createElement("span", { style: { fontSize: 11, color: "var(--ink-3)" } }, sub)
+      ),
+      React.createElement("div", { style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 10 } },
+        this.metric("trades", String(v[0])),
+        this.metric("win %", v[1].toFixed(1)),
+        this.metric("exp R", (v[2] >= 0 ? "+" : "") + v[2].toFixed(2), v[2] >= 0 ? "var(--up)" : "var(--down)")
+      )
+    );
+  }
+
+  strategyCards() {
+    const p = this.perf();
+    return this.strategies().map((st, i) => {
+      const d = p[st.id];
+      return React.createElement("div", {
+        key: st.id,
+        style: {
+          border: "1px solid var(--line)", borderRadius: 18, background: "var(--surf)",
+          overflow: "hidden", opacity: d.on ? 1 : 0.62,
+          boxShadow: "0 1px 3px rgba(0,0,0,.24)", animation: "riseIn linear both",
+          animationTimeline: "view()", animationRange: "entry 2% cover " + (24 + i * 5) + "%"
+        }
+      },
+        React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 12, padding: "18px 20px" } },
+          React.createElement("span", {
+            style: {
+              fontFamily: "'JetBrains Mono', monospace", fontSize: 11, fontWeight: 700,
+              color: "var(--accent)", background: "var(--accent-glow)",
+              border: "1px solid var(--accent-dim)", padding: "3px 8px", borderRadius: 6
+            }
+          }, st.code),
+          React.createElement("div", { style: { flex: 1, minWidth: 0 } },
+            React.createElement("div", { style: { fontSize: 14.5, fontWeight: 650, letterSpacing: "-.015em" } }, st.name),
+            React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", marginTop: 2 } }, st.note)
+          ),
+          React.createElement("span", {
+            title: d.on ? "on — naye setups issue kar raha hai" : "off — naye setups band",
+            style: {
+              width: 34, height: 18, borderRadius: 999, flex: "none", position: "relative",
+              background: d.on ? "var(--accent-glow)" : "var(--surf-2)",
+              border: "1px solid " + (d.on ? "var(--accent)" : "var(--line)"), transition: "200ms"
+            }
+          }, React.createElement("span", {
+            style: {
+              position: "absolute", top: 2, left: d.on ? 18 : 2, width: 12, height: 12,
+              borderRadius: "50%", background: d.on ? "var(--accent)" : "var(--ink-3)", transition: "200ms"
+            }
+          }))
+        ),
+        this.well("Backtest", "90 din replay", d.bt, false),
+        this.well("Live paper", "sirf simulated", d.lv, true)
+      );
+    });
+  }
+
+  rejectedRows() {
+    return [
+      ["RSI divergence scalp", "1m pe divergence repaint hota hai — replay mein result badal jaata hai"],
+      ["News-time breakout", "Spread aur slippage ne poora edge kha liya"],
+      ["Fixed 15-min time exit", "Expectancy geometry se nahi, luck se aa rahi thi"]
+    ].map(([idea, why], i) => React.createElement("div", {
+      key: idea,
+      style: {
+        display: "grid", gridTemplateColumns: "minmax(160px, 1fr) minmax(0, 2fr)", gap: 20,
+        padding: "16px 22px", borderTop: i ? "1px solid var(--line-soft)" : "0",
+        animation: "fadeUp linear both", animationTimeline: "view()",
+        animationRange: "entry 2% cover " + (20 + i * 5) + "%"
+      }
+    },
+      React.createElement("span", { style: { fontSize: 13.5, fontWeight: 600 } }, idea),
+      React.createElement("span", { style: { fontSize: 13, color: "var(--ink-3)", lineHeight: 1.5 } }, why)
+    ));
+  }
+
+  // ------------------------------------------------------------- history ----
+  historyData() {
+    return [
+      ["27 Jul 14:00", "ETHUSDT", 1, "S1", 3771.4, 3728.0, 3902.6, "TP", 3.02, 64],
+      ["27 Jul 06:00", "BTCUSDT", -1, "S3", 119180, 120340, 116420, "SL", -1.0, 41],
+      ["26 Jul 22:00", "ETHUSDT", 1, "S2", 3702.8, 3664.2, 3818.6, "TP", 2.94, 118],
+      ["26 Jul 10:00", "BTCUSDT", 1, "S1", 115940, 115120, 118380, "TP", 2.85, 96],
+      ["25 Jul 18:00", "ETHUSDT", -1, "S3", 3688.0, 3722.5, 3586.5, "TIME", 0.44, 240],
+      ["25 Jul 02:00", "BTCUSDT", 1, "S2", 114280, 113460, 116740, "SL", -1.0, 52],
+      ["24 Jul 14:00", "ETHUSDT", 1, "S1", 3604.2, 3562.0, 3730.8, "TP", 3.11, 74],
+      ["24 Jul 06:00", "BTCUSDT", -1, "S3", 117620, 118840, 114260, "TIME", -0.28, 240]
+    ];
+  }
+
+  histTabs() {
+    return [["", "Sab"], ["TP", "Target"], ["SL", "Stop"], ["TIME", "Time exit"]].map(([v, label]) => {
+      const on = (this.state.histFilter || "") === v;
+      return React.createElement("button", {
+        key: v || "all",
+        onClick: () => this.setState({ histFilter: v }),
+        style: {
+          border: 0, background: on ? "var(--ground)" : "transparent",
+          color: on ? "var(--ink)" : "var(--ink-3)", padding: "8px 14px", font: "inherit",
+          fontSize: 12, fontWeight: 600, cursor: "pointer", borderRadius: 7,
+          boxShadow: on ? "0 1px 2px rgba(0,0,0,.3)" : "none", transition: "180ms cubic-bezier(.2,.7,.3,1)"
+        }
+      }, label);
+    });
+  }
+
+  histStats() {
+    const rows = this.historyData();
+    const f = this.state.histFilter || "";
+    const sel = f ? rows.filter(r => r[7] === f) : rows;
+    const netR = sel.reduce((a, r) => a + r[8], 0);
+    const wins = sel.filter(r => r[8] > 0).length;
+    const hold = sel.length ? sel.reduce((a, r) => a + r[9], 0) / sel.length : 0;
+    return [
+      ["Recommendations", String(sel.length), "log mein total", "var(--ink)"],
+      ["Win %", sel.length ? (wins / sel.length * 100).toFixed(1) : "—", "net R positive", "var(--ink)"],
+      ["Net R", (netR >= 0 ? "+" : "") + netR.toFixed(2), "fees ke baad", netR >= 0 ? "var(--up)" : "var(--down)"],
+      ["Avg hold", Math.round(hold) + "m", "entry se exit tak", "var(--ink)"]
+    ].map(([k, v, sub, col], i) => React.createElement("div", {
+      key: k,
+      style: {
+        border: "1px solid var(--line)", borderRadius: 14, background: "var(--surf)",
+        padding: "16px 18px", animation: "fadeUp linear both",
+        animationTimeline: "view()", animationRange: "entry 2% cover " + (20 + i * 4) + "%"
+      }
+    },
+      this.lbl(k, { marginBottom: 10 }),
+      React.createElement("div", {
+        style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, letterSpacing: "-.025em", color: col }
+      }, v),
+      React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 } }, sub)
+    ));
+  }
+
+  histRows() {
+    const f = this.state.histFilter || "";
+    const rows = this.historyData().filter(r => !f || r[7] === f);
+    const badge = { TP: ["var(--up-bg)", "var(--up)", "Target"], SL: ["var(--down-bg)", "var(--down)", "Stop"], TIME: ["var(--surf-2)", "var(--ink-2)", "Time"] };
+    const head = React.createElement("div", {
+      key: "h",
+      style: {
+        display: "grid", gridTemplateColumns: "128px 74px 62px 46px repeat(3, minmax(72px, 1fr)) 88px 76px",
+        gap: 14, padding: "13px 22px", background: "var(--surf-2)", borderBottom: "1px solid var(--line)"
+      }
+    }, ["Issued", "Symbol", "Dir", "Strat", "Entry", "Stop", "Target", "Outcome", "Net R"]
+      .map((h, i) => React.createElement("span", {
+        key: h,
+        style: {
+          fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)",
+          fontWeight: 600, textAlign: i >= 4 ? "right" : "left", whiteSpace: "nowrap"
+        }
+      }, h)));
+
+    const body = rows.map((r, i) => {
+      const [ts, sym, dir, strat, entry, stop, target, out, netR] = r;
+      const d = sym === "BTCUSDT" ? 0 : 2;
+      const b = badge[out];
+      const cell = (v, col) => React.createElement("span", {
+        key: v + col,
+        style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 12.5, textAlign: "right", color: col || "var(--ink)" }
+      }, this.fmt(v, d));
+      return React.createElement("div", {
+        key: ts + sym,
+        style: {
+          display: "grid", gridTemplateColumns: "128px 74px 62px 46px repeat(3, minmax(72px, 1fr)) 88px 76px",
+          gap: 14, padding: "14px 22px", alignItems: "center",
+          borderTop: i ? "1px solid var(--line-soft)" : "0",
+          animation: "fadeUp linear both", animationTimeline: "view()",
+          animationRange: "entry 2% cover " + (18 + i * 4) + "%"
+        }
+      },
+        React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "var(--ink-3)" } }, ts),
+        React.createElement("span", { style: { fontSize: 13, fontWeight: 600 } }, sym.replace("USDT", "")),
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: ".08em",
+            padding: "3px 7px", borderRadius: 5, justifySelf: "start",
+            background: dir > 0 ? "var(--up-bg)" : "var(--down-bg)", color: dir > 0 ? "var(--up)" : "var(--down)"
+          }
+        }, dir > 0 ? "LONG" : "SHORT"),
+        React.createElement("span", { style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "var(--ink-3)" } }, strat),
+        cell(entry),
+        cell(stop, "var(--down)"),
+        cell(target, "var(--up)"),
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10.5, fontWeight: 600, letterSpacing: ".04em",
+            padding: "4px 9px", borderRadius: 999, background: b[0], color: b[1], justifySelf: "end"
+          }
+        }, b[2]),
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 13,
+            fontWeight: 650, textAlign: "right", color: netR >= 0 ? "var(--up)" : "var(--down)"
+          }
+        }, (netR >= 0 ? "+" : "") + netR.toFixed(2) + "R")
+      );
+    });
+    return [head].concat(body);
+  }
+
+  // --------------------------------------------------------------- paper ----
+  paperStats() {
+    return [
+      ["Equity", "$10,412.88", "start $10,000", "var(--ink)"],
+      ["Total R", "+12.81", "closed trades", "var(--up)"],
+      ["Win %", "46.3", "41 trades", "var(--ink)"],
+      ["Profit factor", "1.62", "gross win / gross loss", "var(--ink)"],
+      ["Max drawdown", "-3.40R", "peak se trough", "var(--down)"]
+    ].map(([k, v, sub, col], i) => React.createElement("div", {
+      key: k,
+      style: {
+        border: "1px solid var(--line)", borderRadius: 14, background: "var(--surf)", padding: "16px 18px",
+        animation: "riseIn linear both", animationTimeline: "view()",
+        animationRange: "entry 2% cover " + (20 + i * 4) + "%"
+      }
+    },
+      this.lbl(k, { marginBottom: 10 }),
+      React.createElement("div", {
+        style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 22, fontWeight: 600, letterSpacing: "-.025em", color: col }
+      }, v),
+      React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 } }, sub)
+    ));
+  }
+
+  equityCurve() {
+    const steps = [0, 3.02, 2.02, 4.96, 7.81, 8.25, 7.25, 10.36, 10.08, 11.4, 10.4, 12.81];
+    const W = 800, H = 150, max = Math.max.apply(null, steps), min = Math.min.apply(null, steps);
+    const y = v => H - 12 - ((v - min) / ((max - min) || 1)) * (H - 30);
+    const pts = steps.map((v, i) => [(i / (steps.length - 1)) * W, y(v)]);
+    const line = pts.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+    const area = "0," + H + " " + line + " " + W + "," + H;
+    return React.createElement("svg", {
+      viewBox: "0 0 " + W + " " + H, preserveAspectRatio: "none",
+      style: { width: "100%", height: 150, display: "block", overflow: "visible" }
+    },
+      React.createElement("polygon", { points: area, fill: "var(--up-bg)" }),
+      React.createElement("polyline", {
+        points: line, fill: "none", stroke: "var(--up)", strokeWidth: 2,
+        strokeLinejoin: "round", strokeLinecap: "round",
+        style: { strokeDasharray: 2400, animation: "dashdraw 1.6s cubic-bezier(.3,.8,.3,1) both", animationTimeline: "view()", animationRange: "entry 4% cover 46%" }
+      }),
+      pts.map((p, i) => React.createElement("circle", {
+        key: i, cx: p[0], cy: p[1], r: 2.6, fill: "var(--surf)", stroke: "var(--up)", strokeWidth: 1.6
+      }))
+    );
+  }
+
+  attributionRows() {
+    const p = this.perf();
+    const head = React.createElement("div", {
+      key: "h",
+      style: {
+        display: "grid", gridTemplateColumns: "minmax(150px, 1.6fr) repeat(5, minmax(64px, 1fr)) 108px",
+        gap: 14, padding: "13px 22px", background: "var(--surf-2)", borderBottom: "1px solid var(--line)"
+      }
+    }, ["Strategy", "Trades", "Win %", "Net R", "PF", "Max DD", "TP / SL / Time"]
+      .map((h, i) => React.createElement("span", {
+        key: h,
+        style: { fontSize: 10, letterSpacing: ".1em", textTransform: "uppercase", color: "var(--ink-3)", fontWeight: 600, textAlign: i ? "right" : "left", whiteSpace: "nowrap" }
+      }, h)));
+
+    const extra = { s1: [1.94, -1.2, "8 / 9 / 2"], s2: [1.42, -2.1, "6 / 7 / 1"], s3: [0.94, -3.4, "3 / 4 / 1"] };
+    const body = this.strategies().map((st, i) => {
+      const d = p[st.id], e = extra[st.id];
+      const netR = d.lv[0] * d.lv[2];
+      const num = (v, col) => React.createElement("span", {
+        key: String(v) + col,
+        style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 12.5, textAlign: "right", color: col || "var(--ink)" }
+      }, v);
+      return React.createElement("div", {
+        key: st.id,
+        style: {
+          display: "grid", gridTemplateColumns: "minmax(150px, 1.6fr) repeat(5, minmax(64px, 1fr)) 108px",
+          gap: 14, padding: "15px 22px", alignItems: "center", borderTop: i ? "1px solid var(--line-soft)" : "0",
+          animation: "fadeUp linear both", animationTimeline: "view()", animationRange: "entry 2% cover " + (20 + i * 5) + "%"
+        }
+      },
+        React.createElement("span", { style: { fontSize: 13.5, fontWeight: 600 } }, st.code + " · " + st.name),
+        num(String(d.lv[0])),
+        num(d.lv[1].toFixed(1)),
+        num((netR >= 0 ? "+" : "") + netR.toFixed(2), netR >= 0 ? "var(--up)" : "var(--down)"),
+        num(e[0].toFixed(2)),
+        num(e[1].toFixed(2), "var(--down)"),
+        React.createElement("span", {
+          style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 12, color: "var(--ink-3)", textAlign: "right" }
+        }, e[2])
+      );
+    });
+    return [head].concat(body);
+  }
+
+  // -------------------------------------------------------------- journal ---
+  journalCards() {
+    return [
+      { t: "Sweep pe patience rakhi", sym: "ETH", dir: 1, entry: 3771.4, exit: 3902.6, r: "+3.02R", conf: 8,
+        wrong: "Pehli 1m candle pe hi enter karne ka mann tha — reclaim confirm hone se pehle.",
+        learn: "Reclaim candle ka wait karne se stop 12 points chhota hua, R 2.4 se 3.0 ho gaya.",
+        tags: ["patient", "sweep", "eth"] },
+      { t: "Fake-break jaldi le liya", sym: "BTC", dir: -1, entry: 119180, exit: 120340, r: "-1.00R", conf: 5,
+        wrong: "Wick dekhte hi short mar diya, candle close hone ka wait nahi kiya.",
+        learn: "S3 ki definition hi 'close back inside' hai. Definition se bahar gaya to wo strategy hi nahi hai.",
+        tags: ["rushed", "trendline", "btc"] },
+      { t: "Time exit ne bacha liya", sym: "ETH", dir: -1, entry: 3688.0, exit: 3672.4, r: "+0.44R", conf: 6,
+        wrong: "Target ke bahut kareeb aakar ruk gaya, main aur ruka raha.",
+        learn: "Range mein aate hi partial le lo — 4 ghante baad wo trade sirf funding kha rahi thi.",
+        tags: ["time-exit", "range", "eth"] }
+    ].map((j, i) => React.createElement("div", {
+      key: j.t,
+      style: {
+        border: "1px solid var(--line)", borderRadius: 18, background: "var(--surf)", overflow: "hidden",
+        boxShadow: "0 1px 3px rgba(0,0,0,.24)", animation: "riseIn linear both",
+        animationTimeline: "view()", animationRange: "entry 2% cover " + (24 + i * 5) + "%"
+      }
+    },
+      React.createElement("div", { style: { display: "flex", alignItems: "center", gap: 10, padding: "18px 20px 14px" } },
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 10, fontWeight: 700, letterSpacing: ".08em",
+            padding: "3px 7px", borderRadius: 5,
+            background: j.dir > 0 ? "var(--up-bg)" : "var(--down-bg)", color: j.dir > 0 ? "var(--up)" : "var(--down)"
+          }
+        }, j.dir > 0 ? "LONG" : "SHORT"),
+        React.createElement("span", { style: { fontWeight: 700, fontSize: 15 } }, j.sym),
+        React.createElement("div", { style: { flex: 1 } }),
+        React.createElement("span", {
+          style: {
+            fontFamily: "'JetBrains Mono', monospace", fontSize: 13, fontWeight: 650,
+            color: j.r.startsWith("-") ? "var(--down)" : "var(--up)"
+          }
+        }, j.r)
+      ),
+      React.createElement("div", { style: { padding: "0 20px 16px", fontSize: 15, fontWeight: 650, letterSpacing: "-.015em" } }, j.t),
+      React.createElement("div", {
+        style: { display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 1, background: "var(--line-soft)", borderTop: "1px solid var(--line-soft)", borderBottom: "1px solid var(--line-soft)" }
+      },
+        [["Entry", this.fmt(j.entry, j.sym === "BTC" ? 0 : 2)],
+         ["Exit", this.fmt(j.exit, j.sym === "BTC" ? 0 : 2)],
+         ["Confidence", j.conf + " / 10"]
+        ].map(([k, v]) => React.createElement("div", { key: k, style: { background: "var(--surf)", padding: "12px 16px" } },
+          this.lbl(k, { marginBottom: 6 }),
+          React.createElement("div", { style: { fontFamily: "'JetBrains Mono', monospace", fontVariantNumeric: "tabular-nums", fontSize: 14 } }, v)
+        ))
+      ),
+      React.createElement("div", { style: { padding: "16px 20px 4px" } },
+        this.lbl("Kya galat kiya", { marginBottom: 6 }),
+        React.createElement("div", { style: { fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55 } }, j.wrong)
+      ),
+      React.createElement("div", { style: { padding: "14px 20px 4px" } },
+        this.lbl("Kya seekha", { marginBottom: 6 }),
+        React.createElement("div", { style: { fontSize: 13, color: "var(--ink-2)", lineHeight: 1.55 } }, j.learn)
+      ),
+      React.createElement("div", { style: { display: "flex", flexWrap: "wrap", gap: 7, padding: "16px 20px 20px" } },
+        j.tags.map(t => React.createElement("span", {
+          key: t,
+          style: {
+            fontSize: 11.5, padding: "3px 10px", borderRadius: 999, background: "var(--surf-2)",
+            border: "1px solid var(--line)", color: "var(--ink-3)"
+          }
+        }, t))
+      )
+    ));
+  }
+
+  // ------------------------------------------------------------- settings ---
+  alertPrefs() {
+    return [
+      ["Naya rank-1 setup", "jaise hi engine koi setup qualify kare", true],
+      ["Entry fill ho gaya", "level toot gaya aur trade live hai", true],
+      ["Stop ya target hit", "trade band — outcome log karna hai", true],
+      ["Feed 60s se stale", "chup-chaap staleness sabse kharaab state hai", false]
+    ].map(([t, sub, on], i) => React.createElement("label", {
+      key: t,
+      style: {
+        display: "flex", alignItems: "center", gap: 16, padding: "16px 0",
+        borderBottom: i < 3 ? "1px solid var(--line-soft)" : "0", cursor: "pointer"
+      }
+    },
+      React.createElement("span", { style: { flex: 1, minWidth: 0 } },
+        React.createElement("span", { style: { display: "block", fontSize: 13.5, fontWeight: 550 } }, t),
+        React.createElement("span", { style: { display: "block", fontSize: 11.5, color: "var(--ink-3)", marginTop: 2, lineHeight: 1.5 } }, sub)
+      ),
+      React.createElement("span", {
+        style: {
+          width: 34, height: 18, borderRadius: 999, flex: "none", position: "relative",
+          background: on ? "var(--accent-glow)" : "var(--surf-2)",
+          border: "1px solid " + (on ? "var(--accent)" : "var(--line)")
+        }
+      }, React.createElement("span", {
+        style: {
+          position: "absolute", top: 2, left: on ? 18 : 2, width: 12, height: 12, borderRadius: "50%",
+          background: on ? "var(--accent)" : "var(--ink-3)", transition: "200ms"
+        }
+      }))
+    ));
+  }
+
+  aboutCells() {
+    return [
+      ["Version", "v1.0.0-foundation", "P0 spine complete"],
+      ["Phase", "P1 · Structure", "trendlines next"],
+      ["Database", "PostgreSQL 16", "partitioned, append-only"],
+      ["Feed uptime", "99.94%", "pichhle 30 din"]
+    ].map(([k, v, sub], i) => React.createElement("div", {
+      key: k,
+      style: {
+        border: "1px solid var(--line)", borderRadius: 14, background: "var(--surf)", padding: "16px 18px",
+        animation: "fadeUp linear both", animationTimeline: "view()", animationRange: "entry 2% cover " + (20 + i * 4) + "%"
+      }
+    },
+      this.lbl(k, { marginBottom: 10 }),
+      React.createElement("div", { style: { fontFamily: "'JetBrains Mono', monospace", fontSize: 15, fontWeight: 600 } }, v),
+      React.createElement("div", { style: { fontSize: 11.5, color: "var(--ink-3)", marginTop: 4 } }, sub)
+    ));
+  }
+
+  // ------------------------------------------------------------------ vals --
+  renderVals() {
+    const s = this.cur(), d = this.dec();
+    const c = this.state.candles || [];
+    const last = c.length ? c[c.length - 1] : null;
+    return {
+      clock: this.state.clock,
+      feedLabel: this.state.live ? "live feed" : "simulated feed",
+      feedColor: this.state.live ? "var(--up)" : "var(--accent)",
+      streamLabel: (this.state.live ? "live" : "sim") + " · " + this.state.tf + " · " + this.state.sym,
+      symShort: this.state.sym.replace("USDT", ""),
+      stratId: this.stratId(),
+      dirLabel: s.dir > 0 ? "LONG" : "SHORT",
+      dirColor: s.dir > 0 ? "var(--up)" : "var(--down)",
+      dirBg: s.dir > 0 ? "var(--up-bg)" : "var(--down-bg)",
+      reason: s.reason,
+      invalidates: s.invalid,
+      validTill: new Date(Date.now() + 5.4e6).toLocaleString(undefined, { month: "short", day: "2-digit", hour: "2-digit", minute: "2-digit" }),
+      riskPct: this.state.riskPct,
+      riskLabel: this.state.riskPct.toFixed(1) + "%",
+      equityFmt: "$" + this.fmt(this.props.equity ?? 10000, 2),
+      legend: this.state.sym + " · " + this.state.tf + (last
+        ? "   O " + this.fmt(last.o, d) + "  H " + this.fmt(last.h, d) + "  L " + this.fmt(last.l, d) + "  C " + this.fmt(last.c, d)
+        : ""),
+      setRisk: e => this.setState({ riskPct: Number(e.target.value) }),
+      toggleTheme: () => {
+        const t = document.documentElement.dataset.theme === "light" ? "dark" : "light";
+        document.documentElement.dataset.theme = t;
+        this.setState({ theme: t });
+      },
+      tickers: this.tickers(),
+      heroCandles: this.heroCandles(),
+      liveChart: this.liveChart(),
+      ladder: this.ladder(),
+      priceCells: this.priceCells(),
+      pips: this.pips(),
+      symbolTabs: this.symbolTabs(),
+      tfTabs: this.tfTabs(),
+      strategyTabs: this.strategyTabs(),
+      sizingCells: this.sizingCells(),
+      pipelineStages: this.pipelineStages(),
+      gates: this.gates(),
+      queueRows: this.queueRows(),
+      evidenceCells: this.evidenceCells(),
+      strategyCards: this.strategyCards(),
+      rejectedRows: this.rejectedRows(),
+      histTabs: this.histTabs(),
+      histStats: this.histStats(),
+      histRows: this.histRows(),
+      paperStats: this.paperStats(),
+      equityCurve: this.equityCurve(),
+      attributionRows: this.attributionRows(),
+      journalCards: this.journalCards(),
+      alertPrefs: this.alertPrefs(),
+      aboutCells: this.aboutCells()
+    };
+  }
+}
+</script>
+</body>
+</html>

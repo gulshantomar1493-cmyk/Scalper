@@ -3,10 +3,14 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>MarketScalper V4</title>
-<link rel="stylesheet" href="styles.css">
+<title>MarketScalper</title>
+<link rel="icon" href="icon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="brand/icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
-<link rel="icon" href="icon.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
 <script>
   /* pre-paint: no flash of the wrong theme */
   try {
@@ -22,9 +26,19 @@
 <!-- Shown until a token is held, and again if one ever stops being accepted. -->
 <div class="gate" id="gate" hidden>
   <form class="gate-card" id="gate-form">
-    <div class="gate-brand">M</div>
+    <span class="gate-brand" aria-hidden="true">
+      <svg viewBox="0 0 32 32"><mask id="gateCut">
+          <rect width="32" height="32" fill="#fff"></rect>
+          <rect x="1" y="14.6" width="30" height="2.6" rx="1.3" fill="#000" transform="rotate(-38 16 16)"></rect>
+        </mask>
+        <g fill="#fff" mask="url(#gateCut)">
+          <rect x="7.6" y="8" width="3.6" height="16" rx="1.8" opacity=".72"></rect>
+          <rect x="14.2" y="7.5" width="3.6" height="16.5" rx="1.8"></rect>
+          <rect x="20.8" y="8" width="3.6" height="16" rx="1.8" opacity=".72"></rect>
+        </g></svg>
+    </span>
     <h1>MarketScalper</h1>
-    <p class="sub">Decision support only — this tool never places an order.</p>
+    <p class="sub">Sirf decision support — ye tool kabhi order place nahi karta.</p>
     <label>Username<input class="inp" id="gate-user" autocomplete="username" required></label>
     <label>Password<input class="inp" id="gate-pass" type="password"
                           autocomplete="current-password" required></label>
@@ -33,294 +47,251 @@
   </form>
 </div>
 
-<!-- ========================== LEFT RAIL ========================== -->
-<nav class="rail">
-  <div class="brand">
-    <i>M</i>
-    <div><b>MarketScalper</b><span>Decision support</span></div>
-  </div>
+<div class="shell">
 
-  <div class="rail-group">Trade</div>
-  <button class="nav-btn active" data-go="today">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg>
-    <span>Today</span><span class="tip">Today</span>
-  </button>
-  <button class="nav-btn" data-go="chart">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>
-    <span>Chart</span><span class="tip">Chart</span>
-  </button>
+<!-- ============================= RAIL ============================= -->
+<nav class="rail" aria-label="Sections">
+  <a class="logo" href="#hero" title="MarketScalper" aria-label="MarketScalper">
+    <svg viewBox="0 0 32 32" aria-hidden="true">
+      <mask id="msCut">
+        <rect width="32" height="32" fill="#fff"></rect>
+        <rect x="1" y="14.6" width="30" height="2.6" rx="1.3" fill="#000" transform="rotate(-38 16 16)"></rect>
+      </mask>
+      <g fill="#ffffff" mask="url(#msCut)">
+        <rect class="bar a" x="7.6" y="8" width="3.6" height="16" rx="1.8" opacity=".72"></rect>
+        <rect class="bar b" x="14.2" y="7.5" width="3.6" height="16.5" rx="1.8"></rect>
+        <rect class="bar c" x="20.8" y="8" width="3.6" height="16" rx="1.8" opacity=".72"></rect>
+      </g>
+    </svg>
+    <span class="blade" aria-hidden="true"><i></i></span>
+  </a>
 
-  <div class="rail-group">Evidence</div>
-  <button class="nav-btn" data-go="strategies">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="10" rx="1"/></svg>
-    <span>Strategies</span><span class="tip">Strategies</span>
-  </button>
-  <button class="nav-btn" data-go="history">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-    <span>History</span><span class="tip">History</span>
-  </button>
-
-  <div class="rail-group">Yours</div>
-  <button class="nav-btn" data-go="paper">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>
-    <span>Paper</span><span class="tip">Paper</span>
-  </button>
-  <button class="nav-btn" data-go="journal">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 3h11l3 3v15H5z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg>
-    <span>Journal</span><span class="tip">Journal</span>
-  </button>
-
-  <button class="nav-btn" data-go="settings">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1A1.7 1.7 0 0 0 8.9 19a1.7 1.7 0 0 0-1.9.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1A1.7 1.7 0 0 0 4.6 8.4a1.7 1.7 0 0 0-.3-1.9l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.9.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.9V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/></svg>
-    <span>Settings</span><span class="tip">Settings</span>
-  </button>
+  <a class="rail-btn" href="#hero" title="Overview" data-anchor="hero">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M13 2 3 14h8l-1 8 10-12h-8l1-8z"/></svg></a>
+  <a class="rail-btn" href="#setup" title="Setup" data-anchor="setup">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 12h4l3-7 3 14 3-7h3"/></svg></a>
+  <a class="rail-btn" href="#chart" title="Chart" data-anchor="chart">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg></a>
+  <a class="rail-btn" href="#pipeline" title="Pipeline" data-anchor="pipeline">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="6" r="2"/><circle cx="12" cy="18" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3M14 6h1.5a2 2 0 0 1 2 2v2M14 18h1.5a2 2 0 0 0 2-2v-2M7 12l3-5M7 12l3 5"/></svg></a>
+  <a class="rail-btn" href="#queue" title="Queue" data-anchor="queue">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 6h16M4 12h16M4 18h10"/></svg></a>
+  <a class="rail-btn" href="#strategies" title="Strategies" data-anchor="strategies">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><rect x="3" y="4" width="7" height="16" rx="1"/><rect x="14" y="4" width="7" height="10" rx="1"/></svg></a>
+  <a class="rail-btn" href="#history" title="History" data-anchor="history">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg></a>
+  <a class="rail-btn" href="#paper" title="Paper" data-anchor="paper">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg></a>
+  <a class="rail-btn" href="#journal" title="Journal" data-anchor="journal">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 3h11l3 3v15H5z"/><path d="M9 8h6M9 12h6M9 16h4"/></svg></a>
+  <a class="rail-btn" href="#settings" title="Settings" data-anchor="settings">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="3"/><path d="M4.6 15a1.7 1.7 0 0 0-1.6-1 2 2 0 0 1 0-4 1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9 2 2 0 1 1 2.8-2.8 1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.6 2 2 0 0 1 4 0 1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3 2 2 0 1 1 2.8 2.8 1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1 2 2 0 0 1 0 4 1.7 1.7 0 0 0-1.6 1"/></svg></a>
+  <a class="rail-btn" href="#evidence" title="Evidence" data-anchor="evidence">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h9"/></svg></a>
 
   <div class="rail-sp"></div>
-  <button class="nav-btn theme-btn" id="theme" aria-label="Switch between light and dark theme">
+  <button class="rail-btn" id="theme" title="Theme" aria-label="Light ya dark theme">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3a9 9 0 1 0 9 9 7 7 0 0 1-9-9z"/></svg>
-    <span>Theme</span><span class="tip">Theme</span>
-  </button>
-  <button class="nav-btn" id="refresh">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 4v5h-5"/></svg>
-    <span>Refresh</span><span class="tip">Refresh</span>
   </button>
 </nav>
 
-<main class="pages">
-  <div class="banner" id="banner" role="alert" aria-live="assertive"><span id="banner-msg"></span><button class="x" id="banner-x" aria-label="Dismiss">&times;</button></div>
+<main id="scroller">
+  <div class="banner" id="banner" role="alert" aria-live="assertive">
+    <span id="banner-msg"></span>
+    <button class="x" id="banner-x" aria-label="Dismiss">&times;</button>
+  </div>
 
-  <!-- ============================ TODAY ============================ -->
-  <section class="page active" data-page="today">
-    <header class="topbar">
-      <h1>Today</h1>
-      <span class="sub" id="today-sub">—</span>
-      <div class="spacer"></div>
-      <div class="quotes" id="quotes"><span class="q-lbl">Last price</span></div>
-      <div class="seg" id="sym-filter">
-        <button class="on" data-sym="">All</button>
-        <button data-sym="ETHUSDT">ETH</button>
-        <button data-sym="BTCUSDT">BTC</button>
+  <!-- ============================= HERO ============================= -->
+  <section id="hero">
+    <div class="hero-grid" aria-hidden="true"></div>
+    <div class="hero-glow" aria-hidden="true"></div>
+    <div class="hero-candles" id="hero-candles" aria-hidden="true"></div>
+    <div class="hero-vig" aria-hidden="true"></div>
+
+    <div class="hero-pills">
+      <div class="pill" id="feed-pill"><span class="dot" id="feed-dot"></span><span id="feed-label">simulated feed</span></div>
+      <div class="pill muted" id="clock">—</div>
+    </div>
+
+    <div class="hero-body">
+      <div class="eyebrow"><span class="rule"></span>BTCUSDT · ETHUSDT · 1m primary / 5m context</div>
+      <h1>Signal feed nahi — deterministic setup engine.</h1>
+      <p>Har closed candle ek hi pipeline se guzarti hai, live ho ya replay — structure, trendline,
+         liquidity, smart-money aur volume engines, phir qualification gates, phir geometry.
+         Koi repaint nahi, koi confidence % nahi. Ek time pe ek ranked recommendation.</p>
+
+      <div class="tickers" id="tickers"></div>
+
+      <div class="hero-cta">
+        <a class="btn primary" href="#setup">Abhi ka recommendation
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M5 12h13M13 6l6 6-6 6"/></svg>
+        </a>
+        <a class="btn glass" href="#pipeline">Decide kaise karta hai</a>
       </div>
-    </header>
-    <div class="scroll">
-      <div class="note" id="confidence"></div>
-      <div class="stats" id="today-stats"></div>
-      <div id="active"></div>
-      <div id="setups"></div>
+    </div>
+
+    <div class="scroll-cue" aria-hidden="true">scroll karo
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 5v14M6 13l6 6 6-6"/></svg>
     </div>
   </section>
 
-  <!-- ============================ CHART ============================ -->
-  <section class="page" data-page="chart">
-    <header class="topbar">
-      <h1>Chart</h1>
-      <div class="spacer"></div>
-      <div class="seg" id="chart-sym">
-        <button class="on" data-sym="ETHUSDT">ETHUSDT</button>
-        <button data-sym="BTCUSDT">BTCUSDT</button>
+  <!-- ========================= 01 RECOMMENDATION ========================= -->
+  <section id="setup" class="band">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">01 · Recommendation</div>
+        <h2>Setup, poore scale pe</h2>
       </div>
-      <div class="seg" id="chart-tf">
-        <button data-tf="5m">5m</button>
-        <button data-tf="15m">15m</button>
-        <button data-tf="1h">1h</button>
-        <button class="on" data-tf="4h">4h</button>
-        <button data-tf="1d">1D</button>
+      <div class="sp"></div>
+      <div class="seg" id="sym-tabs"></div>
+    </div>
+
+    <div class="setup-grid">
+      <article class="setup-card" id="setup-card"></article>
+      <div class="setup-side">
+        <div class="panel reveal">
+          <div class="panel-h">Position sizing</div>
+          <div class="panel-b">
+            <label class="lbl" for="risk">Har trade ka risk · <span id="risk-label">0.5%</span></label>
+            <input type="range" id="risk" min="0.1" max="3" step="0.1" value="0.5">
+            <div class="sizing" id="sizing"></div>
+            <div class="equity-row"><span>paper equity</span><span id="equity-val">—</span></div>
+          </div>
+        </div>
+        <div class="panel reveal">
+          <div class="panel-h">Strategy</div>
+          <div class="strat-list" id="strat-list"></div>
+        </div>
       </div>
-      <button class="btn" id="toggle-levels">Levels</button>
-      <button class="btn" id="fs">⛶ Fullscreen</button>
-    </header>
-    <div class="chart-bar">
-      <span class="sub" style="color:var(--ink-3)">Levels drawn from the strategy catalogue · entry / stop / target shown for live setups</span>
-      <div class="spacer"></div>
-      <span class="sub" id="chart-status">—</span>
-    </div>
-    <div class="chart-wrap">
-      <div id="chart"></div>
-      <div class="legend" id="legend">—</div>
-      <div class="keys"><kbd>F</kbd><kbd>Esc</kbd><kbd>L levels</kbd><kbd>P panel</kbd></div>
-
-      <!-- live paper book, drawn over the chart -->
-      <aside class="pos-panel" id="pos-panel">
-        <div class="pp-h">
-          <span class="pp-t">Paper book</span>
-          <span class="dot live" id="pp-dot"></span>
-          <div style="flex:1"></div>
-          <span class="pp-eq num" id="pp-equity">—</span>
-        </div>
-        <div class="pp-total"><span class="k">Unrealised</span>
-          <span class="v" id="pp-upnl">—</span></div>
-        <div class="pp-body" id="pp-body"></div>
-        <div class="pp-f">
-          <span class="sub" id="pp-note">simulated only</span>
-          <div style="flex:1"></div>
-          <button class="btn" id="pp-toggle">Hide</button>
-        </div>
-      </aside>
-
-      <!-- one-click ticket for the setup currently shown -->
-      <aside class="ticket" id="ticket" hidden>
-        <div class="tk-h"><span id="tk-dir" class="dir long">LONG</span>
-          <span class="sym" id="tk-sym">—</span>
-          <div style="flex:1"></div>
-          <span class="strat-tag" id="tk-strat">—</span>
-          <button class="tk-x" id="tk-close" title="Dismiss">&times;</button></div>
-        <div class="tk-grid">
-          <div><span class="k">Entry</span><span class="v num" id="tk-entry">—</span></div>
-          <div><span class="k">Stop</span><span class="v num down" id="tk-stop">—</span></div>
-          <div><span class="k">Target</span><span class="v num up" id="tk-target">—</span></div>
-          <div><span class="k">Risk</span><span class="v num" id="tk-risk">—</span></div>
-          <div><span class="k">Qty</span><span class="v num" id="tk-qty">—</span></div>
-          <div><span class="k">Notional</span><span class="v num" id="tk-notional">—</span></div>
-        </div>
-        <div class="tk-f">
-          <label class="sub">Risk %
-            <input class="inp" id="tk-riskpct" type="number" value="0.5" min="0.1" max="5" step="0.1" style="width:64px">
-          </label>
-          <div style="flex:1"></div>
-          <button class="btn primary" id="tk-place">Place paper order</button>
-        </div>
-      </aside>
     </div>
   </section>
 
-  <!-- ========================== STRATEGIES ========================== -->
-  <section class="page" data-page="strategies">
-    <header class="topbar">
-      <h1>Strategies</h1>
-      <span class="sub">Backtest evidence vs live paper results — never merged</span>
-    </header>
-    <div class="scroll">
-      <div class="note" id="geometry"></div>
-      <div class="grid g-auto" id="strategy-cards"></div>
-      <div class="sec-t">Rejected by research — do not reintroduce</div>
-      <div class="tbl-wrap"><table><thead><tr><th>Idea</th><th>Why it was rejected</th></tr></thead>
-        <tbody id="rejected"></tbody></table></div>
+  <!-- ============================ 02 LEVELS ============================ -->
+  <section id="chart">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">02 · Levels</div>
+        <h2>Geometry kahan baithi hai</h2>
+      </div>
+      <div class="sp"></div>
+      <div class="seg" id="tf-tabs"></div>
+    </div>
+
+    <div class="chart-frame reveal">
+      <div id="chart-host"></div>
+      <div class="zone up" id="zone-up" aria-hidden="true"></div>
+      <div class="zone down" id="zone-down" aria-hidden="true"></div>
+      <div class="chart-legend" id="legend">—</div>
+      <div class="chart-keys">
+        <kbd>F fullscreen</kbd><kbd>L levels</kbd><kbd>R replay</kbd>
+      </div>
+      <div class="chart-stream"><span class="dot live"></span><span id="stream-label">—</span></div>
     </div>
   </section>
 
-  <!-- =========================== HISTORY =========================== -->
-  <section class="page" data-page="history">
-    <header class="topbar">
-      <h1>History</h1>
-      <div class="spacer"></div>
-      <select class="inp" id="hist-strategy"><option value="">All strategies</option></select>
-      <select class="inp" id="hist-status">
-        <option value="">All outcomes</option><option value="TP">Target hit</option>
-        <option value="SL">Stopped</option><option value="TIME">Time exit</option>
-      </select>
-      <button class="btn" id="hist-csv">Export CSV</button>
-    </header>
-    <div class="scroll">
-      <div class="stats" id="hist-stats"></div>
-      <div class="sec-t">Recommendations</div>
-      <div class="tbl-wrap"><table>
-        <thead><tr>
-          <th class="sortable" data-sort="decision_ts">Issued</th><th>Symbol</th>
-          <th>Dir</th><th>Strategy</th>
-          <th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th>
-          <th>Outcome</th><th class="num sortable" data-sort="net_r">Net R</th>
-          <th class="num sortable" data-sort="mae_r">MAE</th>
-          <th class="num sortable" data-sort="mfe_r">MFE</th>
-          <th class="num sortable" data-sort="hold_minutes">Hold</th>
-        </tr></thead>
-        <tbody id="hist-rows"></tbody>
-      </table></div>
+  <!-- =========================== 03 PIPELINE =========================== -->
+  <section id="pipeline" class="band">
+    <div class="reveal" style="margin-bottom:44px">
+      <div class="eyebrow-2">03 · Pipeline</div>
+      <h2 class="narrow">Tick se recommendation tak, ek hi raasta</h2>
+      <p class="lede">Live aur replay mein bilkul same code path — isi wajah se backtest ka
+        number yahan kuch matlab rakhta hai.</p>
     </div>
+    <div class="stages" id="stages"></div>
+    <div class="rules" id="rules"></div>
   </section>
 
-  <!-- ============================ PAPER ============================ -->
-  <section class="page" data-page="paper">
-    <header class="topbar">
-      <h1>Paper Trading</h1>
-      <span class="sub">Simulated only — no exchange connection, no real orders</span>
-    </header>
-    <div class="scroll">
-      <div class="stats" id="paper-stats"></div>
-      <div class="sec-t">Equity curve — cumulative R, closed trades</div>
-      <div class="curve-wrap"><svg class="curve equity" id="equity-curve"
-           viewBox="0 0 800 120" preserveAspectRatio="none"></svg></div>
-      <div class="sec-t">Per-strategy attribution</div>
-      <div class="tbl-wrap"><table>
-        <thead><tr><th>Strategy</th><th class="num">Trades</th><th class="num">Win %</th>
-          <th class="num">Net R</th><th class="num">Total R</th><th class="num">PF</th>
-          <th class="num">Max DD</th><th>TP / SL / Time</th></tr></thead>
-        <tbody id="paper-rows"></tbody>
-      </table></div>
+  <!-- ============================ 04 QUEUE ============================ -->
+  <section id="queue">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">04 · Queue</div>
+        <h2>Baaki live setups, already ranked</h2>
+      </div>
+      <div class="sp"></div>
+      <span class="note-mono">pehle filters pass, phir net R:R</span>
     </div>
+    <div id="live-trades"></div>
+    <div class="list" id="queue-rows"></div>
   </section>
 
-  <!-- =========================== JOURNAL =========================== -->
-  <section class="page" data-page="journal">
-    <header class="topbar">
-      <h1>Journal</h1>
-      <span class="sub">Your own record — independent of what the system recommended</span>
-      <div class="spacer"></div>
-      <input class="inp" id="jr-search" type="search" placeholder="Search notes, lessons…">
-      <select class="inp" id="jr-symbol">
-        <option value="">All symbols</option>
-        <option value="BTCUSDT">BTC</option><option value="ETHUSDT">ETH</option>
-      </select>
-      <select class="inp" id="jr-direction">
-        <option value="">Both</option><option value="LONG">Long</option><option value="SHORT">Short</option>
-      </select>
-      <button class="btn primary" id="jr-new">New entry</button>
-    </header>
-    <div class="scroll">
-      <form class="jr-form" id="jr-form" hidden>
-        <div class="jr-grid">
-          <label>Title<input class="inp" name="title" placeholder="What happened"></label>
-          <label>Symbol
-            <select class="inp" name="symbol">
-              <option value="">—</option><option>BTCUSDT</option><option>ETHUSDT</option>
-            </select></label>
-          <label>Direction
-            <select class="inp" name="direction">
-              <option value="">—</option><option>LONG</option><option>SHORT</option>
-            </select></label>
-          <label>Strategy<input class="inp" name="strategy" placeholder="eth_4h_core"></label>
-          <label>Entry<input class="inp" name="entry" type="number" step="any"></label>
-          <label>Exit<input class="inp" name="exit_px" type="number" step="any"></label>
-          <label>Stop<input class="inp" name="sl" type="number" step="any"></label>
-          <label>Target<input class="inp" name="tp" type="number" step="any"></label>
-          <label>Risk %<input class="inp" name="risk_pct" type="number" step="any"></label>
-          <label>Confidence 1–10<input class="inp" name="confidence" type="number" min="1" max="10" step="1"></label>
-          <label>Emotion<input class="inp" name="emotion" placeholder="calm / rushed / fearful"></label>
-          <label>Tags<input class="inp" name="tags" placeholder="breakout, patient"></label>
-        </div>
-        <div class="jr-grid wide">
-          <label>What I did wrong<textarea class="inp" name="mistakes" rows="2"></textarea></label>
-          <label>What I learned<textarea class="inp" name="lessons" rows="2"></textarea></label>
-          <label>Notes<textarea class="inp" name="notes" rows="2"></textarea></label>
-        </div>
-        <div class="jr-f">
-          <span class="sub" id="jr-status"></span>
-          <div class="spacer"></div>
-          <button class="btn" type="button" id="jr-cancel">Cancel</button>
-          <button class="btn primary" type="submit" id="jr-save">Save entry</button>
-        </div>
-      </form>
-      <div class="sec-t">Entries</div>
-      <div class="grid g-auto" id="jr-list"></div>
+  <!-- ========================== 05 STRATEGIES ========================== -->
+  <section id="strategies" class="band">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">05 · Strategies</div>
+        <h2>Har strategy ka apna evidence</h2>
+      </div>
+      <div class="sp"></div>
+      <span class="note-mono wrap">backtest evidence aur live paper — kabhi merge nahi hote</span>
     </div>
+    <div class="strat-cards" id="strat-cards"></div>
+
+    <div class="sub-head">Research ne reject kiya — dobara mat laao</div>
+    <div class="list" id="rejected"></div>
   </section>
 
-  <!-- =========================== SETTINGS =========================== -->
-  <section class="page" data-page="settings">
-    <header class="topbar">
-      <h1>Settings</h1>
-      <span class="sub">Alerts reach you when the app is closed — Telegram is the backend channel</span>
-    </header>
-    <div class="scroll">
-      <div class="sec-t">Telegram</div>
-      <div class="card">
-        <div class="card-b">
-          <p class="sub" style="margin-top:0">
-            Create a bot with <b>@BotFather</b>, send it any message, then paste its token here.
-            The chat is detected automatically. The token is stored on the server only —
-            never in the database, never in a backup.
-          </p>
+  <!-- =========================== 06 HISTORY =========================== -->
+  <section id="history">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">06 · History</div>
+        <h2>Har recommendation ka record</h2>
+      </div>
+      <div class="sp"></div>
+      <div class="seg" id="hist-tabs"></div>
+    </div>
+    <div class="stat-row" id="hist-stats"></div>
+    <div class="list" id="hist-rows"></div>
+  </section>
+
+  <!-- ============================ 07 PAPER ============================ -->
+  <section id="paper" class="band">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">07 · Paper</div>
+        <h2>Paper book — sirf simulated</h2>
+      </div>
+      <div class="sp"></div>
+      <span class="note-mono wrap">koi exchange connection nahi, koi real order nahi</span>
+    </div>
+    <div class="stat-row" id="paper-stats"></div>
+    <div class="sub-head">Equity curve · cumulative R, closed trades</div>
+    <div class="curve-wrap"><svg id="equity-curve" viewBox="0 0 800 150"
+         preserveAspectRatio="none" class="curve"></svg></div>
+    <div class="sub-head">Per-strategy attribution</div>
+    <div class="list" id="attribution"></div>
+  </section>
+
+  <!-- =========================== 08 JOURNAL =========================== -->
+  <section id="journal">
+    <div class="sec-head reveal">
+      <div>
+        <div class="eyebrow-2">08 · Journal</div>
+        <h2>Aapka apna record</h2>
+      </div>
+      <div class="sp"></div>
+      <span class="note-mono wrap">engine ne kya kaha usse alag — jo aapne kiya wo</span>
+    </div>
+    <div class="journal-grid" id="journal-cards"></div>
+  </section>
+
+  <!-- =========================== 09 SETTINGS =========================== -->
+  <section id="settings" class="band">
+    <div class="reveal" style="margin-bottom:34px">
+      <div class="eyebrow-2">09 · Settings</div>
+      <h2 class="narrow">Alert tab bhi aaye jab app band ho</h2>
+    </div>
+
+    <div class="settings-grid">
+      <div class="panel reveal">
+        <div class="panel-h">Telegram</div>
+        <div class="panel-b">
+          <p class="explain">@BotFather se bot banao, use koi bhi message bhejo, phir token yahan
+            paste kar do. Chat khud detect ho jaata hai. Token sirf server pe rehta hai —
+            database mein nahi, backup mein nahi.</p>
           <div class="row-form">
-            <input class="inp" id="tg-token" placeholder="123456:ABC-DEF..." autocomplete="off">
+            <input class="inp mono" id="tg-token" placeholder="123456:ABC-DEF…" autocomplete="off">
             <button class="btn primary" id="tg-verify">Verify &amp; connect</button>
           </div>
           <div class="gate-err" id="tg-err" role="alert" hidden></div>
@@ -328,22 +299,35 @@
         </div>
       </div>
 
-      <div class="sec-t">When to alert me</div>
-      <div class="card">
-        <div class="card-b" id="alert-prefs"></div>
+      <div class="panel reveal">
+        <div class="panel-h">Alert kab bheje</div>
+        <div class="panel-b tight" id="alert-prefs"></div>
       </div>
-
-      <div class="sec-t">Channels</div>
-      <div class="card">
-        <div class="card-b" id="channel-prefs"></div>
-      </div>
-
-      <div class="sec-t">This install</div>
-      <div class="card"><div class="card-b" id="about-box"></div></div>
     </div>
+
+    <div class="sub-head">Ye install</div>
+    <div class="stat-row" id="about-cells"></div>
+  </section>
+
+  <!-- =========================== 10 EVIDENCE =========================== -->
+  <section id="evidence" class="band last">
+    <div class="reveal" style="margin-bottom:40px">
+      <div class="eyebrow-2">10 · Evidence</div>
+      <h2 class="narrow">Gate pass hone tak kuch bhi TRUSTED nahi</h2>
+    </div>
+    <div class="stat-row" id="evidence-cells"></div>
+
+    <footer>
+      <span class="note-mono">MarketScalper · v1.0.0-foundation</span>
+      <span class="sp"></span>
+      <span class="fine">Sirf decision support. MarketScalper kabhi order place, modify ya close
+        nahi karta — har recommendation aap khud manually execute karte ho aur outcome khud log
+        karte ho. Yahan ke figures simulated paper results hain, realised P&amp;L nahi.</span>
+    </footer>
   </section>
 
 </main>
+</div>
 
 <script src="lightweight-charts.standalone.production.js"></script>
 <script src="app.js"></script>

@@ -62,9 +62,12 @@ def test_app_js_is_valid_javascript():
 # ---------------------------------------------------------------- safety ---
 
 def test_server_data_never_reaches_an_innerhtml_sink():
-    """Everything from the backend is written with textContent. innerHTML
-    with a server string is the one XSS route this app could have."""
-    assert "innerHTML" not in _read(APP)
+    """Everything from the backend is written with textContent. Assigning
+    innerHTML is the one XSS route this app could have — the phrase may still
+    appear in a comment, so look for the sink itself."""
+    src = _read(APP)
+    assert not re.search(r"\.innerHTML\s*=", src)
+    assert "insertAdjacentHTML" not in src and "document.write" not in src
 
 
 def test_the_api_token_rides_the_authorization_header():
@@ -85,19 +88,19 @@ def test_the_alert_settings_are_reachable_from_the_ui():
     """Telegram is the only channel that works with the app closed, so it must
     be configurable without editing a file on the server."""
     html, src = _read(HTML), _read(APP)
-    assert 'data-page="settings"' in html and 'id="tg-token"' in html
+    assert '<section id="settings"' in html and 'id="tg-token"' in html
     assert "/settings/telegram/verify" in src
     assert "/settings/alerts" in src
     assert "proximity_pct" in src
 
 
-def test_today_separates_waiting_setups_from_running_trades():
-    """A filled setup needs managing; a pending one needs deciding. Mixing
-    them into one list is what made the old screen unreadable."""
+def test_running_trades_are_separated_from_waiting_setups():
+    """A filled setup needs managing; a pending one needs deciding. The queue
+    lists what is still waiting, above it what is already live."""
     html, src = _read(HTML), _read(APP)
-    assert 'id="active"' in html and 'id="setups"' in html
-    assert "status=FILLED" in src            # active = the entry actually filled
-    assert "Active trades" in src and "Trade setups" in src
+    assert 'id="live-trades"' in html and 'id="queue-rows"' in html
+    assert "status=FILLED" in src            # live = the entry actually filled
+    assert "Abhi live trades" in src
 
 
 def test_an_unauthenticated_visitor_gets_a_login_screen():
@@ -124,15 +127,59 @@ def test_the_password_is_never_persisted():
     assert "password=" not in src
 
 
+def test_a_stale_surface_labels_itself_instead_of_looking_live():
+    """The banner alone is not enough — the feed pill and the ticker source
+    line must both say SIMULATED, because that is what the eye lands on."""
+    html, src = _read(HTML), _read(APP)
+    assert 'id="feed-label"' in html and 'id="feed-pill"' in html
+    assert "simulated feed" in src and "SIMULATED" in src
+    assert "setLive(false)" in src          # every failed fetch flips it
+
+
+def test_motion_is_wrapped_for_reduced_motion():
+    css = _read(CSS)
+    assert "@media (prefers-reduced-motion: reduce)" in css
+    block = css[css.index("@media (prefers-reduced-motion: reduce)"):]
+    assert "animation-duration: .001s" in block
+
+
+def test_scroll_reveals_have_a_fallback_when_the_timeline_is_unsupported():
+    """Without animation-timeline the sections would stay at opacity 0 —
+    an entirely blank page on every browser that lacks it."""
+    css, src = _read(CSS), _read(APP)
+    assert "@supports not (animation-timeline: view())" in css
+    assert "IntersectionObserver" in src
+
+
+def test_the_price_row_never_uses_a_fixed_four_column_grid():
+    """Mono digits set a large min-content; repeat(4, 1fr) overflows."""
+    css = _read(CSS)
+    block = css[css.index(".price-cells"):css.index(".pcell")]
+    assert "auto-fit" in block and "repeat(4, 1fr)" not in block
+
+
 # ------------------------------------------------------------- structure ---
 
-def test_every_screen_exists_and_has_a_nav_button():
+SECTIONS = ["hero", "setup", "chart", "pipeline", "queue", "strategies",
+            "history", "paper", "journal", "settings", "evidence"]
+
+
+def test_every_section_exists_in_order_and_has_a_rail_anchor():
+    """The shell is one scrolling surface: eleven sections, each reachable
+    from the rail. A rail link with no section scrolls nowhere."""
     html = _read(HTML)
-    pages = set(re.findall(r'data-page="([a-z]+)"', html))
-    navs = set(re.findall(r'data-go="([a-z]+)"', html))
-    assert pages == {"today", "chart", "strategies", "history", "paper",
-                     "journal", "settings"}
-    assert navs == pages, f"nav/page mismatch: {navs ^ pages}"
+    order = re.findall(r'<section id="([a-z]+)"', html)
+    assert order == SECTIONS, f"section order is {order}"
+    anchors = re.findall(r'data-anchor="([a-z]+)"', html)
+    assert anchors == SECTIONS, f"rail anchors are {anchors}"
+    for name in SECTIONS:
+        assert f'href="#{name}"' in html, f"no rail link to #{name}"
+
+
+def test_the_scroll_container_is_main_not_the_document():
+    """Section anchors and scroll-linked reveals both key off <main>."""
+    css = _read(CSS)
+    assert "main { overflow-y: auto" in css and "scroll-behavior: smooth" in css
 
 
 def test_every_element_app_js_looks_up_exists_in_the_html():
@@ -177,10 +224,11 @@ def test_the_theme_is_applied_before_first_paint():
 
 
 def test_the_chart_reads_its_colours_from_the_token_layer():
-    """The chart library cannot read CSS variables, so app.js hands them
-    over. A hardcoded hex would not follow the theme."""
+    """The chart library cannot read CSS variables, so app.js hands them over
+    with tok(). A hardcoded hex would not follow the theme."""
     src = _read(APP)
-    assert "--chart-bg" in src and "--chart-text" in src
+    for token in ("--chart-text", "--chart-grid", "--chart-border", "--up", "--down"):
+        assert 'tok("' + token + '")' in src, token
     assert not re.search(r'"#[0-9a-fA-F]{6}"', src), "hardcoded colour in app.js"
 
 

@@ -1,8 +1,12 @@
 /* ============================================================================
-   MarketScalper V4 — application logic
+   MarketScalper — application logic
    ----------------------------------------------------------------------------
-   This file owns ALL network access. Rendering helpers below are pure DOM
-   builders and always write server strings with textContent.
+   This file owns ALL network access. Render helpers below are pure DOM builders
+   and write every server string with textContent (never innerHTML).
+
+   Staleness rule: when a fetch fails we keep the last good values, flip the feed
+   pill to "simulated feed" / SIMULATED and raise the red banner. A trading
+   surface must never look live while it is stale.
    ========================================================================== */
 (function () {
   "use strict";
@@ -15,9 +19,11 @@
   if (qs.get("token")) localStorage.setItem("ms_token", qs.get("token"));
 
   var state = {
-    page: "today", symFilter: "", chartSym: "ETHUSDT", chartTf: "4h",
-    showLevels: true, setups: [], catalogue: null, chart: null, series: null,
-    lines: [], perf: null
+    sym: "ETHUSDT", pick: null, tf: "4h", riskPct: 0.5,
+    setups: [], catalogue: null, perf: null, history: [], paper: null,
+    settings: null, quotes: {}, prev: {}, dayOpen: {}, live: false,
+    histFilter: "", chart: null, series: null, lines: [], equity: 10000, active: [],
+    heroCandles: []
   };
 
   var failures = 0;
@@ -26,6 +32,13 @@
     if (msg) { $("banner-msg").textContent = msg; b.classList.add("on"); }
     else b.classList.remove("on");
   }
+  function setLive(on) {
+    state.live = on;
+    var dot = $("feed-dot"), lab = $("feed-label");
+    if (lab) lab.textContent = on ? "live feed" : "simulated feed";
+    if (dot) dot.className = "dot" + (on ? " live" : "");
+  }
+
   function api(path, opts) {
     var init = opts || {};
     init.headers = TOKEN ? { Authorization: "Bearer " + TOKEN } : {};
@@ -37,15 +50,16 @@
         return r.json();
       })
       .catch(function (e) {
-        // A trading tool must never look live while it is actually stale.
         failures++;
-        banner("Backend unreachable — figures on screen may be stale. (" +
+        setLive(false); renderTickers();
+        banner("Backend reachable nahi hai — screen pe jo hai wo purana ho sakta hai. (" +
                String(e.message || e) + ")");
         throw e;
       });
   }
-  /* The single write path. Surfaces the server's own error text, which for
-     the paper endpoints is the actionable part ("insufficient margin"). */
+
+  /* The single write path. Surfaces the server's own error text, which is the
+     actionable part ("invalid bot token"). */
   function post(path, body, method) {
     var h = { "Content-Type": "application/json" };
     if (TOKEN) h.Authorization = "Bearer " + TOKEN;
@@ -56,11 +70,9 @@
         if (r.ok) return r.json();
         return r.text().then(function (t) { throw new Error(t || r.status); });
       })
-      .catch(function (e) {
-        banner("Could not save — " + String(e.message || e));
-        throw e;
-      });
+      .catch(function (e) { banner("Save nahi hua — " + String(e.message || e)); throw e; });
   }
+
   var $ = function (id) { return document.getElementById(id); };
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -68,52 +80,87 @@
     if (text !== undefined && text !== null) e.textContent = text;
     return e;
   }
+  function clear(node) { while (node && node.firstChild) node.removeChild(node.firstChild); }
+  function tok(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
   function fmt(n, d) {
     if (n === null || n === undefined || isNaN(n)) return "—";
-    return Number(n).toLocaleString(undefined, { minimumFractionDigits: d === undefined ? 2 : d,
-                                                 maximumFractionDigits: d === undefined ? 2 : d });
+    var dd = d === undefined ? 2 : d;
+    return Number(n).toLocaleString("en-US", { minimumFractionDigits: dd, maximumFractionDigits: dd });
   }
   function sign(n, d) { return (n > 0 ? "+" : "") + fmt(n, d); }
+  function dec(sym) { return sym === "BTCUSDT" ? 0 : 2; }
   function when(ts) {
     if (!ts) return "—";
-    var dt = new Date(ts * 1000);
+    var dt = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
+    if (isNaN(dt.getTime())) return "—";
     return dt.toLocaleString(undefined, { month: "short", day: "2-digit",
                                           hour: "2-digit", minute: "2-digit" });
   }
+  function labelled(text) { return el("span", "lbl", text); }
+
+  /* Odometer: each digit is a 0-9 column moved by transform. The columns stay
+     mounted between ticks or the slide is lost. */
+  function odo(text, size, color) {
+    var wrap = el("span", "odo");
+    wrap.style.fontSize = size + "px";
+    if (color) wrap.style.color = color;
+    /* Every digit is a 0-9 column, so the columns would read as
+       "0123456789012..." to a screen reader and to copy-paste. Carry the true
+       value in an accessible span and hide the mechanism. */
+    wrap.setAttribute("role", "text");
+    wrap.setAttribute("aria-label", String(text));
+    wrap.appendChild(el("span", "odo-true", String(text)));
+    String(text).split("").forEach(function (ch) {
+      if (!/[0-9]/.test(ch)) {
+        var sep = el("span", "sep" + (ch === "," ? " comma" : ""), ch);
+        sep.setAttribute("aria-hidden", "true");
+        wrap.appendChild(sep);
+        return;
+      }
+      var win = el("span", "win");
+      win.setAttribute("aria-hidden", "true");
+      win.style.height = (size * 1.1) + "px";
+      win.style.width = (size * 0.6) + "px";
+      var col = el("span", "col");
+      col.style.transform = "translateY(" + (-Number(ch) * 10) + "%)";
+      "0123456789".split("").forEach(function (d) {
+        var s = el("span", null, d);
+        s.style.height = (size * 1.1) + "px";
+        col.appendChild(s);
+      });
+      win.appendChild(col);
+      wrap.appendChild(win);
+    });
+    return wrap;
+  }
 
   // ------------------------------------------------------------------ login --
-  /* The API gate is the Bearer token (D3). This screen only exchanges the
-     owner's credentials for it via POST /login; no session, no cookie. If the
-     token is ever rejected we come straight back here rather than leaving a
-     dead terminal on screen. */
   function showGate(message) {
     var g = $("gate"); if (!g) return;
     g.hidden = false;
     var err = $("gate-err");
-    if (message) { err.textContent = message; err.hidden = false; }
-    else err.hidden = true;
+    if (message) { err.textContent = message; err.hidden = false; } else err.hidden = true;
     $("gate-user").focus();
   }
-
   function signOut() {
     TOKEN = "";
     try { localStorage.removeItem("ms_token"); } catch (e) {}
     banner(null);
-    showGate("Your session is no longer valid. Please sign in again.");
+    showGate("Session ab valid nahi hai. Dobara sign in karo.");
   }
-
   $("gate-form").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var btn = $("gate-go");
     btn.disabled = true; btn.textContent = "Signing in…";
     fetch(HTTP + "/login", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ username: $("gate-user").value,
-                             password: $("gate-pass").value })
+      body: JSON.stringify({ username: $("gate-user").value, password: $("gate-pass").value })
     }).then(function (r) {
-      if (r.status === 401) throw new Error("Wrong username or password.");
-      if (r.status === 503) throw new Error("Login is not configured on this server.");
-      if (!r.ok) throw new Error("Sign-in failed (" + r.status + ").");
+      if (r.status === 401) throw new Error("Username ya password galat hai.");
+      if (r.status === 503) throw new Error("Is server pe login configured nahi hai.");
+      if (!r.ok) throw new Error("Sign-in fail (" + r.status + ").");
       return r.json();
     }).then(function (d) {
       TOKEN = d.token;
@@ -121,33 +168,9 @@
       $("gate-pass").value = "";
       $("gate").hidden = true;
       boot();
-    }).catch(function (e) {
-      showGate(String(e.message || e));
-    }).then(function () {
-      btn.disabled = false; btn.textContent = "Sign in";
-    });
+    }).catch(function (e) { showGate(String(e.message || e)); })
+      .then(function () { btn.disabled = false; btn.textContent = "Sign in"; });
   });
-
-  // ----------------------------------------------------------------- router --
-  function go(page) {
-    state.page = page;
-    document.querySelectorAll(".page").forEach(function (p) {
-      p.classList.toggle("active", p.dataset.page === page);
-    });
-    document.querySelectorAll(".nav-btn[data-go]").forEach(function (b) {
-      b.classList.toggle("active", b.dataset.go === page);
-    });
-    if (page === "chart") { ensureChart(); loadChart(); loadPaperBook(); }
-    if (page === "history") loadHistory();
-    if (page === "paper" || page === "strategies") loadPerformance();
-    if (page === "paper" && !(state.histRows || []).length) loadHistory();
-    if (page === "journal") loadJournal();
-    if (page === "settings") loadSettings();
-  }
-  document.querySelectorAll(".nav-btn[data-go]").forEach(function (b) {
-    b.addEventListener("click", function () { go(b.dataset.go); });
-  });
-  $("refresh").addEventListener("click", function () { boot(); });
 
   // ------------------------------------------------------------------ theme --
   function setTheme(t) {
@@ -156,1050 +179,690 @@
     if (state.chart) {
       state.chart.applyOptions(chartTheme());
       state.series.applyOptions(seriesTheme());
-      drawLevels();                       // price lines carry their own colours
+      drawLevels();
     }
-    drawEquityCurve();
+    renderHeroCandles();
+    renderEquityCurve();
   }
   $("theme").addEventListener("click", function () {
     setTheme(document.documentElement.dataset.theme === "light" ? "dark" : "light");
   });
-  var bx = $("banner-x");
-  if (bx) bx.addEventListener("click", function () { banner(null); });
+  $("banner-x").addEventListener("click", function () { banner(null); });
 
-  // ------------------------------------------------------------------ TODAY --
-  function viewOnChart(s) {
-    state.chartSym = s.symbol; state.chartTf = s.level_tf; state.ticket = s;
-    syncSeg("chart-sym", "sym", s.symbol); syncSeg("chart-tf", "tf", s.level_tf);
-    go("chart");
+  /* Scroll-linked reveals where the browser supports them; otherwise an
+     observer adds .in once. Same resting state either way. */
+  if (!(window.CSS && CSS.supports && CSS.supports("animation-timeline: view()"))) {
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        if (e.isIntersecting) { e.target.classList.add("in"); io.unobserve(e.target); }
+      });
+    }, { rootMargin: "0px 0px -12% 0px" });
+    document.querySelectorAll(".reveal, .rise").forEach(function (n) { io.observe(n); });
+    window.__msObserve = function (n) { io.observe(n); };
   }
 
-  /* The geometry, drawn to scale. "R:R 8.96" is a number you have to trust;
-     a bar where the green dwarfs the red is a fact you can see in one glance. */
-  function ladder(s) {
+  // ------------------------------------------------------------------- hero --
+  function renderTickers() {
+    var box = $("tickers"); if (!box) return;
+    clear(box);
+    ["ETHUSDT", "BTCUSDT"].forEach(function (k) {
+      var q = state.quotes[k];
+      var px = q ? q.price : null;
+      var prev = state.prev[k];
+      var up = (px === null || prev === undefined) ? true : px >= prev;
+      var card = el("div", "ticker");
+      var left = el("div");
+      left.appendChild(labelled(k.replace("USDT", "") + " / USDT"));
+      var o = odo(px === null ? "—" : fmt(px, 2), 30, up ? "var(--up)" : "var(--down)");
+      o.style.marginTop = "8px";
+      left.appendChild(o);
+      card.appendChild(left);
+      card.appendChild(el("div", "sp"));
+      var right = el("div");
+      /* Change vs TODAY's open — the number a trader expects next to a price.
+         Diffing against the previous poll would just print +0.00% forever. */
+      var open = state.dayOpen[k];
+      var chg = (px !== null && open) ? (px / open - 1) * 100 : null;
+      var c = el("div", "chg", chg === null ? "—" : (chg >= 0 ? "+" : "") + chg.toFixed(2) + "%");
+      c.style.color = chg === null ? "var(--ink-3)" : (chg >= 0 ? "var(--up)" : "var(--down)");
+      right.appendChild(c);
+      right.appendChild(el("div", "src", state.live ? "BINANCE WS" : "SIMULATED"));
+      card.appendChild(right);
+      box.appendChild(card);
+    });
+  }
+
+  function renderHeroCandles() {
+    var host = $("hero-candles"); if (!host) return;
+    clear(host);
+    var c = state.heroCandles;
+    if (!c.length) return;
+    var hi = Math.max.apply(null, c.map(function (x) { return x.h; }));
+    var lo = Math.min.apply(null, c.map(function (x) { return x.l; }));
+    var rng = (hi - lo) || 1;
+    var up = tok("--up"), down = tok("--down");
+    c.forEach(function (k, i) {
+      var isUp = k.c >= k.o;
+      var top = (1 - (k.h - lo) / rng) * 100, bot = (1 - (k.l - lo) / rng) * 100;
+      var bt = (1 - (Math.max(k.o, k.c) - lo) / rng) * 100;
+      var bb = (1 - (Math.min(k.o, k.c) - lo) / rng) * 100;
+      var n = el("div", "hcandle");
+      n.style.left = (i / c.length * 100) + "%";
+      n.style.width = (100 / c.length) + "%";
+      n.style.top = top + "%";
+      n.style.bottom = (100 - bot) + "%";
+      var wick = el("div", "wick"); wick.style.background = isUp ? up : down;
+      var body = el("div", "body");
+      body.style.background = isUp ? up : down;
+      body.style.top = ((bt - top) / (bot - top || 1) * 100) + "%";
+      body.style.height = (Math.abs(bb - bt) / (bot - top || 1) * 100) + "%";
+      n.appendChild(wick); n.appendChild(body);
+      host.appendChild(n);
+    });
+  }
+
+  function tickClock() {
+    var c = $("clock");
+    if (c) c.textContent = new Date().toLocaleTimeString();
+  }
+
+  // ----------------------------------------------------------------- setups --
+  function symSetups(sym) {
+    return state.setups.filter(function (s) { return s.symbol === sym; });
+  }
+  function setupKey(s) { return s.strategy_id + "@" + s.entry; }
+  function current() {
+    var rows = symSetups(state.sym);
+    if (!rows.length) return null;
+    var pick = rows.filter(function (s) { return setupKey(s) === state.pick; })[0];
+    return pick || rows[0];
+  }
+  function stratCode(id) {
+    var list = (state.catalogue && state.catalogue.strategies) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return "S" + (i + 1);
+    return "—";
+  }
+  function strategyMeta(id) {
+    var list = (state.catalogue && state.catalogue.strategies) || [];
+    for (var i = 0; i < list.length; i++) if (list[i].id === id) return list[i];
+    return {};
+  }
+
+  function renderSymbolTabs() {
+    var box = $("sym-tabs"); clear(box);
+    ["ETHUSDT", "BTCUSDT"].forEach(function (k) {
+      var b = el("button", state.sym === k ? "on" : null, k);
+      b.addEventListener("click", function () {
+        state.sym = k; state.pick = null;
+        renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function renderTfTabs() {
+    var box = $("tf-tabs"); clear(box);
+    ["5m", "15m", "1h", "4h", "1d"].forEach(function (t) {
+      var b = el("button", state.tf === t ? "on" : null, t === "1d" ? "1D" : t);
+      b.addEventListener("click", function () {
+        state.tf = t; renderTfTabs(); loadChart();
+      });
+      box.appendChild(b);
+    });
+  }
+
+  function ladderNode(s) {
     var risk = Math.abs(s.entry - s.stop), reward = Math.abs(s.target - s.entry);
-    var total = risk + reward || 1;
-    var wrap = el("div", "ladder");
-    var bar = el("div", "ladder-bar");
+    var total = risk + reward || 1, d = dec(s.symbol);
+    var wrap = el("div", "ladder-wrap");
+    var bar = el("div", "ladder");
     var r = el("i", "risk"); r.style.width = (risk / total * 100).toFixed(2) + "%";
     var w = el("i", "reward"); w.style.width = (reward / total * 100).toFixed(2) + "%";
     bar.appendChild(r); bar.appendChild(w);
     wrap.appendChild(bar);
-
-    var legend = el("div", "ladder-legend");
-    var left = el("span", "risk-l");
-    left.appendChild(document.createTextNode("Risk "));
-    left.appendChild(el("b", null, fmt(risk, 2)));
-    var right = el("span", "reward-l");
-    right.appendChild(el("b", null, fmt(reward, 2)));
-    right.appendChild(document.createTextNode(" reward · " + fmt(s.rr, 2) + "R net"));
-    legend.appendChild(left); legend.appendChild(right);
-    wrap.appendChild(legend);
+    var lg = el("div", "ladder-legend");
+    lg.appendChild(el("span", "r", "risk " + fmt(risk, d)));
+    lg.appendChild(el("span", "w", fmt(reward, d) + " reward · " + fmt(s.rr, 2) + "R net"));
+    wrap.appendChild(lg);
     return wrap;
   }
 
-  function priceCells(s) {
-    var pr = el("div", "rail-prices");
-    [["Entry", s.entry, ""], ["Stop", s.stop, "stop"],
-     ["Target", s.target, "target"], ["Net R:R", s.rr, "rr"]].forEach(function (row) {
-      var c = el("div", "pcell " + row[2]);
-      c.appendChild(el("div", "k", row[0]));
-      c.appendChild(el("div", "v", fmt(row[1], 2)));
-      pr.appendChild(c);
+  function renderSetup() {
+    var card = $("setup-card"); clear(card);
+    var s = current();
+    if (!s) {
+      card.appendChild(el("div", "empty",
+        "Is symbol pe abhi koi setup nahi. Ye normal hai — ye strategies level break " +
+        "hone ka wait karti hain, jo hafte mein kuch hi baar hota hai."));
+      renderSizing(null); renderStratList();
+      return;
+    }
+    var lng = s.direction > 0, d = dec(s.symbol);
+
+    var rail = el("span", "dir-rail");
+    rail.style.background = lng ? "var(--up)" : "var(--down)";
+    card.appendChild(rail);
+    var hair = el("span", "hair"); hair.appendChild(el("i"));
+    card.appendChild(hair);
+
+    var head = el("div", "setup-head");
+    head.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+    head.appendChild(el("span", "sym-big", s.symbol.replace("USDT", "")));
+    head.appendChild(el("span", "chip", s.strategy_id));
+    head.appendChild(el("div", "sp"));
+    if (state.setups.indexOf(s) === 0) head.appendChild(el("span", "rank", "Rank 1"));
+    var pips = el("div", "pips");
+    pips.title = s.filters_passed + " of 3 trend filters agreeing";
+    for (var i = 0; i < 3; i++) pips.appendChild(el("i", i < s.filters_passed ? "on" : null));
+    head.appendChild(pips);
+    card.appendChild(head);
+
+    card.appendChild(ladderNode(s));
+
+    var cells = el("div", "price-cells");
+    [["Entry", s.entry, "var(--ink)"], ["Stop", s.stop, "var(--down)"],
+     ["Target", s.target, "var(--up)"], ["Net R:R", s.rr, "var(--ink)"]
+    ].forEach(function (row) {
+      var c = el("div", "pcell");
+      c.appendChild(labelled(row[0]));
+      c.appendChild(odo(row[0] === "Net R:R" ? fmt(row[1], 2) : fmt(row[1], d), 20, row[2]));
+      cells.appendChild(c);
     });
-    return pr;
+    card.appendChild(cells);
+
+    card.appendChild(el("p", "reason", s.reason));
+
+    var foot = el("div", "setup-foot");
+    foot.appendChild(el("span", "meta", "invalid: " + fmt(s.stop, d) +
+      (lng ? " ke neeche close" : " ke upar close") +
+      " · " + when(s.valid_until_ts) + " tak valid"));
+    foot.appendChild(el("div", "sp"));
+    var go = el("a", "btn primary", "Chart pe dekho");
+    go.href = "#chart";
+    foot.appendChild(go);
+    card.appendChild(foot);
+
+    renderSizing(s);
+    renderStratList();
   }
 
-  /* Rank 1 only. Everything the trader needs to decide, without a click. */
-  function setupCard(s, rank) {
-    var card = el("div", "setup rank-" + rank + " " + (s.direction > 0 ? "long" : "short"));
-
-    var h = el("div", "setup-h");
-    h.appendChild(el("span", "dir " + (s.direction > 0 ? "long" : "short"), s.direction_label));
-    h.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
-    h.appendChild(el("span", "strat-tag", s.strategy_id));
-    var sp = el("div"); sp.style.flex = "1"; h.appendChild(sp);
-    if (rank === 1) h.appendChild(el("span", "rank-badge", "Best setup"));
-    var pips = el("div", "filters");
-    pips.title = s.filters_passed + " of 3 trend filters agree";
-    for (var i = 0; i < 3; i++) pips.appendChild(el("span", "pip" + (i < s.filters_passed ? " on" : "")));
-    h.appendChild(pips);
-    card.appendChild(h);
-
-    card.appendChild(ladder(s));
-    card.appendChild(priceCells(s));
-    card.appendChild(el("div", "why", s.reason));
-
-    var f = el("div", "setup-f");
-    f.appendChild(el("span", "sub", "risk " + fmt(s.risk_pct, 2) + "% of price · valid till " +
-                                    when(s.valid_until_ts)));
-    var gap = el("div"); gap.style.flex = "1"; f.appendChild(gap);
-    var b = el("button", "btn primary", "View on chart");
-    b.addEventListener("click", function () { viewOnChart(s); });
-    f.appendChild(b);
-    card.appendChild(f);
-    return card;
+  function renderSizing(s) {
+    var box = $("sizing"); clear(box);
+    $("equity-val").textContent = "$" + fmt(state.equity, 2);
+    $("risk-label").textContent = state.riskPct.toFixed(1) + "%";
+    if (!s) return;
+    var riskCash = state.equity * (state.riskPct / 100);
+    var perUnit = Math.abs(s.entry - s.stop) || 1;
+    var qty = riskCash / perUnit;
+    [["Risk", "$" + fmt(riskCash, 2), "var(--down)"],
+     ["Quantity", fmt(qty, s.symbol === "BTCUSDT" ? 4 : 3), "var(--ink)"],
+     ["Notional", "$" + fmt(qty * s.entry, 2), "var(--ink)"],
+     ["Stop distance", fmt(perUnit, dec(s.symbol)), "var(--ink-2)"]
+    ].forEach(function (row) {
+      var c = el("div");
+      c.appendChild(labelled(row[0]));
+      var v = el("div", "v", row[1]); v.style.color = row[2];
+      c.appendChild(v);
+      box.appendChild(c);
+    });
   }
 
-  /* Setups 2..n. Same information, a tenth of the ink — a dozen equally-sized
-     cards makes the reader re-rank what the engine already ranked. */
-  function setupRow(s, i) {
-    var row = el("div", "srow " + (s.direction > 0 ? "long" : "short"));
-    row.style.animationDelay = Math.min(i * 22, 220) + "ms";
-    row.appendChild(el("span", "dir " + (s.direction > 0 ? "long" : "short"), s.direction_label));
-    row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
-
-    var mid = el("div");
-    mid.appendChild(el("div", "strat-tag", s.strategy_id));
-    mid.appendChild(el("div", "meta", s.reason));
-    row.appendChild(mid);
-
-    [["Entry", s.entry, ""], ["Stop", s.stop, "stop"],
-     ["Target", s.target, "target hide-md"], ["R:R", s.rr, ""]].forEach(function (col) {
-      var cell = el("div", "cell " + col[2]);
-      cell.appendChild(el("span", "k", col[0]));
-      cell.appendChild(el("span", "v", fmt(col[1], 2)));
-      row.appendChild(cell);
+  /* One row per strategy that has a live setup on this symbol — clicking swaps
+     which setup the card, ladder and level lines show. */
+  function renderStratList() {
+    var box = $("strat-list"); clear(box);
+    var rows = symSetups(state.sym);
+    if (!rows.length) { box.appendChild(el("div", "empty", "koi live setup nahi")); return; }
+    var cur = current();
+    rows.forEach(function (s) {
+      var meta = strategyMeta(s.strategy_id);
+      var b = el("button", "strat-row" +
+        (cur && setupKey(s) === setupKey(cur) ? " on" : ""));
+      b.appendChild(el("span", "code", stratCode(s.strategy_id)));
+      var mid = el("div");
+      mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
+      /* the level distinguishes two setups from the SAME strategy */
+      mid.appendChild(el("div", "note",
+        s.level_source + " " + s.level_tf + " @ " + fmt(s.entry, dec(s.symbol))));
+      b.appendChild(mid);
+      b.appendChild(el("span", "rr", fmt(s.rr, 2) + "R"));
+      b.addEventListener("click", function () {
+        state.pick = setupKey(s);
+        renderSetup(); renderQueue(); drawLevels();
+      });
+      box.appendChild(b);
     });
+  }
 
-    var b = el("button", "btn", "Chart");
-    b.addEventListener("click", function (ev) { ev.stopPropagation(); viewOnChart(s); });
-    row.appendChild(b);
-    row.addEventListener("click", function () { viewOnChart(s); });
-    return row;
+  // ------------------------------------------------------------------ queue --
+  function renderQueue() {
+    var box = $("queue-rows"); clear(box);
+    var cur = current();
+    var rows = state.setups.filter(function (s) {
+      return !cur || setupKey(s) !== setupKey(cur) || s.symbol !== cur.symbol;
+    });
+    if (!rows.length) {
+      box.appendChild(el("div", "empty", "Baaki koi live setup nahi."));
+      return;
+    }
+    rows.forEach(function (s) {
+      var lng = s.direction > 0, d = dec(s.symbol);
+      var meta = strategyMeta(s.strategy_id);
+      var row = el("button", "qrow");
+      var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
+      row.appendChild(bar);
+      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+      row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
+      var mid = el("div");
+      mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
+      mid.appendChild(el("div", "why", s.reason));
+      row.appendChild(mid);
+      [["Entry", s.entry, ""], ["Stop", s.stop, "down"],
+       ["Target", s.target, "up"], ["R:R", s.rr, ""]].forEach(function (c) {
+        var cell = el("div", "cell");
+        cell.appendChild(labelled(c[0]));
+        cell.appendChild(el("span", "v " + c[2],
+          c[0] === "R:R" ? fmt(c[1], 2) : fmt(c[1], d)));
+        row.appendChild(cell);
+      });
+      row.addEventListener("click", function () {
+        state.sym = s.symbol; state.pick = setupKey(s);
+        renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
+        $("setup").scrollIntoView({ behavior: "smooth" });
+      });
+      box.appendChild(row);
+    });
   }
 
   /* A filled setup is a LIVE position — it needs managing, not deciding, so it
-     gets its own section above the ones still waiting for a level to break. */
-  function activeRow(r, i) {
-    var lng = Number(r.direction) > 0;
-    var row = el("div", "srow " + (lng ? "long" : "short"));
-    row.style.animationDelay = Math.min(i * 22, 200) + "ms";
-    row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
-    row.appendChild(el("span", "sym", String(r.symbol).replace("USDT", "")));
-
-    var mid = el("div");
-    mid.appendChild(el("div", "strat-tag", r.strategy_id));
-    var fill = r.fill_price != null ? r.fill_price : r.entry;
-    mid.appendChild(el("div", "meta", "filled " + fmt(fill, 2) + " · " + when(r.filled_ts || r.decision_ts)));
-    row.appendChild(mid);
-
-    var px = state.lastQuote[r.symbol];
-    var risk = Math.abs(fill - r.stop);
-    var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
-
-    [["Stop", r.stop, "stop"], ["Target", r.target, "target hide-md"],
-     ["Now", px, ""]].forEach(function (col) {
-      var cell = el("div", "cell " + col[2]);
-      cell.appendChild(el("span", "k", col[0]));
-      cell.appendChild(el("span", "v", col[1] == null ? "—" : fmt(col[1], 2)));
-      row.appendChild(cell);
+     sits above the setups still waiting for their level to break. */
+  function renderLiveTrades() {
+    var box = $("live-trades"); if (!box) return;
+    clear(box);
+    var rows = state.active || [];
+    if (!rows.length) return;
+    var head = el("div", "sub-head");
+    head.style.marginTop = "0";
+    head.textContent = "Abhi live trades · " + rows.length + " — entry fill ho chuka hai";
+    box.appendChild(head);
+    var list = el("div", "list");
+    list.style.marginBottom = "20px";
+    rows.forEach(function (r) {
+      var lng = r.direction > 0, d = dec(r.symbol);
+      var fill = r.fill_price != null ? r.fill_price : r.entry;
+      var px = state.quotes[r.symbol] ? state.quotes[r.symbol].price : null;
+      var risk = Math.abs(fill - r.stop);
+      var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
+      var row = el("div", "qrow");
+      var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
+      row.appendChild(bar);
+      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+      row.appendChild(el("span", "sym", String(r.symbol).replace("USDT", "")));
+      var mid = el("div");
+      mid.appendChild(el("div", "nm", strategyMeta(r.strategy_id).label || r.strategy_id));
+      mid.appendChild(el("div", "why", "fill " + fmt(fill, d) + " · " + when(r.filled_ts || r.decision_ts)));
+      row.appendChild(mid);
+      [["Stop", r.stop, "down"], ["Target", r.target, "up"],
+       ["Now", px, ""]].forEach(function (c) {
+        var cell = el("div", "cell");
+        cell.appendChild(labelled(c[0]));
+        cell.appendChild(el("span", "v " + c[2], c[1] == null ? "—" : fmt(c[1], d)));
+        row.appendChild(cell);
+      });
+      var pnl = el("div", "cell");
+      pnl.appendChild(labelled("Open R"));
+      pnl.appendChild(el("span", "v " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
+        openR == null ? "—" : sign(openR, 2) + "R"));
+      row.appendChild(pnl);
+      list.appendChild(row);
     });
-    var pnl = el("div", "cell");
-    pnl.appendChild(el("span", "k", "Open R"));
-    var v = el("span", "v " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
-               openR == null ? "—" : sign(openR, 2) + "R");
-    pnl.appendChild(v);
-    row.appendChild(pnl);
-
-    var b = el("button", "btn", "Chart");
-    b.addEventListener("click", function (ev) {
-      ev.stopPropagation();
-      viewOnChart({ symbol: r.symbol, level_tf: r.level_tf || "4h" });
-    });
-    row.appendChild(b);
-    return row;
-  }
-
-  function renderActive() {
-    var box = $("active"); if (!box) return;
-    var rows = (state.active || []).filter(function (r) {
-      return !state.symFilter || r.symbol === state.symFilter;
-    });
-    box.textContent = "";
-    if (!rows.length) return;                    // no section at all when empty
-    var t = el("div", "sec-t");
-    t.appendChild(document.createTextNode("Active trades · " + rows.length));
-    t.appendChild(el("span", "sub", "entry filled, running against the stop"));
-    box.appendChild(t);
-    var list = el("div", "setup-list");
-    rows.forEach(function (r, i) { list.appendChild(activeRow(r, i)); });
     box.appendChild(list);
   }
 
   function loadActive() {
     return api("/api/v4/history?status=FILLED&limit=50").then(function (d) {
       state.active = d.rows || [];
-      renderActive(); renderToday();
+      renderLiveTrades();
     }).catch(function () { state.active = []; });
   }
 
-  function renderToday() {
-    var rows = state.setups.filter(function (s) {
-      return !state.symFilter || s.symbol === state.symFilter;
+  // --------------------------------------------------------------- pipeline --
+  var STAGES = [
+    ["Feed", "Binance WS — aggTrade · kline_1m · bookTicker"],
+    ["Candle builder", "1m primary, 5m context — official klines se zero mismatch"],
+    ["Levels", "donchian · swing · prior-day · round numbers"],
+    ["Filters", "trend anchor, daily bias aur structure"],
+    ["Trade plan", "resting stop order, 5×ATR(5m) stop, 10R target"],
+    ["Recommendation", "manual execution, manual outcome log"]
+  ];
+  var GATES = [
+    ["No repaint", "Closed candle kabhi revise nahi hoti. 14:01 pe jo aapne padha, log mein hamesha wahi rahega."],
+    ["Replay-first", "Live jaane se pehle har strategy 9 saal ke recorded tape pe bilkul same code path chalati hai."],
+    ["Fake confidence nahi", "Filters passed aur net R:R fact hain. “78% confidence” fact nahi hai, isliye wo badge yahan nahi hai."]
+  ];
+  function renderPipeline() {
+    var box = $("stages"); clear(box);
+    STAGES.forEach(function (st, i) {
+      var c = el("div", "stage rise" + (i === STAGES.length - 1 ? " final" : ""));
+      var hair = el("div", "hair");
+      var sweep = el("i");
+      sweep.style.animation = "sweepline " + (3 + i * 0.35) + "s linear infinite";
+      hair.appendChild(sweep); c.appendChild(hair);
+      c.appendChild(el("div", "idx", String(i + 1).padStart(2, "0")));
+      c.appendChild(el("div", "t", st[0]));
+      c.appendChild(el("div", "d", st[1]));
+      box.appendChild(c);
+      if (window.__msObserve) window.__msObserve(c);
     });
-    var box = $("setups"); box.textContent = "";
-
-    if (!rows.length) {
-      var e = el("div", "empty");
-      e.appendChild(el("div", "big", "No setup right now"));
-      e.appendChild(el("div", "sub",
-        "That is a normal and common state — these strategies wait for a level to break " +
-        "with the trend behind it, which happens a few times a week. Levels are being watched."));
-      box.appendChild(e);
-    } else {
-      var head = el("div", "sec-t");
-      head.appendChild(document.createTextNode(
-        rows.length === 1 ? "Trade setup" : "Trade setups · " + rows.length));
-      head.appendChild(el("span", "sub", "waiting for the level to break"));
-      box.appendChild(head);
-      box.appendChild(setupCard(rows[0], 1));
-      if (rows.length > 1) {
-        box.appendChild(el("div", "sec-t", "Also live · " + (rows.length - 1)));
-        var list = el("div", "setup-list");
-        rows.slice(1).forEach(function (s, i) { list.appendChild(setupRow(s, i)); });
-        box.appendChild(list);
-      }
-    }
-
-    var longs = rows.filter(function (r) { return r.direction > 0; }).length;
-    var best = rows.length ? fmt(rows[0].rr, 2) + "R" : "—";
-    var st = $("today-stats"); st.textContent = "";
-    [["Trade setups", rows.length, rows.length ? "ranked by filters, then R:R" : "watching levels"],
-     ["Active trades", (state.active || []).length, "entry filled, running"],
-     ["Long / Short", longs + " / " + (rows.length - longs), "direction split"],
-     ["Best net R:R", best, "after fees and funding"],
-     ["Strategies live", state.catalogue ? state.catalogue.strategies.length : "—", "BTC · ETH"]
-    ].forEach(function (row) {
-      var c = el("div", "stat");
-      c.appendChild(el("div", "stat-k", row[0]));
-      c.appendChild(el("div", "stat-v", String(row[1])));
-      c.appendChild(el("div", "stat-s", row[2]));
-      st.appendChild(c);
-    });
-    $("today-sub").textContent = rows.length + " actionable · updated " +
-      new Date().toLocaleTimeString();
-  }
-
-  function syncSeg(id, key, val) {
-    var g = $(id); if (!g) return;
-    g.querySelectorAll("button").forEach(function (b) {
-      b.classList.toggle("on", b.dataset[key] === val);
+    var g = $("rules"); clear(g);
+    GATES.forEach(function (row) {
+      var c = el("div", "rule-card reveal");
+      c.appendChild(el("div", "t", row[0]));
+      c.appendChild(el("div", "d", row[1]));
+      g.appendChild(c);
+      if (window.__msObserve) window.__msObserve(c);
     });
   }
-  $("sym-filter").addEventListener("click", function (e) {
-    var b = e.target.closest("button"); if (!b) return;
-    state.symFilter = b.dataset.sym;
-    syncSeg("sym-filter", "sym", state.symFilter);
-    renderToday();
-  });
 
-  // ---------------------------------------------------------------- QUOTES --
-  state.lastQuote = {};
-  function loadQuotes() {
-    api("/api/v4/quotes").then(function (d) {
-      var box = $("quotes"); if (!box) return;
-      box.textContent = "";
-      box.appendChild(el("span", "q-lbl", "Last price"));
-      Object.keys(d.quotes || {}).forEach(function (sym) {
-        var q = d.quotes[sym], prev = state.lastQuote[sym];
-        var dir = prev === undefined ? 0 : (q.price > prev ? 1 : q.price < prev ? -1 : 0);
-        state.lastQuote[sym] = q.price;
-        var c = el("div", "q " + (dir > 0 ? "up" : dir < 0 ? "down" : ""));
-        c.appendChild(el("span", "s", sym.replace("USDT", "")));
-        c.appendChild(el("span", "p", fmt(q.price, 2)));
-        box.appendChild(c);
-      });
-    }).catch(function () {});
-  }
-
-  // ------------------------------------------------------------- STRATEGIES --
-  /* Owner switch. Disabling only stops NEW setups being issued — rows already
-     recorded keep resolving, so live stats never get silently truncated. */
-  function strategyToggle(s) {
-    var lab = el("label", "toggle");
-    lab.title = s.can_toggle
-      ? "Turn this strategy off — it stops issuing new setups"
-      : "Runtime switching needs the settings store (live server only)";
-    var box = document.createElement("input");
-    box.type = "checkbox"; box.checked = !!s.enabled;
-    box.disabled = !s.can_toggle;
-    box.setAttribute("aria-label", (s.enabled ? "Disable " : "Enable ") + s.label);
-    box.addEventListener("change", function () {
-      var want = box.checked;
-      box.disabled = true;
-      post("/api/v4/strategies/" + s.id + "/enabled", { enabled: want })
-        .then(function () { loadCatalogue(); loadSetups(); })
-        .catch(function () { box.checked = !want; box.disabled = false; });
+  // ------------------------------------------------------------- strategies --
+  function well(title, sub, metrics, isLive) {
+    var w = el("div", "well" + (isLive ? " live" : ""));
+    var h = el("div", "well-h");
+    h.appendChild(el("span", "t", title));
+    h.appendChild(el("span", "s", "· " + sub));
+    w.appendChild(h);
+    var g = el("div", "well-grid");
+    metrics.forEach(function (m) {
+      var c = el("div", "metric");
+      c.appendChild(labelled(m[0]));
+      c.appendChild(el("div", "v", m[1]));
+      g.appendChild(c);
     });
-    lab.appendChild(box);
-    lab.appendChild(el("span", "track"));
-    return lab;
+    w.appendChild(g);
+    return w;
   }
 
   function renderStrategies() {
+    var box = $("strat-cards"); clear(box);
     var d = state.catalogue; if (!d) return;
-    var g = d.geometry;
-    $("geometry").textContent = "Geometry (fixed by research, not tunable): entry = " +
-      g.entry + " · stop = " + g.stop + " · target = " + g.target +
-      " · max hold " + g.max_hold_days + "d · taker " + (g.taker_fee * 100).toFixed(3) +
-      "% · funding " + (g.funding_per_day * 100).toFixed(3) + "%/day";
+    var perf = (state.perf && state.perf.by_strategy) || {};
 
-    var box = $("strategy-cards"); box.textContent = "";
-    d.strategies.forEach(function (s) {
-      var live = state.perf && state.perf.by_strategy ? state.perf.by_strategy[s.id] : null;
-      var c = el("div", "card" + (s.enabled ? "" : " off"));
-      var h = el("div", "card-h");
-      h.appendChild(el("span", "dot " + (s.enabled ? "live" : "off")));
-      h.appendChild(el("span", "card-t", s.label));
-      var sp = el("div"); sp.style.flex = "1"; h.appendChild(sp);
-      h.appendChild(el("span", "strat-tag", s.level + " · " + s.min_filters + "/3 filters"));
-      h.appendChild(strategyToggle(s));
-      c.appendChild(h);
+    d.strategies.forEach(function (st, idx) {
+      var live = perf[st.id] || {};
+      var card = el("div", "scard rise" + (st.enabled ? "" : " off"));
+      var h = el("div", "scard-h");
+      /* S1..Sn in catalogue order — a stable short handle. Slicing the level
+         source gave unreadable stubs like "DONC" and "PDH_". */
+      h.appendChild(el("span", "code", "S" + (idx + 1)));
+      var mid = el("div"); mid.style.flex = "1"; mid.style.minWidth = "0";
+      mid.appendChild(el("div", "nm", st.label));
+      mid.appendChild(el("div", "note", st.note));
+      h.appendChild(mid);
+      var sw = el("button", "sw" + (st.enabled ? " on" : ""));
+      sw.appendChild(el("i"));
+      sw.title = st.enabled ? "on — naye setups issue kar raha hai" : "off — naye setups band";
+      sw.disabled = !st.can_toggle;
+      sw.setAttribute("aria-label", (st.enabled ? "Disable " : "Enable ") + st.label);
+      sw.addEventListener("click", function () {
+        sw.disabled = true;
+        post("/api/v4/strategies/" + st.id + "/enabled", { enabled: !st.enabled })
+          .then(function () { loadCatalogue(); loadSetups(); })
+          .catch(function () { sw.disabled = false; });
+      });
+      h.appendChild(sw);
+      card.appendChild(h);
 
-      var sp2 = el("div", "split");
-      var a = el("div");
-      a.appendChild(el("div", "lbl", "Backtest · " + s.backtest.period));
-      a.appendChild(el("div", "num", sign(s.backtest.net_r, 3) + " R / trade"));
-      a.appendChild(el("div", "sub", "t = " + fmt(s.backtest.t_stat, 2) + " · PF " +
-        fmt(s.backtest.profit_factor, 2) + " · " + fmt(s.backtest.trades_per_year, 0) + " trades/yr"));
-      sp2.appendChild(a);
-      var bdiv = el("div");
-      bdiv.appendChild(el("div", "lbl", "Live paper"));
-      if (live && live.n) {
-        bdiv.appendChild(el("div", "num", sign(live.avg_net_r, 3) + " R / trade"));
-        bdiv.appendChild(el("div", "sub", live.n + " trades · win " +
-          fmt(live.win_rate * 100, 0) + "% · PF " + fmt(live.profit_factor, 2)));
-      } else {
-        bdiv.appendChild(el("div", "num", "—"));
-        bdiv.appendChild(el("div", "sub", "no live trades yet"));
-      }
-      sp2.appendChild(bdiv);
-      c.appendChild(sp2);
-      if (s.note) c.appendChild(el("div", "why", s.note));
-      box.appendChild(c);
+      /* Two separated wells — backtest evidence and live paper never merge. */
+      card.appendChild(well("Backtest", "9 saal replay", [
+        ["trades", fmt(st.backtest.trades_per_year, 0) + "/yr"],
+        ["net R", sign(st.backtest.net_r, 3)],
+        ["PF", fmt(st.backtest.profit_factor, 2)]
+      ], false));
+      card.appendChild(well("Live paper", "sirf simulated", [
+        ["trades", live.n === undefined ? "—" : String(live.n)],
+        ["win %", live.win_rate == null ? "—" : fmt(live.win_rate * 100, 1)],
+        ["net R", live.avg_net_r == null ? "—" : sign(live.avg_net_r, 3)]
+      ], true));
+      box.appendChild(card);
+      if (window.__msObserve) window.__msObserve(card);
     });
 
-    var rej = $("rejected"); rej.textContent = "";
-    Object.keys(d.rejected_ideas || {}).forEach(function (k) {
-      var tr = el("tr");
-      tr.appendChild(el("td", null, k.replace(/_/g, " ")));
-      tr.appendChild(el("td", null, d.rejected_ideas[k]));
-      rej.appendChild(tr);
+    var rej = $("rejected"); clear(rej);
+    var ideas = d.rejected_ideas || {};
+    Object.keys(ideas).forEach(function (k) {
+      var r = el("div", "rej");
+      r.appendChild(el("span", "idea", k.replace(/_/g, " ")));
+      r.appendChild(el("span", "why", ideas[k]));
+      rej.appendChild(r);
     });
   }
 
-  // ---------------------------------------------------------------- HISTORY --
-  state.histRows = []; state.sortKey = "decision_ts"; state.sortDir = -1;
+  // ---------------------------------------------------------------- history --
+  var OUTCOMES = [["", "Sab"], ["TP", "Target"], ["SL", "Stop"], ["TIME", "Time exit"]];
+  function renderHistTabs() {
+    var box = $("hist-tabs"); clear(box);
+    OUTCOMES.forEach(function (o) {
+      var b = el("button", state.histFilter === o[0] ? "on" : null, o[1]);
+      b.addEventListener("click", function () {
+        state.histFilter = o[0]; renderHistTabs(); renderHistory();
+      });
+      box.appendChild(b);
+    });
+  }
 
   function renderHistory() {
-    var d = { rows: state.histRows.slice() };
-    var k = state.sortKey, dir = state.sortDir;
-    d.rows.sort(function (a, b) {
-      var x = a[k], y = b[k];
-      if (x === null || x === undefined) return 1;
-      if (y === null || y === undefined) return -1;
-      return x === y ? 0 : (x > y ? dir : -dir);
+    var f = state.histFilter;
+    var rows = state.history.filter(function (r) { return !f || r.status === f; });
+
+    var stats = $("hist-stats"); clear(stats);
+    var closed = rows.filter(function (r) { return r.net_r !== null && r.net_r !== undefined; });
+    var netR = closed.reduce(function (a, r) { return a + r.net_r; }, 0);
+    var wins = closed.filter(function (r) { return r.net_r > 0; }).length;
+    var hold = closed.length
+      ? closed.reduce(function (a, r) { return a + (r.hold_minutes || 0); }, 0) / closed.length : 0;
+    [["Recommendations", String(rows.length), "log mein total", ""],
+     ["Win %", closed.length ? fmt(wins / closed.length * 100, 1) : "—", "net R positive", ""],
+     ["Net R", closed.length ? sign(netR, 2) : "—", "fees ke baad", netR >= 0 ? "up" : "down"],
+     ["Avg hold", closed.length ? Math.round(hold) + "m" : "—", "entry se exit tak", ""]
+    ].forEach(function (s) {
+      var c = el("div", "stat reveal");
+      c.appendChild(labelled(s[0]));
+      c.appendChild(el("div", "v " + s[3], s[1]));
+      c.appendChild(el("div", "sub", s[2]));
+      stats.appendChild(c);
+      if (window.__msObserve) window.__msObserve(c);
     });
-    document.querySelectorAll("#history-table th.sortable, th.sortable").forEach(function (th) {
-      th.classList.remove("asc", "desc");
-      if (th.dataset.sort === k) th.classList.add(dir > 0 ? "asc" : "desc");
-    });
-    drawHistory(d);
-  }
 
-  function loadHistory() {
-    var s = $("hist-strategy").value, st = $("hist-status").value;
-    var q = "/api/v4/history?limit=300" + (s ? "&strategy=" + s : "") + (st ? "&status=" + st : "");
-    api(q).then(function (d) {
-      state.histRows = d.rows || [];
-      state.histNote = d.note;
-      renderHistory();
-    }).catch(function () {});
-  }
+    var box = $("hist-rows"); clear(box);
+    var head = el("div", "trow head");
+    ["Issued", "Symbol", "Dir", "Strat", "Entry", "Stop", "Target", "Outcome", "Net R"]
+      .forEach(function (h, i) { head.appendChild(el("span", "lbl" + (i >= 4 ? " r" : ""), h)); });
+    box.appendChild(head);
 
-  function drawHistory(d) {
-    (function () {
-      var body = $("hist-rows"); body.textContent = "";
-      if (!d.rows || !d.rows.length) {
-        var tr = el("tr"), td = el("td", null, state.histNote || "No recommendations recorded yet.");
-        td.colSpan = 12; td.style.textAlign = "center"; td.style.padding = "34px";
-        td.style.color = "var(--ink-3)"; tr.appendChild(td); body.appendChild(tr);
-        return;
-      }
-      d.rows.forEach(function (r) {
-        var tr = el("tr");
-        tr.appendChild(el("td", null, when(r.decision_ts)));
-        tr.appendChild(el("td", null, (r.symbol || "").replace("USDT", "")));
-        var dcell = el("td");
-        dcell.appendChild(el("span", "dir " + (r.direction > 0 ? "long" : "short"),
-                             r.direction > 0 ? "LONG" : "SHORT"));
-        tr.appendChild(dcell);
-        tr.appendChild(el("td", null, r.strategy_id || "—"));
-        tr.appendChild(el("td", "num", fmt(r.entry)));
-        tr.appendChild(el("td", "num", fmt(r.stop)));
-        tr.appendChild(el("td", "num", fmt(r.target)));
-        var oc = el("td");
-        var cls = r.status === "TP" ? "tp" : r.status === "SL" ? "sl" :
-                  r.status === "TIME" ? "time" : "open";
-        oc.appendChild(el("span", "badge " + cls, r.status || "OPEN"));
-        tr.appendChild(oc);
-        var nr = el("td", "num " + (r.net_r > 0 ? "up" : r.net_r < 0 ? "down" : ""),
-                    r.net_r === null || r.net_r === undefined ? "—" : sign(r.net_r, 3));
-        tr.appendChild(nr);
-        tr.appendChild(el("td", "num", r.mae_r === null || r.mae_r === undefined ? "—" : fmt(r.mae_r, 2)));
-        tr.appendChild(el("td", "num", r.mfe_r === null || r.mfe_r === undefined ? "—" : fmt(r.mfe_r, 2)));
-        tr.appendChild(el("td", "num", r.hold_minutes ? Math.round(r.hold_minutes / 60) + "h" : "—"));
-        body.appendChild(tr);
-      });
-    })();
-  }
-
-  document.querySelectorAll("th.sortable").forEach(function (th) {
-    th.addEventListener("click", function () {
-      var k = th.dataset.sort;
-      if (state.sortKey === k) state.sortDir = -state.sortDir;
-      else { state.sortKey = k; state.sortDir = -1; }
-      renderHistory();
-    });
-  });
-
-  var csvBtn = $("hist-csv");
-  if (csvBtn) csvBtn.addEventListener("click", function () {
-    var rows = state.histRows || [];
-    if (!rows.length) return;
-    var cols = ["decision_ts", "symbol", "direction", "strategy_id", "entry", "stop",
-                "target", "status", "gross_r", "fee_r", "funding_r", "net_r",
-                "mae_r", "mfe_r", "hold_minutes"];
-    var out = [cols.join(",")];
+    if (!rows.length) {
+      box.appendChild(el("div", "empty", "Is filter pe koi recommendation nahi."));
+      return;
+    }
     rows.forEach(function (r) {
-      out.push(cols.map(function (c) {
-        var v = r[c];
-        if (c === "decision_ts" && v) v = new Date(v * 1000).toISOString();
-        return v === null || v === undefined ? "" : String(v);
-      }).join(","));
+      var d = dec(r.symbol), lng = r.direction > 0;
+      var badge = { TP: ["tp", "Target"], SL: ["sl", "Stop"], TIME: ["time", "Time"],
+                    OPEN: ["open", "Open"], FILLED: ["open", "Live"],
+                    CANCELLED: ["time", "Cancelled"] }[r.status] || ["time", r.status];
+      var row = el("div", "trow");
+      row.appendChild(el("span", "ts", when(r.decision_ts)));
+      row.appendChild(el("span", "sy", String(r.symbol).replace("USDT", "")));
+      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+      row.appendChild(el("span", "st", stratCode(r.strategy_id)));
+      row.appendChild(el("span", "n", fmt(r.entry, d)));
+      row.appendChild(el("span", "n down", fmt(r.stop, d)));
+      row.appendChild(el("span", "n up", fmt(r.target, d)));
+      row.appendChild(el("span", "badge " + badge[0], badge[1]));
+      row.appendChild(el("span", "netr " + (r.net_r >= 0 ? "up" : "down"),
+        r.net_r == null ? "—" : sign(r.net_r, 2) + "R"));
+      box.appendChild(row);
     });
-    var blob = new Blob([out.join("\n")], { type: "text/csv" });
-    var a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "marketscalper-v4-history.csv";
-    a.click(); URL.revokeObjectURL(a.href);
-  });
+  }
 
-  $("hist-strategy").addEventListener("change", loadHistory);
-  $("hist-status").addEventListener("change", loadHistory);
-
-  // ------------------------------------------------------------ PERFORMANCE --
-  function statBlock(target, items) {
-    var box = $(target); box.textContent = "";
-    items.forEach(function (s) {
-      var c = el("div", "stat");
-      c.appendChild(el("div", "stat-k", s[0]));
-      var v = el("div", "stat-v" + (s[2] ? " " + s[2] : ""), s[1]);
-      c.appendChild(v);
-      if (s[3]) c.appendChild(el("div", "stat-s", s[3]));
+  // ------------------------------------------------------------------ paper --
+  function renderPaper() {
+    var o = (state.perf && state.perf.overall) || {};
+    var acct = state.paper || {};
+    var eq = (acct.portfolio && acct.portfolio.equity) != null
+      ? acct.portfolio.equity : (acct.account && acct.account.balance);
+    var box = $("paper-stats"); clear(box);
+    [["Equity", eq == null ? "—" : "$" + fmt(eq, 2), "start $10,000", ""],
+     ["Total R", o.total_r == null ? "—" : sign(o.total_r, 2), "closed trades", o.total_r >= 0 ? "up" : "down"],
+     ["Win %", o.win_rate == null ? "—" : fmt(o.win_rate * 100, 1), (o.n || 0) + " trades", ""],
+     ["Profit factor", o.profit_factor == null ? "—" : fmt(o.profit_factor, 2), "gross win / gross loss", ""],
+     ["Max drawdown", o.max_drawdown_r == null ? "—" : "-" + fmt(o.max_drawdown_r, 2) + "R", "peak se trough", "down"]
+    ].forEach(function (s) {
+      var c = el("div", "stat rise");
+      c.appendChild(labelled(s[0]));
+      c.appendChild(el("div", "v " + s[3], s[1]));
+      c.appendChild(el("div", "sub", s[2]));
       box.appendChild(c);
+      if (window.__msObserve) window.__msObserve(c);
+    });
+
+    renderEquityCurve();
+
+    var att = $("attribution"); clear(att);
+    var head = el("div", "arow head");
+    ["Strategy", "Trades", "Win %", "Net R", "PF", "Max DD", "TP / SL / Time"]
+      .forEach(function (h, i) { head.appendChild(el("span", "lbl" + (i ? " r" : ""), h)); });
+    att.appendChild(head);
+    var by = (state.perf && state.perf.by_strategy) || {};
+    var keys = Object.keys(by);
+    if (!keys.length) {
+      att.appendChild(el("div", "empty", "Abhi koi closed paper trade nahi."));
+      return;
+    }
+    keys.forEach(function (k) {
+      var v = by[k];
+      var row = el("div", "arow");
+      row.appendChild(el("span", "nm", strategyMeta(k).label || k));
+      row.appendChild(el("span", "n", String(v.n || 0)));
+      row.appendChild(el("span", "n", v.win_rate == null ? "—" : fmt(v.win_rate * 100, 1)));
+      row.appendChild(el("span", "n " + (v.total_r >= 0 ? "up" : "down"),
+        v.total_r == null ? "—" : sign(v.total_r, 2)));
+      row.appendChild(el("span", "n", v.profit_factor == null ? "—" : fmt(v.profit_factor, 2)));
+      row.appendChild(el("span", "n down", v.max_drawdown_r == null ? "—" : fmt(v.max_drawdown_r, 2)));
+      row.appendChild(el("span", "mix", (v.tp || 0) + " / " + (v.sl || 0) + " / " + (v.time_exit || 0)));
+      att.appendChild(row);
     });
   }
-  function loadPerformance() {
-    api("/api/v4/performance").then(function (d) {
-      state.perf = d;
-      var o = d.overall || {};
-      var items = [
-        ["Closed trades", o.n || 0, ""],
-        ["Net R / trade", o.avg_net_r === undefined ? "—" : sign(o.avg_net_r, 3),
-          o.avg_net_r > 0 ? "up" : o.avg_net_r < 0 ? "down" : ""],
-        ["Total R", o.total_r === undefined ? "—" : sign(o.total_r, 1),
-          o.total_r > 0 ? "up" : o.total_r < 0 ? "down" : ""],
-        ["Win rate", o.win_rate === undefined ? "—" : fmt(o.win_rate * 100, 1) + "%", ""],
-        ["Profit factor", o.profit_factor === undefined || o.profit_factor === null ? "—" : fmt(o.profit_factor, 2), ""],
-        ["Max drawdown", o.max_drawdown_r === undefined ? "—" : fmt(o.max_drawdown_r, 1) + " R", ""],
-        ["Open", o.n_open || 0, ""],
-        ["Avg hold", o.avg_hold_minutes ? Math.round(o.avg_hold_minutes / 60) + "h" : "—", ""]
-      ];
-      statBlock("paper-stats", items);
-      statBlock("hist-stats", items.slice(0, 6));
 
-      var body = $("paper-rows"); body.textContent = "";
-      var by = d.by_strategy || {};
-      var keys = Object.keys(by);
-      if (!keys.length) {
-        var tr = el("tr"), td = el("td", null, "No paper trades yet.");
-        td.colSpan = 8; td.style.textAlign = "center"; td.style.padding = "34px";
-        td.style.color = "var(--ink-3)"; tr.appendChild(td); body.appendChild(tr);
-      } else {
-        keys.forEach(function (k) {
-          var s = by[k], tr = el("tr");
-          tr.appendChild(el("td", null, k));
-          tr.appendChild(el("td", "num", s.n || 0));
-          tr.appendChild(el("td", "num", s.win_rate === undefined ? "—" : fmt(s.win_rate * 100, 0) + "%"));
-          tr.appendChild(el("td", "num " + (s.avg_net_r > 0 ? "up" : "down"), sign(s.avg_net_r, 3)));
-          tr.appendChild(el("td", "num " + (s.total_r > 0 ? "up" : "down"), sign(s.total_r, 1)));
-          tr.appendChild(el("td", "num", s.profit_factor ? fmt(s.profit_factor, 2) : "—"));
-          tr.appendChild(el("td", "num", fmt(s.max_drawdown_r, 1)));
-          tr.appendChild(el("td", null, (s.tp || 0) + " / " + (s.sl || 0) + " / " + (s.time_exit || 0)));
-          body.appendChild(tr);
-        });
-      }
-      if (state.page === "strategies") renderStrategies();
-      drawEquityCurve();
-    }).catch(function () {});
-  }
-
-  /* cumulative R over closed trades — drawn from history, not from summary
-     stats, so the curve and the table can never disagree. */
-  function drawEquityCurve() {
+  function renderEquityCurve() {
     var svg = $("equity-curve"); if (!svg) return;
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    var rows = (state.histRows || []).filter(function (r) { return r.net_r !== null && r.net_r !== undefined; });
-    rows.sort(function (a, b) { return a.decision_ts - b.decision_ts; });
-    if (rows.length < 2) {
-      var t = document.createElementNS("http://www.w3.org/2000/svg", "text");
-      t.setAttribute("x", 400); t.setAttribute("y", 62);
+    clear(svg);
+    var NS = "http://www.w3.org/2000/svg";
+    var closed = state.history.filter(function (r) { return r.net_r != null; })
+      .slice().sort(function (a, b) { return a.decision_ts - b.decision_ts; });
+    if (closed.length < 2) {
+      var t = document.createElementNS(NS, "text");
+      t.setAttribute("x", 400); t.setAttribute("y", 78);
       t.setAttribute("text-anchor", "middle"); t.setAttribute("fill", tok("--ink-3"));
       t.setAttribute("font-size", "13");
-      t.textContent = "Not enough closed trades yet";
-      svg.appendChild(t); return;
+      t.textContent = "Abhi itne closed trades nahi hain";
+      svg.appendChild(t);
+      return;
     }
-    var cum = 0, pts = rows.map(function (r, i) { cum += r.net_r; return [i, cum]; });
-    var ys = pts.map(function (p) { return p[1]; });
-    var lo = Math.min(0, Math.min.apply(null, ys)), hi = Math.max(0, Math.max.apply(null, ys));
-    var pad = (hi - lo) * 0.1 || 1; lo -= pad; hi += pad;
-    var X = function (i) { return (i / (pts.length - 1)) * 800; };
-    var Y = function (v) { return 120 - ((v - lo) / (hi - lo)) * 120; };
-    var NS = "http://www.w3.org/2000/svg";
-    var zero = document.createElementNS(NS, "line");
-    zero.setAttribute("x1", 0); zero.setAttribute("x2", 800);
-    zero.setAttribute("y1", Y(0)); zero.setAttribute("y2", Y(0));
-    zero.setAttribute("stroke", tok("--chart-border")); zero.setAttribute("stroke-dasharray", "4 4");
-    svg.appendChild(zero);
-    var d = pts.map(function (p, i) { return (i ? "L" : "M") + X(p[0]).toFixed(1) + " " + Y(p[1]).toFixed(1); }).join(" ");
-    var area = document.createElementNS(NS, "path");
-    area.setAttribute("d", d + " L800 " + Y(0).toFixed(1) + " L0 " + Y(0).toFixed(1) + " Z");
-    area.setAttribute("fill", cum >= 0 ? tok("--up-bg") : tok("--down-bg"));
+    var cum = 0, steps = [0];
+    closed.forEach(function (r) { cum += r.net_r; steps.push(cum); });
+    var W = 800, H = 150;
+    var max = Math.max.apply(null, steps), min = Math.min.apply(null, steps);
+    var y = function (v) { return H - 12 - ((v - min) / ((max - min) || 1)) * (H - 30); };
+    var pts = steps.map(function (v, i) { return [(i / (steps.length - 1)) * W, y(v)]; });
+    var line = pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join(" ");
+
+    var area = document.createElementNS(NS, "polygon");
+    area.setAttribute("points", "0," + H + " " + line + " " + W + "," + H);
+    area.setAttribute("fill", tok("--up-bg"));
     svg.appendChild(area);
-    var line = document.createElementNS(NS, "path");
-    line.setAttribute("d", d); line.setAttribute("fill", "none");
-    line.setAttribute("stroke", cum >= 0 ? tok("--up") : tok("--down"));
-    line.setAttribute("stroke-width", "2"); line.setAttribute("vector-effect", "non-scaling-stroke");
-    svg.appendChild(line);
-  }
-
-  // ------------------------------------------------------------------ CHART --
-  /* The chart library cannot read CSS variables, so the theme is handed to it
-     explicitly — one source of truth (styles.css), two consumers. */
-  function tok(name) {
-    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
-  }
-  function chartTheme() {
-    return {
-      layout: { background: { color: tok("--chart-bg") }, textColor: tok("--chart-text"),
-                fontFamily: "ui-monospace, monospace" },
-      grid: { vertLines: { color: tok("--chart-grid") }, horzLines: { color: tok("--chart-grid") } },
-      rightPriceScale: { borderColor: tok("--chart-border") },
-      timeScale: { borderColor: tok("--chart-border") }
-    };
-  }
-  function seriesTheme() {
-    var up = tok("--up"), down = tok("--down");
-    return { upColor: up, downColor: down, borderVisible: false,
-             wickUpColor: up, wickDownColor: down };
-  }
-
-  function ensureChart() {
-    if (state.chart || !window.LightweightCharts) return;
-    var host = $("chart");
-    var t = chartTheme();
-    t.timeScale.timeVisible = true; t.timeScale.secondsVisible = false;
-    t.crosshair = { mode: 0 };
-    t.autoSize = true;
-    state.chart = LightweightCharts.createChart(host, t);
-    state.series = state.chart.addSeries
-      ? state.chart.addSeries(LightweightCharts.CandlestickSeries, seriesTheme())
-      : state.chart.addCandlestickSeries(seriesTheme());
-    state.chart.subscribeCrosshairMove(function (p) {
-      if (!p || !p.seriesData) return;
-      var d = p.seriesData.get(state.series);
-      if (!d) return;
-      var lg = $("legend"); lg.textContent = "";
-      lg.appendChild(el("b", null, state.chartSym + " " + state.chartTf + "  "));
-      lg.appendChild(document.createTextNode(
-        "O " + fmt(d.open) + "  H " + fmt(d.high) + "  L " + fmt(d.low) + "  C " + fmt(d.close)));
+    var poly = document.createElementNS(NS, "polyline");
+    poly.setAttribute("points", line);
+    poly.setAttribute("fill", "none");
+    poly.setAttribute("stroke", tok("--up"));
+    poly.setAttribute("stroke-width", "2");
+    poly.setAttribute("stroke-linejoin", "round");
+    poly.setAttribute("stroke-linecap", "round");
+    svg.appendChild(poly);
+    pts.forEach(function (p) {
+      var c = document.createElementNS(NS, "circle");
+      c.setAttribute("cx", p[0]); c.setAttribute("cy", p[1]); c.setAttribute("r", 2.6);
+      c.setAttribute("fill", tok("--surf")); c.setAttribute("stroke", tok("--up"));
+      c.setAttribute("stroke-width", "1.6");
+      svg.appendChild(c);
     });
   }
 
-  function clearLines() {
-    state.lines.forEach(function (l) { try { state.series.removePriceLine(l); } catch (e) {} });
-    state.lines = [];
-  }
-
-  function loadChart() {
-    if (!state.series) return;
-    $("chart-status").textContent = "loading…";
-    var end = new Date(), span = { "5m": 3, "15m": 7, "1h": 30, "4h": 120, "1d": 500 }[state.chartTf] || 60;
-    var start = new Date(end.getTime() - span * 864e5);
-    api("/api/chart?symbol=" + state.chartSym + "&timeframe=" + state.chartTf +
-        "&from=" + start.toISOString() + "&to=" + end.toISOString())
-      .then(function (d) {
-        var bars = (d.candles || []).map(function (c) {
-          return { time: Math.floor(new Date(c.ts).getTime() / 1000),
-                   open: c.o, high: c.h, low: c.l, close: c.c };
-        });
-        state.series.setData(bars);
-        $("chart-status").textContent = bars.length + " bars";
-        drawLevels();
-      })
-      .catch(function (e) { $("chart-status").textContent = "chart unavailable"; });
-  }
-
-  function drawLevels() {
-    clearLines();
-    if (!state.showLevels) return;
-    api("/api/v4/levels?symbol=" + state.chartSym + "&tf=" + state.chartTf)
-      .then(function (d) {
-        (d.levels || []).forEach(function (lv) {
-          state.lines.push(state.series.createPriceLine({
-            price: lv.price, color: tok("--accent"), lineWidth: 1,
-            lineStyle: 2, axisLabelVisible: true, title: lv.label }));
-        });
-      }).catch(function () {});
-    /* Several strategies commonly break the SAME level, producing identical
-       entry/stop/target prices. Draw each price once and name every strategy
-       behind it, otherwise the axis stacks three labels on one line. */
-    var seen = {};
-    state.setups.filter(function (s) { return s.symbol === state.chartSym; })
-      .slice(0, 3).forEach(function (s) {
-        [["Entry", s.entry, "--ink"], ["Stop", s.stop, "--down"],
-         ["Target", s.target, "--up"]].forEach(function (p) {
-          var key = p[0] + "@" + p[1];
-          if (seen[key]) { seen[key].push(s.strategy_id); return; }
-          seen[key] = [s.strategy_id];
-          seen[key].line = state.series.createPriceLine({
-            price: p[1], color: tok(p[2]), lineWidth: 2, lineStyle: 0,
-            axisLabelVisible: true, title: p[0] });
-          state.lines.push(seen[key].line);
-        });
-      });
-    Object.keys(seen).forEach(function (key) {
-      var entry = seen[key];
-      if (key.indexOf("Entry@") === 0)
-        entry.line.applyOptions({ title: "Entry · " + entry.join(", ") });
-    });
-  }
-
-  $("chart-sym").addEventListener("click", function (e) {
-    var b = e.target.closest("button"); if (!b) return;
-    state.chartSym = b.dataset.sym; syncSeg("chart-sym", "sym", state.chartSym);
-    loadChart(); loadPaperBook();
-  });
-  $("chart-tf").addEventListener("click", function (e) {
-    var b = e.target.closest("button"); if (!b) return;
-    state.chartTf = b.dataset.tf; syncSeg("chart-tf", "tf", state.chartTf); loadChart();
-  });
-  $("toggle-levels").addEventListener("click", function () {
-    state.showLevels = !state.showLevels;
-    this.classList.toggle("primary", state.showLevels);
-    drawLevels();
-  });
-  $("fs").addEventListener("click", function () {
-    document.body.classList.toggle("fullscreen");
-    var on = document.body.classList.contains("fullscreen");
-    this.textContent = on ? "⛶ Exit" : "⛶ Fullscreen";
-    if (state.chart) setTimeout(function () { state.chart.timeScale().fitContent(); }, 60);
-  });
-  document.addEventListener("keydown", function (e) {
-    if (e.key === "Escape" && document.body.classList.contains("fullscreen")) $("fs").click();
-    if (state.page === "chart" && !/input|select/i.test(e.target.tagName)) {
-      if (e.key === "f") $("fs").click();
-      if (e.key === "l") $("toggle-levels").click();
-      if (e.key === "p") $("pp-toggle").click();
-    }
-  });
-
-
-  // =========================================================================
-  //  ON-CHART PAPER TRADING - live book, qty sizing, running P&L, R progress
-  // =========================================================================
-  state.paper = null; state.ticket = null; state.posLines = [];
-
-  function equity() {
-    var p = state.paper;
-    if (!p) return 0;
-    if (p.portfolio && p.portfolio.equity != null) return p.portfolio.equity;
-    if (p.account && p.account.balance != null) return p.account.balance;
-    return 0;
-  }
-
-  // qty from risk: risking `pct`% of equity across the entry->stop distance
-  function sizeFor(entry, stop, pct) {
-    var eq = equity(), dist = Math.abs(entry - stop);
-    if (!eq || !dist) return 0;
-    return (eq * (pct / 100)) / dist;
-  }
-
-  function clearPosLines() {
-    state.posLines.forEach(function (l) { try { state.series.removePriceLine(l); } catch (e) {} });
-    state.posLines = [];
-  }
-
-  function isLong(x) { return String(x.side).toUpperCase() === "BUY" || x.side === "long"; }
-
-  function renderPaperBook() {
-    var p = state.paper, body = $("pp-body");
-    if (!body) return;
-    body.textContent = "";
-    $("pp-equity").textContent = p ? "$" + fmt(equity(), 2) : "-";
-    var allPos = (p && p.positions) ? p.positions : [];
-    var tot = allPos.reduce(function (a, x) { return a + (x.unrealized_pnl || 0); }, 0);
-    var tEl = $("pp-upnl");
-    if (tEl) {
-      tEl.textContent = (tot >= 0 ? "+" : "-") + "$" + fmt(Math.abs(tot), 2);
-      tEl.className = "v " + (tot > 0 ? "up" : tot < 0 ? "down" : "");
-    }
-    $("pp-dot").className = "dot " + (p ? "live" : "off");
-
-    var pos = (p && p.positions ? p.positions : []).filter(function (x) { return x.symbol === state.chartSym; });
-    var orders = (p && p.orders ? p.orders : []).filter(function (x) { return x.symbol === state.chartSym; });
-
-    /* An empty book should not sit on top of the price axis just to say it is
-       empty. Shrink to the equity line; it re-expands the moment there is
-       something to show. */
-    var panel = $("pos-panel");
-    if (panel) panel.classList.toggle("idle", !pos.length && !orders.length);
-    if (!pos.length && !orders.length) {
-      var e = el("div", "pos");
-      e.appendChild(el("div", "sub", "No open position or resting order on " + state.chartSym.replace("USDT", "")));
-      body.appendChild(e);
-    }
-
-    pos.forEach(function (x) {
-      var lng = isLong(x), d = lng ? 1 : -1;
-      var mark = x.mark != null ? x.mark : x.avg_entry;
-      var upnl = x.unrealized_pnl != null ? x.unrealized_pnl : 0;
-      var stop = x.sl, tgt = x.tp;
-      var risk = stop ? Math.abs(x.avg_entry - stop) : null;
-      var rNow = risk ? ((mark - x.avg_entry) * d) / risk : null;
-
-      var box = el("div", "pos " + (lng ? "long" : "short"));
-      var top = el("div", "pos-top");
-      top.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
-      top.appendChild(el("span", "pos-sym", x.symbol.replace("USDT", "")));
-      var gap = el("div"); gap.style.flex = "1"; top.appendChild(gap);
-      top.appendChild(el("span", "pos-pnl " + (upnl >= 0 ? "up" : "down"),
-                        (upnl >= 0 ? "+" : "-") + "$" + fmt(Math.abs(upnl), 2)));
-      box.appendChild(top);
-
-      var g = el("div", "pos-grid");
-      [["Qty", fmt(x.qty, 4)], ["Entry", fmt(x.avg_entry, 2)], ["Mark", fmt(mark, 2)],
-       ["Stop", stop ? fmt(stop, 2) : "-"], ["Target", tgt ? fmt(tgt, 2) : "-"],
-       ["R now", rNow === null ? "-" : sign(rNow, 2)],
-       ["Notional", "$" + fmt(x.qty * mark, 2)],
-       ["Leverage", x.leverage ? fmt(x.leverage, 0) + "x" : "-"],
-       ["Liq.", x.liq_price ? fmt(x.liq_price, 2) : "-"]].forEach(function (kv) {
-        var c = el("div");
-        c.appendChild(el("span", "k", kv[0]));
-        c.appendChild(el("span", "v", kv[1]));
-        g.appendChild(c);
-      });
-      box.appendChild(g);
-
-      if (rNow !== null && tgt) {
-        var maxR = Math.abs(tgt - x.avg_entry) / risk;
-        var bar = el("div", "rbar");
-        bar.appendChild(el("i"));
-        var fill = el("b");
-        var w = Math.min(Math.abs(rNow) / (rNow >= 0 ? maxR : 1), 1) * 50;
-        if (rNow >= 0) { fill.style.left = "50%"; fill.style.width = w + "%"; fill.style.background = "var(--up)"; }
-        else { fill.style.right = "50%"; fill.style.width = w + "%"; fill.style.background = "var(--down)"; }
-        bar.appendChild(fill);
-        box.appendChild(bar);
-      }
-
-      var f = el("div", "pp-f");
-      f.style.borderTop = "0"; f.style.padding = "9px 0 0";
-      var closeBtn = el("button", "btn", "Close position");
-      closeBtn.addEventListener("click", function () {
-        closeBtn.disabled = true;
-        post("/api/paper/close", { symbol: x.symbol }).then(loadPaperBook)
-          .catch(function () { closeBtn.disabled = false; closeBtn.textContent = "failed"; });
-      });
-      f.appendChild(closeBtn);
-      box.appendChild(f);
-      body.appendChild(box);
-    });
-
-    orders.forEach(function (o) {
-      var box = el("div", "pos");
-      var top = el("div", "pos-top");
-      top.appendChild(el("span", "badge open", "RESTING " + String(o.type).toUpperCase()));
-      top.appendChild(el("span", "pos-sym", o.symbol.replace("USDT", "")));
-      box.appendChild(top);
-      var g = el("div", "pos-grid");
-      [["Side", o.side], ["Qty", fmt(o.qty, 4)], ["Trigger", fmt(o.stop_price || o.price, 2)],
-       ["Stop", o.sl ? fmt(o.sl, 2) : "-"], ["Target", o.tp ? fmt(o.tp, 2) : "-"], ["", ""]]
-        .forEach(function (kv) {
-          var c = el("div");
-          c.appendChild(el("span", "k", kv[0]));
-          c.appendChild(el("span", "v", kv[1]));
-          g.appendChild(c);
-        });
-      box.appendChild(g);
-      var f = el("div", "pp-f"); f.style.borderTop = "0"; f.style.padding = "9px 0 0";
-      var can = el("button", "btn", "Cancel order");
-      can.addEventListener("click", function () {
-        can.disabled = true;
-        post("/api/paper/order/cancel", { id: o.id }).then(loadPaperBook)
-          .catch(function () { can.disabled = false; });
-      });
-      f.appendChild(can); box.appendChild(f);
-      body.appendChild(box);
-    });
-
-    drawPositionLines(pos, orders);
-  }
-
-  function drawPositionLines(pos, orders) {
-    if (!state.series) return;
-    clearPosLines();
-    pos.forEach(function (x) {
-      var lng = isLong(x);
-      state.posLines.push(state.series.createPriceLine({
-        price: x.avg_entry, color: lng ? tok("--up") : tok("--down"), lineWidth: 2,
-        lineStyle: 0, axisLabelVisible: true, title: "POS " + fmt(x.qty, 4) }));
-      if (x.sl) state.posLines.push(state.series.createPriceLine({
-        price: x.sl, color: tok("--down"), lineWidth: 1, lineStyle: 2,
-        axisLabelVisible: true, title: "SL" }));
-      if (x.tp) state.posLines.push(state.series.createPriceLine({
-        price: x.tp, color: tok("--up"), lineWidth: 1, lineStyle: 2,
-        axisLabelVisible: true, title: "TP" }));
-    });
-    orders.forEach(function (o) {
-      state.posLines.push(state.series.createPriceLine({
-        price: o.stop_price || o.price, color: tok("--accent"), lineWidth: 1,
-        lineStyle: 3, axisLabelVisible: true, title: "ORDER " + o.side }));
-    });
-  }
-
-  function loadPaperBook() {
-    return api("/api/paper").then(function (d) {
-      state.paper = d; renderPaperBook(); renderTicket();
-    }).catch(function () { state.paper = null; renderPaperBook(); });
-  }
-
-  function renderTicket() {
-    var t = state.ticket, box = $("ticket");
-    if (!box) return;
-    if (!t || t.symbol !== state.chartSym) { box.hidden = true; return; }
-    box.hidden = false;
-    $("tk-dir").textContent = t.direction > 0 ? "LONG" : "SHORT";
-    $("tk-dir").className = "dir " + (t.direction > 0 ? "long" : "short");
-    $("tk-sym").textContent = t.symbol.replace("USDT", "");
-    $("tk-strat").textContent = t.strategy_id;
-    $("tk-entry").textContent = fmt(t.entry, 2);
-    $("tk-stop").textContent = fmt(t.stop, 2);
-    $("tk-target").textContent = fmt(t.target, 2);
-    $("tk-risk").textContent = fmt(t.risk_pct, 2) + "%";
-    var pct = parseFloat($("tk-riskpct").value) || 0.5;
-    var q = sizeFor(t.entry, t.stop, pct);
-    $("tk-qty").textContent = q ? fmt(q, 4) : "-";
-    $("tk-notional").textContent = q ? "$" + fmt(q * t.entry, 2) : "-";
-    $("tk-place").disabled = !q;
-  }
-
-  var tkClose = $("tk-close");
-  if (tkClose) tkClose.addEventListener("click", function () {
-    state.ticket = null; renderTicket();
-  });
-
-  var riskInp = $("tk-riskpct");
-  if (riskInp) riskInp.addEventListener("input", renderTicket);
-
-  var placeBtn = $("tk-place");
-  if (placeBtn) placeBtn.addEventListener("click", function () {
-    var t = state.ticket; if (!t) return;
-    var pct = parseFloat($("tk-riskpct").value) || 0.5;
-    var q = sizeFor(t.entry, t.stop, pct);
-    if (!q) return;
-    placeBtn.disabled = true; placeBtn.textContent = "placing...";
-    post("/api/paper/order", {
-      symbol: t.symbol, side: t.direction > 0 ? "BUY" : "SELL", type: "stop",
-      qty: Number(q.toFixed(6)), stop_price: t.entry, sl: t.stop, tp: t.target
-    }).then(function () {
-      placeBtn.textContent = "placed";
-      setTimeout(function () { placeBtn.textContent = "Place paper order"; placeBtn.disabled = false; }, 1600);
-      loadPaperBook();
-    }).catch(function () {
-      placeBtn.textContent = "failed";
-      setTimeout(function () { placeBtn.textContent = "Place paper order"; placeBtn.disabled = false; }, 2200);
-    });
-  });
-
-  var ppToggle = $("pp-toggle");
-  if (ppToggle) ppToggle.addEventListener("click", function () {
-    var pnl = $("pos-panel");
-    pnl.classList.toggle("collapsed");
-    this.textContent = pnl.classList.contains("collapsed") ? "Show" : "Hide";
-  });
-
-  setInterval(function () { if (state.page === "chart") loadPaperBook(); }, 8000);
-
-  // ---------------------------------------------------------------- JOURNAL --
-  /* The owner's OWN record (migration 003) — deliberately independent of what
-     the system recommended, so the two can be compared honestly. */
-  var JR_NUM = ["entry", "exit_px", "sl", "tp", "risk_pct"];
-  var JR_TEXT = ["title", "symbol", "direction", "strategy", "emotion",
-                 "mistakes", "lessons", "notes"];
-  state.editingId = null;
-
-  function jrForm() { return $("jr-form"); }
-
-  function jrShow(entry) {
-    var f = jrForm();
-    f.reset();
-    state.editingId = entry ? entry.id : null;
-    if (entry) {
-      JR_TEXT.concat(JR_NUM).forEach(function (k) {
-        if (f.elements[k] && entry[k] !== null && entry[k] !== undefined)
-          f.elements[k].value = entry[k];
-      });
-      if (entry.confidence != null) f.elements.confidence.value = entry.confidence;
-      f.elements.tags.value = (entry.tags || []).join(", ");
-    }
-    $("jr-save").textContent = entry ? "Update entry" : "Save entry";
-    $("jr-status").textContent = "";
-    f.hidden = false;
-    f.elements.title.focus();
-  }
-
-  function jrPayload() {
-    var f = jrForm(), out = {};
-    JR_TEXT.forEach(function (k) {
-      var v = f.elements[k].value.trim();
-      out[k] = v || null;
-    });
-    JR_NUM.forEach(function (k) {
-      var v = f.elements[k].value.trim();
-      out[k] = v === "" ? null : Number(v);
-    });
-    var c = f.elements.confidence.value.trim();
-    out.confidence = c === "" ? null : parseInt(c, 10);
-    var tags = f.elements.tags.value.split(",").map(function (t) { return t.trim(); })
-      .filter(Boolean);
-    out.tags = tags.length ? tags : null;
-    return out;
-  }
-
-  function loadJournal() {
-    var q = [];
-    if ($("jr-search").value.trim()) q.push("search=" + encodeURIComponent($("jr-search").value.trim()));
-    if ($("jr-symbol").value) q.push("symbol=" + $("jr-symbol").value);
-    if ($("jr-direction").value) q.push("direction=" + $("jr-direction").value);
-    api("/api/journal" + (q.length ? "?" + q.join("&") : ""))
-      .then(renderJournal).catch(function () {});
-  }
-
+  // ---------------------------------------------------------------- journal --
   function renderJournal(rows) {
-    var box = $("jr-list"); box.textContent = "";
+    var box = $("journal-cards"); clear(box);
     if (!rows || !rows.length) {
-      var e = el("div", "empty");
-      e.appendChild(el("div", "big", "No entries yet"));
-      e.appendChild(el("div", null,
-        "Log a trade after you take it — what you did, and what you learned."));
-      box.appendChild(e); return;
+      box.appendChild(el("div", "empty",
+        "Abhi koi entry nahi. Trade lene ke baad likho — kya kiya aur kya seekha."));
+      return;
     }
-    rows.forEach(function (r) { box.appendChild(journalCard(r)); });
-  }
+    rows.forEach(function (r) {
+      var card = el("div", "jcard rise");
+      var h = el("div", "jcard-h");
+      if (r.direction) h.appendChild(el("span", "dir " + (r.direction === "LONG" ? "long" : "short"), r.direction));
+      if (r.symbol) h.appendChild(el("span", "sy", String(r.symbol).replace("USDT", "")));
+      if (r.entry != null && r.exit_px != null && r.sl != null) {
+        var risk = Math.abs(r.entry - r.sl);
+        if (risk) {
+          var rr = (r.exit_px - r.entry) / risk * (r.direction === "SHORT" ? -1 : 1);
+          h.appendChild(el("span", "r " + (rr >= 0 ? "up" : "down"), sign(rr, 2) + "R"));
+        }
+      }
+      card.appendChild(h);
+      card.appendChild(el("div", "t", r.title || "Untitled"));
 
-  function journalCard(r) {
-    var c = el("div", "card jr-card");
-    var h = el("div", "card-h");
-    if (r.direction) h.appendChild(el("span", "dir " + (r.direction === "LONG" ? "long" : "short"), r.direction));
-    if (r.symbol) h.appendChild(el("span", "sym", r.symbol.replace("USDT", "")));
-    h.appendChild(el("span", "card-t", r.title || "Untitled"));
-    var sp = el("div"); sp.style.flex = "1"; h.appendChild(sp);
-    if (r.strategy) h.appendChild(el("span", "strat-tag", r.strategy));
-    c.appendChild(h);
+      var g = el("div", "jgrid");
+      [["Entry", r.entry], ["Exit", r.exit_px], ["Confidence", r.confidence]].forEach(function (c) {
+        var cell = el("div");
+        cell.appendChild(labelled(c[0]));
+        cell.appendChild(el("div", "v", c[1] == null ? "—"
+          : (c[0] === "Confidence" ? c[1] + "/10" : fmt(c[1], 2))));
+        g.appendChild(cell);
+      });
+      card.appendChild(g);
 
-    var prices = [["Entry", r.entry], ["Exit", r.exit_px], ["Stop", r.sl], ["Target", r.tp]]
-      .filter(function (p) { return p[1] !== null && p[1] !== undefined; });
-    if (prices.length) {
-      var pr = el("div", "rail-prices");
-      prices.forEach(function (p) {
-        var cell = el("div", "pcell");
-        cell.appendChild(el("div", "k", p[0]));
-        cell.appendChild(el("div", "v", fmt(p[1], 2)));
-        pr.appendChild(cell);
+      [["Kya galat kiya", r.mistakes], ["Kya seekha", r.lessons]].forEach(function (b) {
+        if (!b[1]) return;
+        var blk = el("div", "jblock");
+        blk.appendChild(labelled(b[0]));
+        blk.appendChild(el("p", null, b[1]));
+        card.appendChild(blk);
       });
-      c.appendChild(pr);
-    }
-    [["What I did wrong", r.mistakes], ["What I learned", r.lessons], ["Notes", r.notes]]
-      .forEach(function (row) {
-        if (!row[1]) return;
-        var d = el("div", "jr-note");
-        d.appendChild(el("span", "k", row[0]));
-        d.appendChild(el("span", null, row[1]));
-        c.appendChild(d);
-      });
-    if (r.tags && r.tags.length) {
-      var tg = el("div", "jr-tags");
-      r.tags.forEach(function (t) { tg.appendChild(el("span", "tag", t)); });
-      c.appendChild(tg);
-    }
-    var f = el("div", "setup-f");
-    var meta = [when(r.created_at ? Date.parse(r.created_at) / 1000 : 0)];
-    if (r.emotion) meta.push("felt " + r.emotion);
-    if (r.confidence != null) meta.push("confidence " + r.confidence + "/10");
-    f.appendChild(el("span", "sub", meta.join(" · ")));
-    var gap = el("div"); gap.style.flex = "1"; f.appendChild(gap);
-    var ed = el("button", "btn", "Edit");
-    ed.addEventListener("click", function () { jrShow(r); });
-    var del = el("button", "btn", "Delete");
-    del.addEventListener("click", function () {
-      if (!window.confirm("Delete this entry? This cannot be undone.")) return;
-      api("/api/journal/" + r.id, { method: "DELETE" })
-        .then(loadJournal).catch(function () {});
+      if (r.tags && r.tags.length) {
+        var tg = el("div", "tags");
+        r.tags.forEach(function (t) { tg.appendChild(el("span", null, t)); });
+        card.appendChild(tg);
+      }
+      box.appendChild(card);
+      if (window.__msObserve) window.__msObserve(card);
     });
-    f.appendChild(ed); f.appendChild(del);
-    c.appendChild(f);
-    return c;
   }
 
-  $("jr-new").addEventListener("click", function () { jrShow(null); });
-  $("jr-cancel").addEventListener("click", function () { jrForm().hidden = true; });
-  ["jr-search", "jr-symbol", "jr-direction"].forEach(function (id) {
-    $(id).addEventListener("change", loadJournal);
-  });
-  $("jr-search").addEventListener("input", function () {
-    clearTimeout(state.jrTimer);
-    state.jrTimer = setTimeout(loadJournal, 300);
-  });
-  jrForm().addEventListener("submit", function (ev) {
-    ev.preventDefault();
-    var id = state.editingId;
-    $("jr-status").textContent = "saving…";
-    post("/api/journal" + (id ? "/" + id : ""), jrPayload(), id ? "PATCH" : "POST")
-      .then(function () {
-        $("jr-status").textContent = "saved ✓";
-        jrForm().hidden = true;
-        loadJournal();
-      })
-      .catch(function () { $("jr-status").textContent = "not saved"; });
-  });
-
-  // ---------------------------------------------------------------- SETTINGS --
-  /* Telegram is the channel that works when the app is CLOSED, which for a tool
-     built on resting orders is the only channel that matters. Everything here
-     is a thin editor over GET/PUT /settings. */
-  function toggleRow(label, hint, checked, onChange) {
+  // --------------------------------------------------------------- settings --
+  function prefRow(title, sub, checked, onChange) {
     var r = el("label", "pref");
-    var box = document.createElement("input");
-    box.type = "checkbox"; box.checked = !!checked;
-    box.addEventListener("change", function () { onChange(box.checked, box); });
-    var lab = el("div", "pref-t");
-    lab.appendChild(el("div", null, label));
-    if (hint) lab.appendChild(el("div", "sub", hint));
-    var sw = el("span", "toggle");
-    sw.appendChild(box); sw.appendChild(el("span", "track"));
-    r.appendChild(lab); r.appendChild(sw);
+    var g = el("span", "grow");
+    g.appendChild(el("span", "t", title));
+    g.appendChild(el("span", "s", sub));
+    r.appendChild(g);
+    var sw = el("button", "sw" + (checked ? " on" : ""));
+    sw.appendChild(el("i"));
+    sw.setAttribute("aria-label", title);
+    sw.addEventListener("click", function (ev) {
+      ev.preventDefault();
+      var next = !sw.classList.contains("on");
+      sw.classList.toggle("on", next);
+      onChange(next, sw);
+    });
+    r.appendChild(sw);
     return r;
   }
 
@@ -1213,148 +876,332 @@
     var d = state.settings; if (!d) return;
     var a = d.alerts || {}, n = d.notifications || {};
 
-    var ab = $("alert-prefs"); ab.textContent = "";
-    ab.appendChild(toggleRow("Price approaching an entry",
-      "The one that matters — a resting order sits for hours, so “it is coming” " +
-      "is actionable and “it filled” is just news.",
+    var box = $("alert-prefs"); clear(box);
+    box.appendChild(prefRow("Price entry ke paas aa raha hai",
+      "resting order ghanton baith sakta hai — kaam ki baat ye hai ki wo aa raha hai",
       a.on_approach, function (v) { saveAlerts({ on_approach: v }); }));
 
     var prox = el("label", "pref");
-    var pt = el("div", "pref-t");
-    pt.appendChild(el("div", null, "How close is “approaching”"));
-    pt.appendChild(el("div", "sub", "percent of price away from the entry level"));
-    var inp = document.createElement("input");
-    inp.className = "inp"; inp.type = "number"; inp.step = "0.05";
-    inp.min = "0.01"; inp.max = "10"; inp.style.width = "88px";
+    var pg = el("span", "grow");
+    pg.appendChild(el("span", "t", "Kitna paas matlab “paas”"));
+    pg.appendChild(el("span", "s", "entry level se price ka % faasla"));
+    prox.appendChild(pg);
+    var inp = el("input", "inp mono");
+    inp.type = "number"; inp.step = "0.05"; inp.min = "0.01"; inp.max = "10";
     inp.value = a.proximity_pct;
     inp.addEventListener("change", function () {
       saveAlerts({ proximity_pct: Number(inp.value) })
         .then(function (out) { inp.value = out.proximity_pct; })
         .catch(function () { inp.value = a.proximity_pct; });
     });
-    prox.appendChild(pt); prox.appendChild(inp);
-    ab.appendChild(prox);
+    prox.appendChild(inp);
+    box.appendChild(prox);
 
-    ab.appendChild(toggleRow("A new setup is found", "when a strategy first issues it",
+    box.appendChild(prefRow("Naya setup mila", "jab koi strategy pehli baar issue kare",
       a.on_new_setup, function (v) { saveAlerts({ on_new_setup: v }); }));
-    ab.appendChild(toggleRow("Entry triggered", "the resting order filled",
+    box.appendChild(prefRow("Entry fill ho gaya", "resting order bhar gaya, trade live hai",
       a.on_trigger, function (v) { saveAlerts({ on_trigger: v }); }));
-    ab.appendChild(toggleRow("Trade closed", "target, stop or time exit, with the net R",
+    box.appendChild(prefRow("Trade band ho gaya", "target, stop ya time exit — net R ke saath",
       a.on_close, function (v) { saveAlerts({ on_close: v }); }));
-
-    var cb = $("channel-prefs"); cb.textContent = "";
-    [["telegram", "Telegram", "works with the app closed"],
-     ["trade_alerts", "Trade alerts", "setups, entries and exits"],
-     ["system_alerts", "System alerts", "feed disconnects and errors"],
-     ["desktop", "Desktop notifications", "only while a tab is open"]
-    ].forEach(function (row) {
-      cb.appendChild(toggleRow(row[1], row[2], n[row[0]], function (v) {
-        var patch = {}; patch[row[0]] = v;
-        post("/settings/notifications", patch, "PUT").then(function (out) {
+    box.appendChild(prefRow("Telegram channel", "app band ho tab bhi ye kaam karta hai",
+      n.telegram, function (v) {
+        post("/settings/notifications", { telegram: v }, "PUT").then(function (out) {
           state.settings.notifications = out.notifications;
         });
       }));
-    });
 
-    var bots = $("tg-bots"); bots.textContent = "";
+    var bots = $("tg-bots"); clear(bots);
     var list = d.telegram_bots || [];
     if (!list.length) {
-      bots.appendChild(el("div", "sub", "No bot connected — alerts will not leave the browser."));
+      bots.appendChild(el("div", "bot",
+        "Koi bot connect nahi — alerts browser se bahar nahi jaayenge."));
     }
     list.forEach(function (b) {
       var r = el("div", "bot");
-      var left = el("div");
-      left.appendChild(el("div", "bot-n", "@" + (b.bot_username || "bot")));
-      left.appendChild(el("div", "sub", "chat " + b.chat_id +
-        (b.verified ? " · verified" : " · not verified")));
-      r.appendChild(left);
-      var sp = el("div"); sp.style.flex = "1"; r.appendChild(sp);
-      var t = el("button", "btn", "Send test");
+      r.appendChild(el("span", "dot on"));
+      r.appendChild(el("span", "nm", "@" + (b.bot_username || "bot")));
+      r.appendChild(el("div", "sp"));
+      r.appendChild(el("span", "meta", b.verified ? "connected · chat detected" : "verify pending"));
+      var t = el("button", "btn", "Test");
       t.addEventListener("click", function () {
-        t.disabled = true; t.textContent = "Sending…";
+        t.disabled = true; t.textContent = "…";
         post("/settings/telegram/test", {})
           .then(function () { t.textContent = "Sent ✓"; })
-          .catch(function () { t.textContent = "Failed"; })
+          .catch(function () { t.textContent = "Fail"; })
           .then(function () { setTimeout(function () {
-            t.disabled = false; t.textContent = "Send test"; }, 2000); });
+            t.disabled = false; t.textContent = "Test"; }, 2000); });
       });
       var x = el("button", "btn", "Remove");
       x.addEventListener("click", function () {
-        if (!window.confirm("Remove this bot? Alerts stop going to that chat.")) return;
+        if (!window.confirm("Ye bot hata dein? Us chat pe alerts band ho jaayenge.")) return;
         api("/settings/telegram/" + b.id, { method: "DELETE" }).then(loadSettings);
       });
       r.appendChild(t); r.appendChild(x);
       bots.appendChild(r);
     });
 
-    var about = $("about-box"); about.textContent = "";
-    [["API host", HTTP.replace(/^https?:\/\//, "")],
-     ["Symbols", "BTCUSDT · ETHUSDT"],
-     ["Strategies", state.catalogue ? state.catalogue.strategies.length + " in the catalogue" : "—"],
-     ["Execution", "none — this tool never places an order"]
-    ].forEach(function (row) {
-      var line = el("div", "pref");
-      var t2 = el("div", "pref-t"); t2.appendChild(el("div", null, row[0]));
-      line.appendChild(t2); line.appendChild(el("div", "sub", row[1]));
-      about.appendChild(line);
+    var about = $("about-cells"); clear(about);
+    [["Version", "v1.0.0-foundation", "V4 level-breakout layer"],
+     ["Strategies", String((state.catalogue && state.catalogue.strategies.length) || 0), "catalogue mein"],
+     ["Symbols", "BTC · ETH", "1m primary / 5m context"],
+     ["Execution", "koi nahi", "ye tool order place nahi karta"]
+    ].forEach(function (c) {
+      var cell = el("div", "stat reveal");
+      cell.appendChild(labelled(c[0]));
+      cell.appendChild(el("div", "v", c[1]));
+      cell.appendChild(el("div", "sub", c[2]));
+      about.appendChild(cell);
+      if (window.__msObserve) window.__msObserve(cell);
     });
   }
 
-  function loadSettings() {
-    return api("/settings").then(function (d) {
-      state.settings = d; renderSettings();
-    }).catch(function () {});
-  }
-
   $("tg-verify").addEventListener("click", function () {
-    var btn = $("tg-verify"), err = $("tg-err"), tok = $("tg-token");
-    if (!tok.value.trim()) return;
+    var btn = $("tg-verify"), err = $("tg-err"), t = $("tg-token");
+    if (!t.value.trim()) return;
     btn.disabled = true; btn.textContent = "Verifying…"; err.hidden = true;
-    post("/settings/telegram/verify", { token: tok.value.trim() })
+    post("/settings/telegram/verify", { token: t.value.trim() })
       .then(function (d) {
-        if (!d.ok) throw new Error(d.error || "Telegram rejected that token.");
-        tok.value = "";
+        if (!d.ok) throw new Error(d.error || "Telegram ne ye token reject kar diya.");
+        t.value = "";
         return loadSettings();
       })
       .catch(function (e) { err.textContent = String(e.message || e); err.hidden = false; })
       .then(function () { btn.disabled = false; btn.textContent = "Verify & connect"; });
   });
 
-  // ------------------------------------------------------------------- BOOT --
-  function loadCatalogue() {
-    return api("/api/v4/strategies").then(function (d) {
-      state.catalogue = d;
-      $("confidence").textContent = d.confidence_note || "";
-      var sel = $("hist-strategy");
-      if (sel.options.length <= 1) {
-        d.strategies.forEach(function (s) {
-          var o = document.createElement("option");
-          o.value = s.id; o.textContent = s.label; sel.appendChild(o);
-        });
-      }
-      renderStrategies();
-    }).catch(function () {
-      $("confidence").textContent = "Backend not reachable — start the API and refresh.";
+  // --------------------------------------------------------------- evidence --
+  function renderEvidence() {
+    var box = $("evidence-cells"); clear(box);
+    var o = (state.perf && state.perf.overall) || {};
+    [["Logged recommendations", state.history.length + " / 200", "P5 validation gate", ""],
+     ["Closed paper trades", String(o.n || 0), "accounted, fees ke baad", ""],
+     ["TRUSTED strategies", "0", "abhi tak koi gate pass nahi kiya", "dim"],
+     ["Paper expectancy", o.avg_net_r == null ? "—" : sign(o.avg_net_r, 2) + "R",
+      "provisional — sirf " + (o.n || 0) + " trades", o.avg_net_r >= 0 ? "up" : "down"]
+    ].forEach(function (c) {
+      var cell = el("div", "stat reveal");
+      cell.appendChild(labelled(c[0]));
+      cell.appendChild(el("div", "v " + c[3], c[1]));
+      cell.appendChild(el("div", "sub", c[2]));
+      box.appendChild(cell);
+      if (window.__msObserve) window.__msObserve(cell);
     });
   }
 
+  // ------------------------------------------------------------------ chart --
+  function chartTheme() {
+    return {
+      layout: { background: { color: "transparent" }, textColor: tok("--chart-text"),
+                fontFamily: "'JetBrains Mono', ui-monospace, monospace" },
+      grid: { vertLines: { color: tok("--chart-grid") }, horzLines: { color: tok("--chart-grid") } },
+      rightPriceScale: { borderColor: tok("--chart-border") },
+      timeScale: { borderColor: tok("--chart-border") }
+    };
+  }
+  function seriesTheme() {
+    var up = tok("--up"), down = tok("--down");
+    return { upColor: up, downColor: down, borderVisible: false,
+             wickUpColor: up, wickDownColor: down };
+  }
+
+  function ensureChart() {
+    if (state.chart || !window.LightweightCharts) return;
+    var t = chartTheme();
+    t.timeScale.timeVisible = true; t.timeScale.secondsVisible = false;
+    t.crosshair = { mode: 0 };
+    t.autoSize = true;
+    state.chart = LightweightCharts.createChart($("chart-host"), t);
+    state.series = state.chart.addSeries
+      ? state.chart.addSeries(LightweightCharts.CandlestickSeries, seriesTheme())
+      : state.chart.addCandlestickSeries(seriesTheme());
+    state.chart.timeScale().subscribeVisibleLogicalRangeChange(paintZones);
+    state.chart.subscribeCrosshairMove(function (p) {
+      if (!p || !p.seriesData) return;
+      var d = p.seriesData.get(state.series);
+      if (!d) return;
+      var dd = dec(state.sym);
+      $("legend").textContent = state.sym + " · " + state.tf +
+        "   O " + fmt(d.open, dd) + "  H " + fmt(d.high, dd) +
+        "  L " + fmt(d.low, dd) + "  C " + fmt(d.close, dd);
+    });
+  }
+
+  /* The geometry as an area, not just lines: green between entry and target,
+     red between entry and stop. Redrawn whenever the price scale moves. */
+  function paintZones() {
+    var up = $("zone-up"), down = $("zone-down");
+    if (!up || !down) return;
+    var s = current();
+    if (!state.series || !s || s.symbol !== state.sym) {
+      up.style.display = down.style.display = "none";
+      return;
+    }
+    function band(node, a, b) {
+      var ya = state.series.priceToCoordinate(a);
+      var yb = state.series.priceToCoordinate(b);
+      if (ya == null || yb == null) { node.style.display = "none"; return; }
+      node.style.display = "block";
+      node.style.top = Math.min(ya, yb) + "px";
+      node.style.height = Math.abs(ya - yb) + "px";
+    }
+    band(up, s.entry, s.target);
+    band(down, s.entry, s.stop);
+  }
+
+  function clearLines() {
+    state.lines.forEach(function (l) { try { state.series.removePriceLine(l); } catch (e) {} });
+    state.lines = [];
+  }
+
+  /* Catalogue levels plus the selected setup's geometry: TP dashed green,
+     ENTRY solid accent, SL dashed red. */
+  function drawLevels() {
+    if (!state.series) return;
+    clearLines();
+    api("/api/v4/levels?symbol=" + state.sym + "&tf=" + state.tf)
+      .then(function (d) {
+        (d.levels || []).forEach(function (lv) {
+          state.lines.push(state.series.createPriceLine({
+            price: lv.price, color: tok("--ink-3"), lineWidth: 1,
+            lineStyle: 2, axisLabelVisible: true, title: lv.label }));
+        });
+      }).catch(function () {});
+
+    var s = current();
+    if (!s || s.symbol !== state.sym) return;
+    [["TP", s.target, tok("--up"), 2], ["ENTRY", s.entry, tok("--accent"), 0],
+     ["SL", s.stop, tok("--down"), 2]].forEach(function (p) {
+      state.lines.push(state.series.createPriceLine({
+        price: p[1], color: p[2], lineWidth: 2, lineStyle: p[3],
+        axisLabelVisible: true, title: p[0] }));
+    });
+    paintZones();
+  }
+
+  function loadChart() {
+    ensureChart();
+    if (!state.series) return;
+    $("stream-label").textContent = (state.live ? "live" : "sim") + " · " + state.tf + " · " + state.sym;
+    var bars = { "5m": 300, "15m": 300, "1h": 400, "4h": 400, "1d": 300 }[state.tf] || 300;
+    var secs = { "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 }[state.tf] || 300;
+    var end = new Date();
+    var start = new Date(end.getTime() - bars * secs * 1000);
+    var q = "/api/chart?symbol=" + state.sym + "&timeframe=" + state.tf +
+            "&from=" + start.toISOString() + "&to=" + end.toISOString();
+    api(q).then(function (d) {
+      var rows = (d.candles || []).map(function (k) {
+        return { time: Math.floor(new Date(k.ts).getTime() / 1000),
+                 open: k.o, high: k.h, low: k.l, close: k.c };
+      });
+      state.series.setData(rows);
+      var dd = dec(state.sym);
+      var last = rows[rows.length - 1];
+      if (last) {
+        $("legend").textContent = state.sym + " · " + state.tf +
+          "   O " + fmt(last.open, dd) + "  H " + fmt(last.high, dd) +
+          "  L " + fmt(last.low, dd) + "  C " + fmt(last.close, dd);
+        state.heroCandles = rows.slice(-90).map(function (r) {
+          return { o: r.open, h: r.high, l: r.low, c: r.close };
+        });
+        renderHeroCandles();
+      }
+      drawLevels();
+      requestAnimationFrame(paintZones);
+    }).catch(function () {
+      $("legend").textContent = state.sym + " · " + state.tf + "   data unavailable";
+    });
+  }
+
+  // ------------------------------------------------------------------ loads --
+  function loadCatalogue() {
+    return api("/api/v4/strategies").then(function (d) {
+      state.catalogue = d;
+      renderStrategies(); renderStratList(); renderSettings();
+    }).catch(function () {});
+  }
   function loadSetups() {
     return api("/api/v4/setups").then(function (d) {
       state.setups = d.setups || [];
-      renderToday();
-      if (state.page === "chart") drawLevels();
-    }).catch(function () { state.setups = []; renderToday(); });
+      renderSetup(); renderQueue(); drawLevels();
+    }).catch(function () {});
+  }
+  function loadQuotes() {
+    return api("/api/v4/quotes").then(function (d) {
+      var q = d.quotes || {};
+      Object.keys(q).forEach(function (k) {
+        if (state.quotes[k]) state.prev[k] = state.quotes[k].price;
+        state.quotes[k] = q[k];
+      });
+      setLive(true);
+      renderTickers();
+    }).catch(function () {});
+  }
+  /* Today's opening price per symbol, so the ticker's % is a real day change. */
+  function loadDayOpens() {
+    var end = new Date();
+    var start = new Date(end.getTime() - 5 * 86400 * 1000);
+    return Promise.all(["ETHUSDT", "BTCUSDT"].map(function (sym) {
+      return api("/api/chart?symbol=" + sym + "&timeframe=1d&from=" +
+                 start.toISOString() + "&to=" + end.toISOString())
+        .then(function (d) {
+          var rows = d.candles || [];
+          if (rows.length) state.dayOpen[sym] = rows[rows.length - 1].o;
+        }).catch(function () {});
+    })).then(renderTickers);
   }
 
+  function loadHistory() {
+    return api("/api/v4/history?limit=300").then(function (d) {
+      state.history = d.rows || [];
+      renderHistory(); renderPaper(); renderEvidence();
+    }).catch(function () {});
+  }
+  function loadPerformance() {
+    return api("/api/v4/performance").then(function (d) {
+      state.perf = d;
+      renderPaper(); renderStrategies(); renderEvidence();
+    }).catch(function () {});
+  }
+  function loadPaper() {
+    return api("/api/paper").then(function (d) {
+      state.paper = d;
+      var eq = (d.portfolio && d.portfolio.equity) != null ? d.portfolio.equity
+             : (d.account && d.account.balance);
+      if (eq != null) { state.equity = eq; renderSizing(current()); }
+      renderPaper();
+    }).catch(function () {});
+  }
+  function loadJournal() {
+    return api("/api/journal?limit=12").then(renderJournal).catch(function () {});
+  }
+  function loadSettings() {
+    return api("/settings").then(function (d) {
+      state.settings = d; renderSettings();
+    }).catch(function () {});
+  }
+
+  $("risk").addEventListener("input", function () {
+    state.riskPct = Number(this.value);
+    renderSizing(current());
+  });
+
+  // ------------------------------------------------------------------- boot --
   function boot() {
-    loadCatalogue();
-    loadSetups();
-    loadPerformance();
+    renderSymbolTabs(); renderTfTabs(); renderHistTabs(); renderPipeline(); renderTickers();
+    loadCatalogue().then(loadSetups).then(function () { loadChart(); });
     loadQuotes();
+    loadDayOpens();
+    loadHistory();
+    loadPerformance();
+    loadPaper();
     loadActive();
+    loadJournal();
+    loadSettings();
+    tickClock();
   }
 
   if (TOKEN) boot(); else showGate();
-  setInterval(function () { if (TOKEN) loadQuotes(); }, 30000);
-  setInterval(function () { if (TOKEN) { loadSetups(); loadActive(); } }, 60000);
+  setInterval(tickClock, 1000);
+  setInterval(function () { if (TOKEN) loadQuotes(); }, 4000);
+  setInterval(function () { if (TOKEN) { loadSetups(); loadHistory(); loadActive(); } }, 60000);
 })();
