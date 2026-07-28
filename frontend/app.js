@@ -26,11 +26,25 @@
     heroCandles: []
   };
 
-  var failures = 0;
+  /* Failing paths are tracked individually: a 4-second quotes poll succeeding
+     must not erase the warning raised by a history endpoint that is still
+     down. The banner clears only when nothing is failing. */
+  var failing = Object.create(null);
   function banner(msg) {
     var b = $("banner"); if (!b) return;
     if (msg) { $("banner-msg").textContent = msg; b.classList.add("on"); }
     else b.classList.remove("on");
+  }
+  function noteFailure(path, err) {
+    failing[path] = String(err && err.message || err);
+    var paths = Object.keys(failing);
+    banner("Backend se " + paths.length + " request fail ho rahi hai — screen pe " +
+           "jo hai wo purana ho sakta hai. (" + failing[paths[0]] + ")");
+  }
+  function noteSuccess(path) {
+    if (!(path in failing)) return;
+    delete failing[path];
+    if (!Object.keys(failing).length) banner(null);
   }
   function setLive(on) {
     state.live = on;
@@ -39,6 +53,8 @@
     if (dot) dot.className = "dot" + (on ? " live" : "");
   }
 
+  function key(path) { return String(path).split("?")[0]; }
+
   function api(path, opts) {
     var init = opts || {};
     init.headers = TOKEN ? { Authorization: "Bearer " + TOKEN } : {};
@@ -46,14 +62,12 @@
       .then(function (r) {
         if (r.status === 401) { signOut(); throw new Error("signed out"); }
         if (!r.ok) throw new Error(r.status + " " + path);
-        if (failures) { failures = 0; banner(null); }
+        noteSuccess(key(path));
         return r.json();
       })
       .catch(function (e) {
-        failures++;
         setLive(false); renderTickers();
-        banner("Backend reachable nahi hai — screen pe jo hai wo purana ho sakta hai. (" +
-               String(e.message || e) + ")");
+        noteFailure(key(path), e);
         throw e;
       });
   }
@@ -209,11 +223,14 @@
       var q = state.quotes[k];
       var px = q ? q.price : null;
       var prev = state.prev[k];
-      var up = (px === null || prev === undefined) ? true : px >= prev;
+      var up = (prev === undefined) ? true : px >= prev;
       var card = el("div", "ticker");
       var left = el("div");
       left.appendChild(labelled(k.replace("USDT", "") + " / USDT"));
-      var o = odo(px === null ? "—" : fmt(px, 2), 30, up ? "var(--up)" : "var(--down)");
+      /* DESIGN LAW: green means money. A missing price is not an up-tick, so
+         the placeholder stays neutral. */
+      var o = odo(px === null ? "—" : fmt(px, 2), 30,
+                  px === null ? "var(--ink-3)" : (up ? "var(--up)" : "var(--down)"));
       o.style.marginTop = "8px";
       left.appendChild(o);
       card.appendChild(left);
@@ -662,7 +679,8 @@
       ? closed.reduce(function (a, r) { return a + (r.hold_minutes || 0); }, 0) / closed.length : 0;
     [["Recommendations", String(rows.length), "log mein total", ""],
      ["Win %", closed.length ? fmt(wins / closed.length * 100, 1) : "—", "net R positive", ""],
-     ["Net R", closed.length ? sign(netR, 2) : "—", "fees ke baad", netR >= 0 ? "up" : "down"],
+     ["Net R", closed.length ? sign(netR, 2) : "—", "fees ke baad",
+      closed.length ? (netR >= 0 ? "up" : "down") : ""],
      ["Avg hold", closed.length ? Math.round(hold) + "m" : "—", "entry se exit tak", ""]
     ].forEach(function (s) {
       var c = el("div", "stat reveal");
@@ -697,7 +715,7 @@
       row.appendChild(el("span", "n down", fmt(r.stop, d)));
       row.appendChild(el("span", "n up", fmt(r.target, d)));
       row.appendChild(el("span", "badge " + badge[0], badge[1]));
-      row.appendChild(el("span", "netr " + (r.net_r >= 0 ? "up" : "down"),
+      row.appendChild(el("span", "netr " + (r.net_r == null ? "" : (r.net_r >= 0 ? "up" : "down")),
         r.net_r == null ? "—" : sign(r.net_r, 2) + "R"));
       box.appendChild(row);
     });
@@ -711,10 +729,12 @@
       ? acct.portfolio.equity : (acct.account && acct.account.balance);
     var box = $("paper-stats"); clear(box);
     [["Equity", eq == null ? "—" : "$" + fmt(eq, 2), "start $10,000", ""],
-     ["Total R", o.total_r == null ? "—" : sign(o.total_r, 2), "closed trades", o.total_r >= 0 ? "up" : "down"],
+     ["Total R", o.total_r == null ? "—" : sign(o.total_r, 2), "closed trades",
+      o.total_r == null ? "" : (o.total_r >= 0 ? "up" : "down")],
      ["Win %", o.win_rate == null ? "—" : fmt(o.win_rate * 100, 1), (o.n || 0) + " trades", ""],
      ["Profit factor", o.profit_factor == null ? "—" : fmt(o.profit_factor, 2), "gross win / gross loss", ""],
-     ["Max drawdown", o.max_drawdown_r == null ? "—" : "-" + fmt(o.max_drawdown_r, 2) + "R", "peak se trough", "down"]
+     ["Max drawdown", o.max_drawdown_r == null ? "—" : "-" + fmt(o.max_drawdown_r, 2) + "R",
+      "peak se trough", o.max_drawdown_r ? "down" : ""]
     ].forEach(function (s) {
       var c = el("div", "stat rise");
       c.appendChild(labelled(s[0]));
@@ -743,10 +763,12 @@
       row.appendChild(el("span", "nm", strategyMeta(k).label || k));
       row.appendChild(el("span", "n", String(v.n || 0)));
       row.appendChild(el("span", "n", v.win_rate == null ? "—" : fmt(v.win_rate * 100, 1)));
-      row.appendChild(el("span", "n " + (v.total_r >= 0 ? "up" : "down"),
+      row.appendChild(el("span", "n " + (v.total_r == null ? "" : (v.total_r >= 0 ? "up" : "down")),
         v.total_r == null ? "—" : sign(v.total_r, 2)));
       row.appendChild(el("span", "n", v.profit_factor == null ? "—" : fmt(v.profit_factor, 2)));
-      row.appendChild(el("span", "n down", v.max_drawdown_r == null ? "—" : fmt(v.max_drawdown_r, 2)));
+      /* a zero drawdown is not a loss — only a real one wears red */
+      row.appendChild(el("span", "n " + (v.max_drawdown_r ? "down" : ""),
+        v.max_drawdown_r == null ? "—" : fmt(v.max_drawdown_r, 2)));
       row.appendChild(el("span", "mix", (v.tp || 0) + " / " + (v.sl || 0) + " / " + (v.time_exit || 0)));
       att.appendChild(row);
     });
@@ -977,7 +999,8 @@
      ["Closed paper trades", String(o.n || 0), "accounted, fees ke baad", ""],
      ["TRUSTED strategies", "0", "abhi tak koi gate pass nahi kiya", "dim"],
      ["Paper expectancy", o.avg_net_r == null ? "—" : sign(o.avg_net_r, 2) + "R",
-      "provisional — sirf " + (o.n || 0) + " trades", o.avg_net_r >= 0 ? "up" : "down"]
+      "provisional — sirf " + (o.n || 0) + " trades",
+      o.avg_net_r == null ? "" : (o.avg_net_r >= 0 ? "up" : "down")]
     ].forEach(function (c) {
       var cell = el("div", "stat reveal");
       cell.appendChild(labelled(c[0]));
@@ -1188,6 +1211,11 @@
   // ------------------------------------------------------------------- boot --
   function boot() {
     renderSymbolTabs(); renderTfTabs(); renderHistTabs(); renderPipeline(); renderTickers();
+    /* Paint every empty state before the first request. If the backend is
+       unreachable the user sees "kuch nahi mila" rather than a blank slab —
+       the failure is then explained by the banner, not by absence. */
+    renderSetup(); renderQueue(); renderLiveTrades(); renderHistory();
+    renderPaper(); renderEvidence(); renderJournal([]);
     loadCatalogue().then(loadSetups).then(function () { loadChart(); });
     loadQuotes();
     loadDayOpens();

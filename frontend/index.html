@@ -24,7 +24,7 @@
 
 <!-- ============================ LOGIN ============================ -->
 <!-- Shown until a token is held, and again if one ever stops being accepted. -->
-<div class="gate" id="gate" hidden>
+<div class="gate" id="gate" hidden role="dialog" aria-modal="true" aria-labelledby="gate-title">
   <form class="gate-card" id="gate-form">
     <span class="gate-brand" aria-hidden="true">
       <svg viewBox="0 0 32 32"><mask id="gateCut">
@@ -37,7 +37,7 @@
           <rect x="20.8" y="8" width="3.6" height="16" rx="1.8" opacity=".72"></rect>
         </g></svg>
     </span>
-    <h1>MarketScalper</h1>
+    <h2 id="gate-title">MarketScalper</h2>
     <p class="sub">Sirf decision support — ye tool kabhi order place nahi karta.</p>
     <label>Username<input class="inp" id="gate-user" autocomplete="username" required></label>
     <label>Password<input class="inp" id="gate-pass" type="password"

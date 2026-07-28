@@ -127,6 +127,49 @@ def test_the_password_is_never_persisted():
     assert "password=" not in src
 
 
+def test_empty_states_are_painted_before_the_first_request():
+    """QA B4-B7: with the backend unreachable, every loader's .catch swallowed
+    the error and the containers stayed blank — a blank slab reads as "nothing
+    is wrong", which is the opposite of true."""
+    src = _read(APP)
+    boot = src[src.index("function boot()"):]
+    for fn in ("renderSetup()", "renderQueue()", "renderHistory()",
+               "renderPaper()", "renderJournal([])"):
+        assert fn in boot.split("loadCatalogue")[0], f"{fn} not painted before fetching"
+
+
+def test_a_failing_endpoint_keeps_its_warning_up():
+    """QA C2: failures were a single global counter, so a 4-second quotes poll
+    succeeding erased the banner raised by an endpoint that was still down."""
+    src = _read(APP)
+    assert "noteFailure" in src and "noteSuccess" in src
+    assert "var failing" in src
+    assert "if (!Object.keys(failing).length) banner(null);" in src
+
+
+def test_placeholders_never_wear_the_money_palette():
+    """DESIGN LAW 2: green means money. A dash is not a profit, a zero
+    drawdown is not a loss."""
+    src = _read(APP)
+    assert 'px === null ? "var(--ink-3)"' in src            # ticker placeholder
+    assert 'closed.length ? (netR >= 0 ? "up" : "down") : ""' in src
+    assert 'o.max_drawdown_r ? "down" : ""' in src
+
+
+def test_the_sign_in_overlay_is_a_dialog_not_a_second_h1():
+    html = _read(HTML)
+    assert 'role="dialog"' in html and 'aria-modal="true"' in html
+    assert html.count("<h1") == 1, "more than one h1 in the document"
+
+
+def test_animated_hairlines_are_clipped_to_their_card():
+    """QA E: the pipeline sweep travels to 220%; unclipped it widened every
+    stage card and overflowed the section at every viewport width."""
+    css = _read(CSS)
+    block = css[css.index(".stage .hair"):css.index(".stage .idx")]
+    assert "overflow: hidden" in block
+
+
 def test_a_stale_surface_labels_itself_instead_of_looking_live():
     """The banner alone is not enough — the feed pill and the ticker source
     line must both say SIMULATED, because that is what the eye lands on."""
