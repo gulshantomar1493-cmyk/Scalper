@@ -42,10 +42,15 @@ def test_the_terminal_ships_exactly_the_files_it_references():
 
 def test_no_old_ui_files_survived_the_v4_cutover():
     """The V1/V2/V3 UI was removed with its backend. A leftover file would
-    ship a page wired to endpoints that no longer exist."""
+    ship a page wired to endpoints that no longer exist.
+
+    indicators.js and drawing.js are NOT in this list: they were recovered
+    deliberately. Both are pure renderers with no backend coupling — the
+    indicator maths lives in ChartService, which survived the cutover intact.
+    """
     gone = ["panel.js", "overlays.js", "setups.js", "strip.js", "v3overlay.js",
             "home.js", "dashboard.js", "history.js", "shell.js", "htf.js",
-            "journal.js", "paper.js", "indicators.js", "drawing.js", "ops.js"]
+            "journal.js", "paper.js", "ops.js"]
     present = [n for n in gone if (FRONTEND / n).exists()]
     assert present == [], f"old UI files still present: {present}"
 
@@ -526,3 +531,79 @@ def test_agreeing_strategies_are_shown_as_confirmation_not_extra_trades():
     assert "strategy confirm" in src
     # and it names them, so each can be looked up in the Strategies section
     assert "sab yahi keh rahi hain" in src
+
+
+# ---------------------------------------------------------------- the chart --
+
+def test_the_chart_can_reach_history_it_did_not_load_first():
+    """It used to fetch one fixed window and stop. Nine years are in the
+    database and none of it could be scrolled back to."""
+    src = _read(APP)
+    assert "function loadOlder" in src
+    assert "subscribeVisibleLogicalRangeChange" in src
+    assert "r.from < 10" in src                    # near the left edge -> page back
+    # and the paging must not stampede or ask forever at the start of history
+    assert "state.loadingOlder" in src and "state.noMore" in src
+
+
+def test_an_older_page_cannot_paint_the_previous_symbols_candles():
+    """A history fetch is slow enough to land after a symbol switch."""
+    src = _read(APP)
+    assert "state.chartSeq" in src
+    assert "seq !== state.chartSeq" in src
+
+
+def test_the_keyboard_hints_are_real_shortcuts():
+    """F, L and R were painted under the chart and did nothing. R was worse
+    than dead: V4 has no replay at all, so the hint described a feature that
+    does not exist."""
+    html, src = _read(HTML), _read(APP)
+    assert "function toggleFullscreen" in src and "requestFullscreen" in src
+    assert "function toggleLevels" in src
+    assert 'k === "f"' in src and 'k === "l"' in src
+    assert "R replay" not in html and ">replay<" not in html
+    # and a shortcut must not fire while the user is typing
+    assert '"INPUT"' in src and '"TEXTAREA"' in src
+
+
+def test_fullscreen_targets_the_frame_not_the_whole_section():
+    html, css = _read(HTML), _read(CSS)
+    assert html.count('id="chart-frame"') == 1
+    assert html.count('id="chart"') == 1           # the section keeps that id
+    assert ".chart-frame:fullscreen" in css
+
+
+def test_indicators_are_computed_by_the_backend_and_only_drawn_here():
+    """ChartService already computed EMA/SMA/RSI — the V4 frontend simply never
+    asked. The browser must not start computing its own."""
+    html, src = _read(HTML), _read(APP)
+    assert '<script src="indicators.js">' in html
+    ind = (FRONTEND / "indicators.js").read_text(encoding="utf-8")
+    for banned in ["fetch(", "XMLHttpRequest", "WebSocket", "localStorage"]:
+        assert banned not in ind, f"indicators.js must stay a pure renderer ({banned})"
+    assert "Indicators.paramsQuery()" in src       # app.js asks the backend
+    assert "Indicators.render(d)" in src
+
+
+def test_drawings_are_kept_per_symbol_and_per_timeframe():
+    """A trendline drawn on 1h is not the same line on 1d, and it belongs to
+    the symbol it was drawn on."""
+    html, src = _read(HTML), _read(APP)
+    assert '<script src="drawing.js">' in html
+    assert 'return "ms_draw_" + state.sym + "_" + state.tf' in src
+    assert "saveDrawings" in src and "loadDrawings" in src
+    draw = (FRONTEND / "drawing.js").read_text(encoding="utf-8")
+    for banned in ["fetch(", "XMLHttpRequest", "WebSocket", "localStorage"]:
+        assert banned not in draw, f"drawing.js must not own storage or IO ({banned})"
+
+
+def test_the_draw_tool_ids_are_the_ones_the_module_understands():
+    """Friendlier names here produced shapes nothing could hit-test or paint."""
+    src = _read(APP)
+    draw = (FRONTEND / "drawing.js").read_text(encoding="utf-8")
+    tools = re.findall(r'\["(\w+)", "[^"]+"\]', src[src.index("var TOOLS = ["):
+                                                    src.index("function drawKey")])
+    for t in tools:
+        if t == "none":
+            continue
+        assert f'"{t}"' in draw, f"drawing.js does not know the tool {t!r}"

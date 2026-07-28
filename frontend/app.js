@@ -23,6 +23,8 @@
     setups: [], catalogue: null, perf: null, history: [], paper: null,
     settings: null, quotes: {}, prev: {}, dayOpen: {}, live: false,
     histFilter: "", chart: null, series: null, lines: [],
+    bars: [], oldest: null, noMore: false, loadingOlder: false, chartSeq: 0,
+    showLevels: true, tool: "none",
     active: [],        // FILLED — money at risk
     closed: [],        // TP / SL / TIME — the same trades, finished
     closedOut: [],     // expired without filling: a record, never a position
@@ -522,6 +524,7 @@
     ["ETHUSDT", "BTCUSDT"].forEach(function (k) {
       var b = el("button", state.sym === k ? "on" : null, k);
       b.addEventListener("click", function () {
+        saveDrawings();                 // drawings belong to the old symbol
         state.sym = k; state.pick = null;
         renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
       });
@@ -534,6 +537,7 @@
     ["5m", "15m", "1h", "4h", "1d"].forEach(function (t) {
       var b = el("button", state.tf === t ? "on" : null, t === "1d" ? "1D" : t);
       b.addEventListener("click", function () {
+        saveDrawings();                 // keep what was drawn on the old tf
         state.tf = t; renderTfTabs(); loadChart();
       });
       box.appendChild(b);
@@ -1778,26 +1782,49 @@
              wickUpColor: up, wickDownColor: down };
   }
 
+  var TF_SECS = { "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 };
+  var PAGE_BARS = 500;                  // one fetch of history
+
   function ensureChart() {
     if (state.chart || !window.LightweightCharts) return;
     var t = chartTheme();
     t.timeScale.timeVisible = true; t.timeScale.secondsVisible = false;
-    t.crosshair = { mode: 0 };
+    /* Normal, not the Magnet default: the crosshair reads the price under the
+       pointer, which is what you want when placing a level by eye. */
+    t.crosshair = { mode: LightweightCharts.CrosshairMode
+      ? LightweightCharts.CrosshairMode.Normal : 0 };
     t.autoSize = true;
     state.chart = LightweightCharts.createChart($("chart-host"), t);
     state.series = state.chart.addSeries
       ? state.chart.addSeries(LightweightCharts.CandlestickSeries, seriesTheme())
       : state.chart.addCandlestickSeries(seriesTheme());
-    state.chart.timeScale().subscribeVisibleLogicalRangeChange(paintZones);
+
+    if (window.Indicators) Indicators.init(state.chart, readJSON("ms_ind"));
+    if (window.Drawing) {
+      Drawing.init(state.chart, state.series);
+      Drawing.onChange(saveDrawings);
+      Drawing.onDone(function () { setTool("none"); });   // one shape per pick
+    }
+
+    state.chart.timeScale().subscribeVisibleLogicalRangeChange(function (r) {
+      paintZones();
+      /* Scroll far enough left and the next page of history is fetched and
+         prepended. Without this the chart only ever held one fixed window —
+         nine years are in the database and none of it could be reached. */
+      if (r && r.from < 10) loadOlder();
+    });
     state.chart.subscribeCrosshairMove(function (p) {
       if (!p || !p.seriesData) return;
       var d = p.seriesData.get(state.series);
-      if (!d) return;
-      var dd = dec(state.sym);
-      $("legend").textContent = state.sym + " · " + state.tf +
-        "   O " + fmt(d.open, dd) + "  H " + fmt(d.high, dd) +
-        "  L " + fmt(d.low, dd) + "  C " + fmt(d.close, dd);
+      if (d) legend(d.open, d.high, d.low, d.close);
     });
+  }
+
+  function legend(o, h, l, c) {
+    var dd = dec(state.sym);
+    $("legend").textContent = state.sym + " · " + state.tf +
+      "   O " + fmt(o, dd) + "  H " + fmt(h, dd) +
+      "  L " + fmt(l, dd) + "  C " + fmt(c, dd);
   }
 
   /* The geometry as an area, not just lines: green between entry and target,
@@ -1806,7 +1833,7 @@
     var up = $("zone-up"), down = $("zone-down");
     if (!up || !down) return;
     var s = current();
-    if (!state.series || !s || s.symbol !== state.sym) {
+    if (!state.series || !s || s.symbol !== state.sym || !state.showLevels) {
       up.style.display = down.style.display = "none";
       return;
     }
@@ -1832,8 +1859,10 @@
   function drawLevels() {
     if (!state.series) return;
     clearLines();
+    if (!state.showLevels) { paintZones(); return; }
     api("/api/v4/levels?symbol=" + state.sym + "&tf=" + state.tf)
       .then(function (d) {
+        if (!state.showLevels) return;
         (d.levels || []).forEach(function (lv) {
           state.lines.push(state.series.createPriceLine({
             price: lv.price, color: tok("--ink-3"), lineWidth: 1,
@@ -1852,28 +1881,46 @@
     paintZones();
   }
 
+  // ------------------------------------------------------- history paging --
+  function chartQuery(from, to) {
+    var q = "/api/chart?symbol=" + state.sym + "&timeframe=" + state.tf +
+            "&from=" + from.toISOString() + "&to=" + to.toISOString();
+    var iq = window.Indicators ? Indicators.paramsQuery() : "";
+    return iq ? q + "&" + iq : q;
+  }
+  function toRows(d) {
+    return (d.candles || []).map(function (k) {
+      return { time: Math.floor(new Date(k.ts).getTime() / 1000),
+               open: k.o, high: k.h, low: k.l, close: k.c };
+    });
+  }
+  function busy(on) { var n = $("chart-loading"); if (n) n.hidden = !on; }
+
   function loadChart() {
     ensureChart();
     if (!state.series) return;
     $("stream-label").textContent = (state.live ? "live" : "sim") + " · " + state.tf + " · " + state.sym;
-    var bars = { "5m": 300, "15m": 300, "1h": 400, "4h": 400, "1d": 300 }[state.tf] || 300;
-    var secs = { "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400 }[state.tf] || 300;
+    var secs = TF_SECS[state.tf] || 300;
     var end = new Date();
-    var start = new Date(end.getTime() - bars * secs * 1000);
-    var q = "/api/chart?symbol=" + state.sym + "&timeframe=" + state.tf +
-            "&from=" + start.toISOString() + "&to=" + end.toISOString();
-    api(q).then(function (d) {
-      var rows = (d.candles || []).map(function (k) {
-        return { time: Math.floor(new Date(k.ts).getTime() / 1000),
-                 open: k.o, high: k.h, low: k.l, close: k.c };
-      });
+    var start = new Date(end.getTime() - PAGE_BARS * secs * 1000);
+    /* Every load is sequenced: an older-history fetch that lands after a
+       symbol switch must not paint the previous symbol's candles. */
+    var seq = ++state.chartSeq;
+    state.bars = [];
+    state.oldest = null;
+    state.noMore = false;
+    busy(true);
+    return api(chartQuery(start, end)).then(function (d) {
+      if (seq !== state.chartSeq) return;
+      var rows = toRows(d);
+      state.bars = rows;
+      state.oldest = rows.length ? rows[0].time : null;
       state.series.setData(rows);
-      var dd = dec(state.sym);
+      if (window.Indicators) Indicators.render(d);
+      loadDrawings();
       var last = rows[rows.length - 1];
       if (last) {
-        $("legend").textContent = state.sym + " · " + state.tf +
-          "   O " + fmt(last.open, dd) + "  H " + fmt(last.high, dd) +
-          "  L " + fmt(last.low, dd) + "  C " + fmt(last.close, dd);
+        legend(last.open, last.high, last.low, last.close);
         state.heroCandles = rows.slice(-90).map(function (r) {
           return { o: r.open, h: r.high, l: r.low, c: r.close };
         });
@@ -1881,8 +1928,140 @@
       }
       drawLevels();
       requestAnimationFrame(paintZones);
-    }).catch(function () {
-      $("legend").textContent = state.sym + " · " + state.tf + "   data unavailable";
+    }).catch(function (e) {
+      if (seq === state.chartSeq) noteFailure("/api/chart", e);
+    }).then(function () { if (seq === state.chartSeq) busy(false); });
+  }
+
+  /* One page further back, prepended. Guarded so a burst of scroll events
+     cannot fire ten overlapping fetches, and latched when the series stops
+     growing so we do not ask forever at the start of history. */
+  function loadOlder() {
+    if (state.loadingOlder || state.noMore || !state.oldest) return;
+    state.loadingOlder = true;
+    busy(true);
+    var seq = state.chartSeq;
+    var secs = TF_SECS[state.tf] || 300;
+    var to = new Date(state.oldest * 1000);
+    var from = new Date(to.getTime() - PAGE_BARS * secs * 1000);
+    api(chartQuery(from, to)).then(function (d) {
+      if (seq !== state.chartSeq) return;
+      var older = toRows(d).filter(function (r) { return r.time < state.oldest; });
+      if (!older.length) { state.noMore = true; return; }
+      state.bars = older.concat(state.bars);
+      state.oldest = state.bars[0].time;
+      /* setData keeps the visible logical range, so the view does not jump */
+      state.series.setData(state.bars);
+      if (window.Indicators) Indicators.render(d);
+    }).catch(function () {}).then(function () {
+      state.loadingOlder = false;
+      if (seq === state.chartSeq) busy(false);
+    });
+  }
+
+  // ------------------------------------------------------------ indicators --
+  function readJSON(key) {
+    try { return JSON.parse(localStorage.getItem(key) || "null"); } catch (e) { return null; }
+  }
+  function writeJSON(key, val) {
+    try { localStorage.setItem(key, JSON.stringify(val)); } catch (e) {}
+  }
+  function setupIndicators() {
+    var btn = $("btn-ind"), panel = $("ind-panel");
+    if (!btn || !panel || !window.Indicators) return;
+    Indicators.renderMenu(panel, function (needData) {
+      writeJSON("ms_ind", Indicators.config());
+      if (needData) loadChart();        // a period changed: the backend recomputes
+      else Indicators.applyVisibility();
+    });
+    btn.addEventListener("click", function () {
+      panel.hidden = !panel.hidden;
+      btn.setAttribute("aria-expanded", String(!panel.hidden));
+    });
+  }
+
+  // --------------------------------------------------------------- drawings --
+  /* Anchored in {time, price}, so they stay pinned to the candles as the chart
+     pans and zooms. Kept per symbol AND timeframe — a trendline drawn on 1h is
+     not the same line on 1d. */
+  /* These ids are drawing.js's own vocabulary — "none" is its idle state and
+     the rest are the shape types it knows how to hit-test and paint. Inventing
+     friendlier names here produced items nothing could draw. */
+  var TOOLS = [["none", "Cursor"], ["trendline", "Trend line"], ["hline", "Horizontal"],
+               ["rect", "Rectangle"], ["fib", "Fib"], ["rr", "Risk:Reward"],
+               ["text", "Text/Note"]];
+  function drawKey() { return "ms_draw_" + state.sym + "_" + state.tf; }
+  function saveDrawings() {
+    if (window.Drawing) writeJSON(drawKey(), Drawing.getItems());
+  }
+  function loadDrawings() {
+    if (window.Drawing) Drawing.setItems(readJSON(drawKey()) || []);
+  }
+  function setTool(t) {
+    state.tool = t;
+    if (window.Drawing) Drawing.setTool(t);
+    Array.prototype.forEach.call(
+      document.querySelectorAll("#draw-tools .tbtn"), function (b) {
+        b.classList.toggle("on", b.getAttribute("data-tool") === t);
+      });
+  }
+  function setupDrawTools() {
+    var box = $("draw-tools");
+    if (!box || !window.Drawing) return;
+    clear(box);
+    TOOLS.forEach(function (t) {
+      var b = el("button", "tbtn" + (t[0] === "none" ? " on" : ""), t[1]);
+      b.setAttribute("data-tool", t[0]);
+      b.addEventListener("click", function () { setTool(t[0]); });
+      box.appendChild(b);
+    });
+    var u = el("button", "tbtn", "Undo");
+    u.addEventListener("click", function () { Drawing.undo(); });
+    box.appendChild(u);
+    var c = el("button", "tbtn", "Clear");
+    c.addEventListener("click", function () {
+      if (window.confirm("Is chart ke saare drawings hata dein?")) Drawing.clear();
+    });
+    box.appendChild(c);
+  }
+
+  // ------------------------------------------------- fullscreen + levels ----
+  function toggleFullscreen() {
+    var frame = $("chart-frame");
+    if (!frame) return;
+    if (document.fullscreenElement) document.exitFullscreen();
+    else if (frame.requestFullscreen) frame.requestFullscreen();
+  }
+  function toggleLevels() {
+    state.showLevels = !state.showLevels;
+    var b = $("btn-levels");
+    if (b) { b.setAttribute("aria-pressed", String(state.showLevels));
+             b.classList.toggle("off", !state.showLevels); }
+    drawLevels();
+  }
+  function setupChartControls() {
+    var fs = $("btn-fs"), lv = $("btn-levels");
+    if (fs) fs.addEventListener("click", toggleFullscreen);
+    if (lv) lv.addEventListener("click", toggleLevels);
+    document.addEventListener("fullscreenchange", function () {
+      if (fs) fs.textContent = document.fullscreenElement ? "Exit fullscreen" : "Fullscreen";
+      if (state.chart) requestAnimationFrame(function () { paintZones(); });
+    });
+    /* Keys act only when the chart is on screen and nothing is being typed
+       into — the shortcut hints under the chart are now real shortcuts. */
+    document.addEventListener("keydown", function (e) {
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+      var t = e.target;
+      if (t && (t.tagName === "INPUT" || t.tagName === "TEXTAREA" || t.isContentEditable)) return;
+      var frame = $("chart-frame");
+      if (!frame) return;
+      var box = frame.getBoundingClientRect();
+      var onScreen = document.fullscreenElement === frame ||
+                     (box.top < window.innerHeight && box.bottom > 0);
+      if (!onScreen) return;
+      var k = e.key.toLowerCase();
+      if (k === "f") { e.preventDefault(); toggleFullscreen(); }
+      else if (k === "l") { e.preventDefault(); toggleLevels(); }
     });
   }
 
@@ -1983,7 +2162,11 @@
     renderSetup(); renderQueue(); renderExposure(); renderLiveTrades(); renderHistory();
     renderFeePanel();
     renderPaper(); renderEvidence(); renderJournal([]);
-    loadCatalogue().then(loadSetups).then(function () { loadChart(); });
+    loadCatalogue().then(loadSetups).then(function () {
+      loadChart();
+      /* after ensureChart(): the menus need a chart to attach to */
+      setupIndicators(); setupDrawTools(); setupChartControls();
+    });
     loadQuotes();
     loadDayOpens();
     loadHistory();

@@ -185,16 +185,28 @@
       <div class="seg" id="tf-tabs"></div>
     </div>
 
-    <div class="chart-frame reveal">
+    <!-- The toolbar is above the frame so fullscreen carries it with the chart. -->
+    <div class="chart-tools reveal">
+      <div class="tool-group" id="draw-tools"></div>
+      <div class="sp"></div>
+      <button class="tbtn" id="btn-ind" aria-expanded="false">Indicators</button>
+      <button class="tbtn" id="btn-levels" aria-pressed="true">Levels</button>
+      <button class="tbtn" id="btn-fs">Fullscreen</button>
+    </div>
+    <div class="chart-frame reveal" id="chart-frame">
       <div id="chart-host"></div>
       <div class="zone up" id="zone-up" aria-hidden="true"></div>
       <div class="zone down" id="zone-down" aria-hidden="true"></div>
-      <div class="chart-legend" id="legend">—</div>
-      <div class="chart-keys">
-        <kbd>F fullscreen</kbd><kbd>L levels</kbd><kbd>R replay</kbd>
-      </div>
+      <div class="chart-legend"><span id="legend">—</span>
+        <!-- indicators.js owns this one; it clears and rebuilds it -->
+        <span class="ind-legend" id="ind-legend"></span></div>
+      <div class="ind-panel" id="ind-panel" hidden></div>
       <div class="chart-stream"><span class="dot live"></span><span id="stream-label">—</span></div>
+      <div class="chart-loading" id="chart-loading" hidden>purana data laa rahe hain…</div>
     </div>
+    <div class="chart-keys"><kbd>F</kbd> fullscreen · <kbd>L</kbd> levels ·
+      <kbd>Esc</kbd> drawing cancel · <kbd>Del</kbd> selected drawing delete ·
+      peeche scroll karo to purana data khud load hoga</div>
   </section>
 
   <!-- =========================== 03 PIPELINE =========================== -->
@@ -375,6 +387,10 @@
 </div>
 
 <script src="lightweight-charts.standalone.production.js"></script>
+<!-- Pure renderers, loaded before app.js: indicators.js draws what the BACKEND
+     computes, drawing.js owns chart annotations. Neither fetches or stores. -->
+<script src="indicators.js"></script>
+<script src="drawing.js"></script>
 <script src="app.js"></script>
 </body>
 </html>
