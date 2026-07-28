@@ -24,7 +24,10 @@
     settings: null, quotes: {}, prev: {}, dayOpen: {}, live: false,
     histFilter: "", chart: null, series: null, lines: [],
     active: [],        // FILLED — money at risk
+    closed: [],        // TP / SL / TIME — the same trades, finished
     closedOut: [],     // expired without filling: a record, never a position
+    closedSym: "", closedOutcome: "",
+    closedSort: { key: "closed_ts", desc: true },
     equity: Number(localStorage.getItem("ms_equity")) || 10000,
     heroCandles: []
   };
@@ -131,6 +134,18 @@
     if (!dt) return "—";
     return dt.toLocaleString("en-GB", { timeZone: TZ, hour: "2-digit",
                                         minute: "2-digit", hour12: false });
+  }
+  /* Time alone when it falls on the same IST day as the reference, date too
+     when it does not.
+     A trade opened yesterday at 09:30 and closed today at 04:27 reads as
+     impossible when only the clock times are shown. */
+  function dayOf(ts) {
+    var dt = toDate(ts);
+    return dt ? dt.toLocaleDateString("en-GB", { timeZone: TZ }) : null;
+  }
+  function timeNear(ts, ref) {
+    if (!toDate(ts)) return "—";
+    return dayOf(ts) === dayOf(ref) ? clockTime(ts) : when(ts);
   }
   /* How long ago, for things whose age is the point (a fill, a close). */
   function ago(ts) {
@@ -328,6 +343,26 @@
   });
   $("banner-x").addEventListener("click", function () { banner(null); });
 
+  /* Rail labels. The tip is position:fixed and placed here rather than in CSS
+     because the rail scrolls, and a scrolling ancestor clips an absolutely
+     positioned child no matter what its computed visibility says — the label
+     was being rendered and then cut off at the rail's edge. */
+  document.querySelectorAll(".rail-btn").forEach(function (btn) {
+    var tip = btn.querySelector(".rail-tip");
+    if (!tip) return;
+    function show() {
+      var r = btn.getBoundingClientRect();
+      tip.style.left = (r.right + 10) + "px";
+      tip.style.top = Math.round(r.top + r.height / 2 - tip.offsetHeight / 2) + "px";
+      tip.classList.add("on");
+    }
+    function hide() { tip.classList.remove("on"); }
+    btn.addEventListener("mouseenter", show);
+    btn.addEventListener("focus", show);
+    btn.addEventListener("mouseleave", hide);
+    btn.addEventListener("blur", hide);
+  });
+
   /* Scroll-linked reveals where the browser supports them; otherwise an
      observer adds .in once. Same resting state either way. */
   if (!(window.CSS && CSS.supports && CSS.supports("animation-timeline: view()"))) {
@@ -433,6 +468,44 @@
     var live = rows.filter(function (s) { return !validity(s).expired; });
     return live[0] || rows[0];
   }
+  /* The engine's own vocabulary, in words. "Break below donchian 4h level
+     63,059.39; filters: trend_anchor, trend_daily, structure" is precise and
+     unreadable — and a trader deciding in ten seconds reads none of it. */
+  var LEVEL_WORDS = {
+    donchian: "channel", swings: "swing", pdh_pdl: "pichhle din ka", round: "round number"
+  };
+  var FILTER_WORDS = {
+    trend_anchor: "trend anchor", trend_daily: "daily bias", structure: "structure"
+  };
+  function levelPhrase(s) {
+    var word = LEVEL_WORDS[s.level_source] || s.level_source;
+    var side = s.direction > 0 ? "high" : "low";
+    return s.level_tf + " " + word + " " + side;
+  }
+  function filterWords(s) {
+    var detail = s.filters_detail || {};
+    return Object.keys(detail).filter(function (k) { return detail[k]; })
+      .map(function (k) { return FILTER_WORDS[k] || k; });
+  }
+  function strategyTitle(s) {
+    return strategyMeta(s.strategy_id).label || s.strategy_id;
+  }
+  function describeSetup(s) {
+    var d = dec(s.symbol);
+    var parts = [levelPhrase(s) + " " + fmt(s.entry, d) + " " +
+                 (s.direction > 0 ? "ke upar" : "ke neeche") + " break"];
+    var f = filterWords(s);
+    parts.push(f.length ? f.join(" + ") + " saath mein" : "koi extra filter nahi");
+    /* Name the agreeing strategies, not just the count — the trader can look
+       each one up in the Strategies section and see its own evidence. */
+    if (s.confirmed_by > 1) {
+      parts.push((s.strategies || []).map(function (id) {
+        return strategyMeta(id).label || id;
+      }).join(" + ") + " — sab yahi keh rahi hain");
+    }
+    return parts.join(" · ");
+  }
+
   function stratCode(id) {
     var list = (state.catalogue && state.catalogue.strategies) || [];
     for (var i = 0; i < list.length; i++) if (list[i].id === id) return "S" + (i + 1);
@@ -524,6 +597,9 @@
     head.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
     head.appendChild(el("span", "sym-big", s.symbol.replace("USDT", "")));
     head.appendChild(el("span", "chip", s.strategy_id));
+    if (s.confirmed_by > 1) {
+      head.appendChild(el("span", "chip confirm", s.confirmed_by + " strategy confirm"));
+    }
     head.appendChild(el("div", "sp"));
     if (validity(s).expired) head.appendChild(el("span", "rank expired", "Expired"));
     else if (state.setups.indexOf(s) === 0) head.appendChild(el("span", "rank", "Rank 1"));
@@ -575,7 +651,13 @@
     });
     card.appendChild(cells);
 
-    card.appendChild(el("p", "reason", s.reason));
+    card.appendChild(el("p", "reason", describeSetup(s)));
+    /* the raw engine sentence stays available, one click away — plain words
+       for deciding, exact vocabulary for auditing */
+    var raw = el("details", "raw-reason");
+    raw.appendChild(el("summary", null, "Engine ne exactly kya kaha"));
+    raw.appendChild(el("p", null, s.reason));
+    card.appendChild(raw);
 
     var foot = el("div", "setup-foot");
     /* Issued-at, in full. Without it a four-day-old setup and one found this
@@ -816,7 +898,14 @@
     row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
     row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
     var mid = el("div");
-    mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
+    var nm = el("div", "nm");
+    nm.appendChild(document.createTextNode(strategyTitle(s)));
+    /* Several strategies finding the same price is confirmation, not a second
+       trade. One row, and it says who agreed. */
+    if (s.confirmed_by > 1) {
+      nm.appendChild(el("span", "confirm", s.confirmed_by + " strategy confirm"));
+    }
+    mid.appendChild(nm);
     /* When it was issued, next to why. A setup with no time on it cannot be
        told apart from one the engine found four days ago. */
     var why = el("div", "why");
@@ -826,7 +915,7 @@
          resting order, still on offer, not a new trade */
       why.appendChild(el("span", "standing", s.bars_standing + " bars se khada"));
     }
-    why.appendChild(document.createTextNode(" · " + s.reason));
+    why.appendChild(document.createTextNode(" · " + describeSetup(s)));
     mid.appendChild(why);
     row.appendChild(mid);
     var dist = distanceToEntry(s);
@@ -857,7 +946,22 @@
 
   /* A filled setup is a LIVE POSITION. It gets its own section because the
      question has changed: not "should I take this" but "where is it now and
-     what closes it". Different question, different numbers. */
+     what closes it". Different question, different numbers.
+
+     Sized at ONE coin so the P&L is a plain, comparable dollar figure — the
+     trader scales it by whatever size they actually took. Marked to the last
+     trade on every quote poll. */
+  var UNIT = 1;
+  function markToMarket(r) {
+    var fill = r.fill_price != null ? r.fill_price : r.entry;
+    var px = livePrice(r.symbol);
+    if (px == null || fill == null) return null;
+    var move = (px - fill) * (r.direction > 0 ? 1 : -1);
+    var risk = Math.abs(fill - r.stop);
+    return { px: px, fill: fill, usd: move * UNIT,
+             r: risk ? move / risk : null, riskUsd: risk * UNIT };
+  }
+
   function renderLiveTrades() {
     var box = $("live-trades"); if (!box) return;
     clear(box);
@@ -868,11 +972,26 @@
       box.appendChild(el("div", "empty",
         "Abhi koi trade active nahi. Jab kisi setup ka level toot ke entry fill " +
         "hogi, wo apne aap yahan aa jaayegi — aur Telegram pe alert bhi jaayega."));
+      renderClosed();
       return;
+    }
+    /* Total open P&L first: with several positions running, the per-row numbers
+       do not answer "am I up or down right now". */
+    var open = rows.map(markToMarket).filter(Boolean);
+    if (open.length) {
+      var net = open.reduce(function (a, m) { return a + m.usd; }, 0);
+      var netR = open.reduce(function (a, m) { return a + (m.r || 0); }, 0);
+      var tot = el("div", "mtm-total");
+      tot.appendChild(labelled("Open P&L · har trade 1 coin"));
+      tot.appendChild(el("span", "v " + (net >= 0 ? "up" : "down"),
+        (net >= 0 ? "+$" : "-$") + fmt(Math.abs(net), 2)));
+      tot.appendChild(el("span", "r " + (netR >= 0 ? "up" : "down"), sign(netR, 2) + "R"));
+      box.appendChild(tot);
     }
     var list = el("div", "list");
     rows.forEach(function (r) { list.appendChild(activeRow(r)); });
     box.appendChild(list);
+    renderClosed();
   }
 
   /* Time left before the engine's forced market exit. Null when the horizon is
@@ -891,10 +1010,8 @@
 
   function activeRow(r) {
     var lng = r.direction > 0, d = dec(r.symbol);
+    var m = markToMarket(r);
     var fill = r.fill_price != null ? r.fill_price : r.entry;
-    var px = livePrice(r.symbol);
-    var risk = Math.abs(fill - r.stop);
-    var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
 
     var row = el("div", "qrow trade");
     var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
@@ -921,31 +1038,134 @@
       var cell = el("div", "cell");
       cell.appendChild(labelled(c[0]));
       cell.appendChild(el("span", "v " + c[2], fmt(c[1], d)));
-      if (px != null && c[1]) {
+      if (m && c[1]) {
         cell.appendChild(el("span", "away",
-          (Math.abs(c[1] / px - 1) * 100).toFixed(2) + "% door"));
+          (Math.abs(c[1] / m.px - 1) * 100).toFixed(2) + "% door"));
       }
       row.appendChild(cell);
     });
 
     var nowCell = el("div", "cell");
-    nowCell.appendChild(labelled("Abhi"));
-    nowCell.appendChild(el("span", "v", px == null ? "—" : fmt(px, d)));
+    nowCell.appendChild(labelled("Live"));
+    nowCell.appendChild(el("span", "v tick", m == null ? "—" : fmt(m.px, d)));
     row.appendChild(nowCell);
 
     var pnl = el("div", "cell");
-    pnl.appendChild(labelled("Open R"));
-    pnl.appendChild(el("span", "v big " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
-      openR == null ? "—" : sign(openR, 2) + "R"));
+    /* the unit is stated once, on the total — repeating it per row wraps the
+       column header and buys nothing */
+    pnl.appendChild(labelled("Open P&L"));
+    if (m == null) {
+      pnl.appendChild(el("span", "v big", "—"));
+    } else {
+      pnl.appendChild(el("span", "v big " + (m.usd >= 0 ? "up" : "down"),
+        (m.usd >= 0 ? "+$" : "-$") + fmt(Math.abs(m.usd), 2)));
+      pnl.appendChild(el("span", "away " + (m.usd >= 0 ? "up" : "down"),
+        m.r == null ? "" : sign(m.r, 2) + "R"));
+    }
     row.appendChild(pnl);
     return row;
   }
 
-  /* Active positions and expired setups arrive together so the two lists can
-     never be a poll apart and contradict each other. */
+  // ------------------------------------------------------- closed trades ----
+  /* The same trades, after a target, a stop or the horizon. Under active trades
+     because it is one lifecycle — and filterable and sortable, because "how did
+     BTC do this week" is a question you ask of a log, not of a feed. */
+  var CLOSED_OUTCOMES = [["", "Sab"], ["TP", "Target"], ["SL", "Stop"], ["TIME", "Time exit"]];
+  function renderClosed() {
+    var box = $("closed-trades"); if (!box) return;
+    clear(box);
+    var all = state.closed || [];
+
+    var head = el("div", "sub-head");
+    head.textContent = "Band ho chuke trades · " + all.length;
+    box.appendChild(head);
+
+    var bar = el("div", "filters");
+    bar.appendChild(segment(["", "BTCUSDT", "ETHUSDT"], ["Dono coin", "BTC", "ETH"],
+      state.closedSym, function (v) { state.closedSym = v; renderClosed(); }));
+    bar.appendChild(segment(CLOSED_OUTCOMES.map(function (o) { return o[0]; }),
+      CLOSED_OUTCOMES.map(function (o) { return o[1]; }), state.closedOutcome,
+      function (v) { state.closedOutcome = v; renderClosed(); }));
+    box.appendChild(bar);
+
+    var rows = all.filter(function (r) {
+      return (!state.closedSym || r.symbol === state.closedSym) &&
+             (!state.closedOutcome || r.status === state.closedOutcome);
+    });
+    var sorted = rows.slice().sort(function (a, b) {
+      var k = state.closedSort.key, dir = state.closedSort.desc ? -1 : 1;
+      var av = a[k], bv = b[k];
+      if (av == null) av = -Infinity;
+      if (bv == null) bv = -Infinity;
+      return av < bv ? -dir : av > bv ? dir : 0;
+    });
+
+    var table = el("div", "ctable");
+    var hd = el("div", "trow head");
+    [["closed_ts", "Band hua"], [null, "Coin"], [null, "Dir"], [null, "Strat"],
+     ["fill_price", "Entry"], ["exit_price", "Exit"], [null, "Outcome"],
+     ["net_r", "Net R"], ["hold_minutes", "Hold"]].forEach(function (c, i) {
+      var h = el("span", "lbl" + (i >= 4 ? " r" : "") + (c[0] ? " sortable" : ""), c[1]);
+      if (c[0]) {
+        h.setAttribute("data-sort", c[0]);
+        if (state.closedSort.key === c[0]) {
+          h.classList.add("on");
+          h.appendChild(el("i", null, state.closedSort.desc ? " ↓" : " ↑"));
+        }
+        h.addEventListener("click", function () {
+          state.closedSort = { key: c[0],
+            desc: state.closedSort.key === c[0] ? !state.closedSort.desc : true };
+          renderClosed();
+        });
+      }
+      hd.appendChild(h);
+    });
+    table.appendChild(hd);
+
+    if (!sorted.length) {
+      table.appendChild(el("div", "empty", "Is filter pe koi band trade nahi."));
+      box.appendChild(table);
+      return;
+    }
+    sorted.forEach(function (r) {
+      var d = dec(r.symbol), lng = r.direction > 0;
+      var badge = BADGE[r.status] || ["time", r.status];
+      var row = el("div", "trow");
+      var ts = el("span", "ts");
+      ts.appendChild(el("span", null, when(r.closed_ts)));
+      ts.appendChild(el("span", "ts2", "khula " + timeNear(r.filled_ts, r.closed_ts)));
+      row.appendChild(ts);
+      row.appendChild(el("span", "sy", String(r.symbol).replace("USDT", "")));
+      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+      row.appendChild(el("span", "st", stratCode(r.strategy_id)));
+      row.appendChild(el("span", "n", fmt(r.fill_price, d)));
+      row.appendChild(el("span", "n", fmt(r.exit_price, d)));
+      row.appendChild(el("span", "badge " + badge[0], badge[1]));
+      row.appendChild(el("span", "n " + (r.net_r == null ? "" : r.net_r >= 0 ? "up" : "down"),
+        r.net_r == null ? "—" : sign(r.net_r, 2) + "R"));
+      row.appendChild(el("span", "n", r.hold_minutes == null ? "—"
+        : held(r.filled_ts, r.closed_ts)));
+      table.appendChild(row);
+    });
+    box.appendChild(table);
+  }
+
+  function segment(values, labels, active, onPick) {
+    var seg = el("div", "seg");
+    values.forEach(function (v, i) {
+      var b = el("button", active === v ? "on" : null, labels[i]);
+      b.addEventListener("click", function () { onPick(v); });
+      seg.appendChild(b);
+    });
+    return seg;
+  }
+
+  /* Active positions, closed trades and expired setups arrive together so the
+     three lists can never be a poll apart and contradict each other. */
   function loadActive() {
-    return api("/api/v4/trades?limit=50").then(function (d) {
+    return api("/api/v4/trades?limit=200").then(function (d) {
       state.active = d.active || [];
+      state.closed = d.closed || [];
       state.closedOut = d.expired || [];
       renderLiveTrades();
       renderQueue();                 // the expired list lives under the setups
@@ -1675,6 +1895,10 @@
       });
       setLive(true);
       renderTickers();
+      /* A live position is marked to the last trade — that is what makes it a
+         LIVE position and not a snapshot. Re-mark on every tick. */
+      renderLiveTrades();
+      renderExposure();
     }).catch(function () {});
   }
   /* Today's opening price per symbol, so the ticker's % is a real day change. */
@@ -1760,6 +1984,9 @@
 
   if (TOKEN) boot(); else showGate();
   setInterval(tickClock, 1000);
-  setInterval(function () { if (TOKEN) loadQuotes(); }, 4000);
+  /* Ticks drive the mark-to-market on every open position, so this is the one
+     poll that has to feel live. The backend serves it from the feed's last
+     trade — no database work — so a short interval is cheap. */
+  setInterval(function () { if (TOKEN) loadQuotes(); }, 1500);
   setInterval(function () { if (TOKEN) { loadSetups(); loadHistory(); loadActive(); } }, 60000);
 })();

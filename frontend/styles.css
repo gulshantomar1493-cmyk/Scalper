@@ -138,24 +138,23 @@ main { overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth; position: 
 
 /* An icon-only rail is a row of unlabelled squares until you have learnt it.
    The native title= tooltip takes about a second to appear and cannot be
-   styled, which is long enough that people stop hovering and start guessing. */
-.rail-btn { position: relative; }
+   styled, which is long enough that people stop hovering and start guessing.
+
+   POSITION FIXED, placed by app.js. The rail scrolls (overflow-y: auto), and
+   per spec an overflow that is not `visible` on one axis forces the other to
+   clip too — so an absolutely-positioned flyout inside the rail is cut off at
+   the rail's edge and never seen, however visible its computed style says it
+   is. Fixed positioning is outside that clip entirely. */
 .rail-tip {
-  position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px);
+  position: fixed; left: 0; top: 0; z-index: 200;
   padding: 6px 10px; border-radius: 8px; white-space: nowrap; pointer-events: none;
   background: var(--surf-2); color: var(--ink);
   border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.32);
   font-size: 12px; font-weight: 600; letter-spacing: -.01em;
-  opacity: 0; visibility: hidden; transition: 140ms var(--ease); z-index: 60;
+  opacity: 0; visibility: hidden; transform: translateX(-4px);
+  transition: 140ms var(--ease);
 }
-.rail-tip::before {                       /* the little pointer back to the icon */
-  content: ""; position: absolute; right: 100%; top: 50%; margin-top: -4px;
-  border: 4px solid transparent; border-right-color: var(--line);
-}
-.rail-btn:hover .rail-tip,
-.rail-btn:focus-visible .rail-tip {
-  opacity: 1; visibility: visible; transform: translateY(-50%) translateX(0);
-}
+.rail-tip.on { opacity: 1; visibility: visible; transform: translateX(0); }
 @media (prefers-reduced-motion: reduce) { .rail-tip { transition: none; } }
 
 /* -------------------------------------------------------------- sections -- */
@@ -797,3 +796,35 @@ footer .fine { font-size: 11.5px; color: var(--ink-3); max-width: 64ch; line-hei
 }
 /* amber, per the design law: a caution, never a verdict on money */
 .qrow .why .horizon.soon { color: var(--warn); }
+
+/* ------------------------------------------------- live positions + book -- */
+.mtm-total {
+  display: flex; align-items: baseline; gap: 14px; padding: 14px 22px; margin-bottom: 14px;
+  border: 1px solid var(--line); border-radius: 12px; background: var(--surf);
+}
+.mtm-total .lbl { flex: none; }
+.mtm-total .v { margin-left: auto; font-family: var(--mono);
+  font-variant-numeric: tabular-nums; font-size: 22px; font-weight: 700; }
+.mtm-total .r { font-family: var(--mono); font-size: 13px; }
+.qrow .cell .v.tick { font-variant-numeric: tabular-nums; }
+.qrow .cell .away.up { color: var(--up); }
+.qrow .cell .away.down { color: var(--down); }
+
+.filters { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 14px; }
+.ctable { border: 1px solid var(--line); border-radius: 12px; overflow: hidden;
+          background: var(--surf); }
+.ctable .trow { display: grid; gap: 14px; padding: 13px 22px; align-items: center;
+  grid-template-columns: minmax(140px,1.2fr) 58px 68px 44px repeat(2, minmax(72px,1fr))
+                         96px minmax(70px,.8fr) minmax(62px,.7fr); }
+.ctable .lbl.sortable { cursor: pointer; user-select: none; }
+.ctable .lbl.sortable:hover, .ctable .lbl.on { color: var(--ink); }
+.ctable .badge { justify-self: end; }
+
+.qrow .nm .confirm, .chip.confirm {
+  margin-left: 8px; padding: 2px 8px; border-radius: 999px; font-size: 10px;
+  font-family: var(--mono); background: var(--accent-glow); color: var(--accent);
+}
+.raw-reason { margin: -8px 0 18px; }
+.raw-reason summary { cursor: pointer; font-size: 11.5px; color: var(--ink-3); }
+.raw-reason p { margin: 8px 0 0; font-family: var(--mono); font-size: 11.5px;
+                color: var(--ink-3); line-height: 1.7; }

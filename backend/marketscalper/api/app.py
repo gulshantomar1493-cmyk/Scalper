@@ -149,7 +149,8 @@ def create_app(
     if v4_service is not None:
         from marketscalper.v4.api import build_router as _v4_router
         app.include_router(_v4_router(v4_service, require_token,
-                                      history_store=v4_store))
+                                      history_store=v4_store,
+                                      live_price=live_price))
 
     @app.get("/ops", dependencies=[Depends(require_token)])
     async def ops() -> dict:

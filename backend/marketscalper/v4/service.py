@@ -100,6 +100,37 @@ def _one_per_resting_order(rows: list[dict]) -> list[dict]:
     return list(best.values())
 
 
+def merge_confirming_strategies(rows: list[dict]) -> list[dict]:
+    """One trade per price level, however many strategies found it.
+
+    Several strategies watch overlapping levels — a 4h donchian high and a
+    prior-day high are often the same number. When they agree, the trader still
+    places ONE order at ONE price; showing it three times reads as three
+    independent trades and triples the risk the exposure strip reports.
+
+    Merging is by (symbol, direction, entry): the same price, the same way. The
+    strategy with the most filters passed leads (ties to the better net R:R),
+    and `strategies` names every one that agreed. That agreement is real
+    information — it is confirmation, not a bigger position.
+
+    DISPLAY ONLY. The recorder keeps one row per strategy, because per-strategy
+    expectancy is what the TRUSTED gate is decided on — merging there would
+    quietly delete the evidence for every strategy that was not the lead.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for r in rows:
+        groups.setdefault((r["symbol"], r["direction"], r["entry"]), []).append(r)
+    out: list[dict] = []
+    for members in groups.values():
+        members.sort(key=lambda r: (-r.get("filters_passed", 0), -r.get("rr", 0),
+                                    r["strategy_id"]))
+        lead = dict(members[0])
+        lead["strategies"] = sorted({m["strategy_id"] for m in members})
+        lead["confirmed_by"] = len(lead["strategies"])
+        out.append(lead)
+    return out
+
+
 class V4Service:
     """Builds setups on demand. Cached per (symbol, tf) until a new bar closes."""
 

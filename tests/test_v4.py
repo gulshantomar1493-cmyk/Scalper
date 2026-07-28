@@ -521,3 +521,54 @@ async def test_a_status_filter_accepts_a_set(db_conn):
     assert {V4Store.key(a), V4Store.key(b)} <= both
     only = {r["setup_key"] for r in await st.query(status="FILLED")}
     assert V4Store.key(b) in only and V4Store.key(a) not in only
+
+
+# ------------------------------ one order, however many strategies find it ---
+# Several strategies watch overlapping levels — a 4h donchian high and a
+# prior-day high are often the same number. Showing that three times reads as
+# three independent trades and triples the risk the exposure strip reports.
+
+def _s(sid, entry=1981.24, direction=1, passed=2, rr=8.4, symbol="ETHUSDT"):
+    return {"strategy_id": sid, "symbol": symbol, "direction": direction,
+            "entry": entry, "filters_passed": passed, "rr": rr}
+
+
+def test_strategies_agreeing_on_one_price_become_one_trade():
+    from marketscalper.v4.service import merge_confirming_strategies
+    out = merge_confirming_strategies([_s("eth_4h_core", passed=3),
+                                       _s("eth_4h_wide", passed=1),
+                                       _s("eth_pdhl", passed=2)])
+    assert len(out) == 1
+    row = out[0]
+    assert row["confirmed_by"] == 3
+    assert row["strategies"] == ["eth_4h_core", "eth_4h_wide", "eth_pdhl"]
+    # the strongest reading leads — most filters passed
+    assert row["strategy_id"] == "eth_4h_core" and row["filters_passed"] == 3
+
+
+def test_the_lead_breaks_ties_on_net_rr_then_deterministically():
+    from marketscalper.v4.service import merge_confirming_strategies
+    out = merge_confirming_strategies([_s("b", passed=2, rr=8.0),
+                                       _s("a", passed=2, rr=9.1)])
+    assert out[0]["strategy_id"] == "a"
+    # equal on both -> stable by id, so the same inputs always give the same row
+    out2 = merge_confirming_strategies([_s("z", passed=2, rr=8.0),
+                                        _s("c", passed=2, rr=8.0)])
+    assert out2[0]["strategy_id"] == "c"
+
+
+def test_different_prices_or_sides_stay_separate_trades():
+    from marketscalper.v4.service import merge_confirming_strategies
+    rows = [_s("a"), _s("b", entry=1851.22), _s("c", direction=-1),
+            _s("d", symbol="BTCUSDT")]
+    out = merge_confirming_strategies(rows)
+    assert len(out) == 4
+    assert all(r["confirmed_by"] == 1 for r in out)
+
+
+def test_the_recorder_still_sees_every_strategy_separately():
+    """Per-strategy expectancy decides the TRUSTED gate. Merging in all_setups
+    would delete the evidence for every strategy that was not the lead."""
+    import inspect
+    from marketscalper.v4.service import V4Service
+    assert "merge_confirming_strategies" not in inspect.getsource(V4Service.all_setups)

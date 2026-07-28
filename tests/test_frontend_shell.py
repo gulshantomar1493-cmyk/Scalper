@@ -102,7 +102,7 @@ def test_running_trades_are_separated_from_waiting_setups():
     assert '<section id="active"' in html          # its own section, own anchor
     assert 'href="#active"' in html                # and its own rail entry
     assert "/api/v4/trades" in src
-    assert "Open R" in src                         # unrealised, in R not dollars
+    assert "Open P&L" in src                       # unrealised, marked to the tick
 
 
 def test_expired_setups_stay_with_the_recommendations():
@@ -446,3 +446,83 @@ def test_an_active_trade_shows_when_the_engine_will_force_it_out():
     # unknown horizon must read as unknown, not as a guess
     block = src[src.index("function horizonLeft"):src.index("function activeRow")]
     assert "return null" in block
+
+
+def test_the_price_on_screen_is_the_last_trade_not_the_last_closed_bar():
+    """service.quotes() returns the last CLOSED 5m bar — up to five minutes
+    old. A number that stale must not sit under a "LIVE FEED" pill."""
+    import inspect
+    from marketscalper.v4 import api
+    src = inspect.getsource(api.build_router)
+    assert "live_price" in src
+    assert '"source"' in src and '"tick"' in src
+
+
+def test_quotes_are_polled_fast_enough_to_look_live():
+    src = _read(APP)
+    # the tick poll drives every open position's mark — 4s felt like a slideshow
+    assert "loadQuotes(); }, 1500)" in src
+    # and a tick must re-mark the book, not just the header
+    block = src[src.index("function loadQuotes"):src.index("function loadDayOpens")]
+    assert "renderLiveTrades" in block
+
+
+def test_a_live_position_is_marked_to_market_in_dollars():
+    """R is the engine's unit; dollars are the trader's. One coin per trade so
+    the figure is comparable and scales by whatever size was actually taken."""
+    src = _read(APP)
+    assert "function markToMarket" in src
+    assert "var UNIT = 1" in src
+    assert 'labelled("Open P&L")' in src
+    # profit green, loss red — the money palette, used for money
+    assert 'm.usd >= 0 ? "up" : "down"' in src
+
+
+def test_closed_trades_live_under_active_and_can_be_filtered_and_sorted():
+    """Same lifecycle, so the same section. A log you cannot filter by coin or
+    sort by outcome is a wall of rows."""
+    html, src = _read(HTML), _read(APP)
+    assert 'id="closed-trades"' in html
+    assert html.index('id="closed-trades"') > html.index('id="live-trades"')
+    assert html.index('id="closed-trades"') < html.index('<section id="strategies"')
+    assert "function renderClosed" in src
+    assert "state.closedSym" in src and "state.closedOutcome" in src
+    assert "state.closedSort" in src
+    assert 'data-sort' in src
+
+
+def test_a_cross_day_hold_shows_the_date_it_opened():
+    """A trade opened 09:30 yesterday and closed 04:27 today reads as
+    impossible when only the clock times are shown."""
+    src = _read(APP)
+    assert "function timeNear" in src
+    assert "timeNear(r.filled_ts, r.closed_ts)" in src
+
+
+def test_the_rail_label_escapes_the_rails_own_scroll_clip():
+    """The rail scrolls, and an overflow that is not `visible` on one axis
+    forces the other to clip too — an absolutely positioned flyout inside it is
+    cut off at the rail's edge however visible its computed style claims."""
+    css, src = _read(CSS), _read(APP)
+    tip = css[css.index(".rail-tip {"):css.index(".rail-tip {") + 400]
+    assert "position: fixed" in tip
+    assert "getBoundingClientRect" in src          # placed by app.js
+    assert 'tip.classList.add("on")' in src
+
+
+def test_a_setup_is_described_in_words_a_trader_reads():
+    """"Break below donchian 4h level 63,059.39; filters: trend_anchor" is
+    precise and unreadable. The exact sentence stays, one click away."""
+    src = _read(APP)
+    assert "function describeSetup" in src
+    assert "LEVEL_WORDS" in src and "FILTER_WORDS" in src
+    assert "describeSetup(s)" in src
+    assert "raw-reason" in src                     # the engine's own words kept
+
+
+def test_agreeing_strategies_are_shown_as_confirmation_not_extra_trades():
+    src = _read(APP)
+    assert "s.confirmed_by > 1" in src
+    assert "strategy confirm" in src
+    # and it names them, so each can be looked up in the Strategies section
+    assert "sab yahi keh rahi hain" in src

@@ -12,7 +12,8 @@ from . import config as C
 log = logging.getLogger(__name__)
 
 
-def build_router(service, require_token, *, history_store=None) -> APIRouter:
+def build_router(service, require_token, *, history_store=None,
+                 live_price=None) -> APIRouter:
     r = APIRouter(prefix="/api/v4", tags=["v4"],
                   dependencies=[Depends(require_token)])
 
@@ -55,12 +56,35 @@ def build_router(service, require_token, *, history_store=None) -> APIRouter:
                      strategy: str | None = Query(None)):
         if strategy and strategy not in C.BY_ID:
             raise HTTPException(400, f"unknown strategy {strategy!r}")
+        from .service import merge_confirming_strategies
         rows = await _svc().all_setups(symbol=symbol, strategy_id=strategy)
+        # display view: one order per price level, naming every strategy that
+        # agreed. The recorder reads all_setups() directly and keeps them apart,
+        # so per-strategy expectancy is unaffected.
+        rows = merge_confirming_strategies(rows)
+        rows.sort(key=lambda r: (-r["confirmed_by"], -r["filters_passed"], -r["rr"]))
         return {"setups": rows, "count": len(rows)}
 
     @r.get("/quotes")
     async def quotes():
-        return {"quotes": await _svc().quotes()}
+        """Last traded price per symbol.
+
+        `service.quotes()` returns the last CLOSED 5m bar, which is up to five
+        minutes old — fine as a fallback, useless as a live price. The live
+        feed already tracks the last trade for paper fills; use it when it is
+        there and say which one is being shown, so a stale number can never
+        pass itself off as a tick.
+        """
+        out = await _svc().quotes()
+        for sym, q in out.items():
+            q["source"] = "bar"
+            if live_price is None:
+                continue
+            px = live_price(sym)
+            if px is not None:
+                q["price"] = round(float(px), 2)
+                q["source"] = "tick"
+        return {"quotes": out}
 
     @r.get("/levels")
     async def levels(symbol: str = Query(...), tf: str = Query("4h")):
@@ -80,21 +104,29 @@ def build_router(service, require_token, *, history_store=None) -> APIRouter:
 
     @r.get("/trades")
     async def trades(limit: int = Query(50, ge=1, le=500)):
-        """The two books a trader reads differently, in one round trip.
+        """The three books a trader reads differently, in one round trip.
 
         `active` are FILLED — money is at risk, the decision is already made and
-        what is left is management. `expired` are setups whose validity window
-        elapsed without the level breaking: they belong beside the
-        recommendations as a record of what was NOT taken, and must never be
-        mistaken for positions. Keeping them in one response makes it
-        impossible for the two lists to be fetched a poll apart and disagree.
+        what is left is management. `closed` are the same trades after a target,
+        a stop or the horizon: the same lifecycle, so they belong together.
+        `expired` are setups whose validity window elapsed without the level
+        breaking: they belong beside the recommendations as a record of what was
+        NOT taken, and must never be mistaken for positions.
+
+        One response so the lists cannot be fetched a poll apart and disagree —
+        a trade that closes between two requests would otherwise appear in both
+        books at once, or in neither.
         """
         if history_store is None:
-            return {"active": [], "expired": [], "note": "history store not configured"}
+            return {"active": [], "closed": [], "expired": [],
+                    "note": "history store not configured"}
         import time
         now = int(time.time())
-        rows = await history_store.query(status="FILLED,CANCELLED,OPEN", limit=limit * 3)
+        rows = await history_store.query(status="FILLED,CANCELLED,OPEN,TP,SL,TIME",
+                                         limit=limit * 4)
         active = [x for x in rows if x["status"] == "FILLED"]
+        closed = [x for x in rows if x["status"] in ("TP", "SL", "TIME")]
+        closed.sort(key=lambda x: x.get("closed_ts") or 0, reverse=True)
         # An OPEN row whose validity window has already elapsed is expired to
         # the trader the moment the clock passes it. The recorder only writes
         # CANCELLED once it has 1m bars covering the whole window, so between
@@ -104,8 +136,9 @@ def build_router(service, require_token, *, history_store=None) -> APIRouter:
                    if x["status"] == "CANCELLED"
                    or (x["status"] == "OPEN" and (x.get("valid_until_ts") or 0) <= now)]
         expired.sort(key=lambda x: x.get("valid_until_ts") or 0, reverse=True)
-        return {"active": active, "expired": expired[:limit],
-                "count": len(active) + len(expired[:limit])}
+        return {"active": active, "closed": closed[:limit],
+                "expired": expired[:limit],
+                "count": len(active) + len(closed[:limit]) + len(expired[:limit])}
 
     @r.get("/performance")
     async def performance():
