@@ -4,7 +4,8 @@ Runs ONLY in live composition (never in replay/tests, so determinism is untouche
 Every cycle:
   1. ask the service for current setups on every enabled strategy
   2. INSERT the new ones (idempotent on setup_key)
-  3. advance every OPEN row against 1m candles and persist any terminal outcome
+  3. advance every OPEN/FILLED row against 1m candles, persisting the fill when
+     the resting order triggers and the outcome when it finally resolves
 
 Error doctrine: a DB or data failure is logged and counted; the loop never dies
 and never takes the feed or API down with it.
@@ -15,7 +16,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 
 from . import config as C
-from .outcome import advance, CANCELLED, FILLED, OPEN, TERMINAL
+from .outcome import advance, CANCELLED, OPEN, TERMINAL
 from .service import to_arrays
 
 log = logging.getLogger(__name__)
@@ -30,9 +31,9 @@ class V4Recorder:
         self._chart = chart_service
         self._alerter = alerter            # live-only; None in replay/tests
         self._approached: set = set()      # setup_keys already shouted about
-        self._filled: set = set()          # setup_keys already reported as live
         self.cycles = 0
         self.recorded = 0
+        self.filled = 0
         self.resolved = 0
         self.errors = 0
 
@@ -109,6 +110,18 @@ class V4Recorder:
                 log.warning("v4 recorder: advance failed for %s: %s", key, exc)
                 continue
 
+            # A fill is a state change worth recording BEFORE any terminal one:
+            # a trade that fills and stops out inside the same 60s cycle should
+            # still leave a fill price and a filled_ts behind it.
+            if out.fill_price is not None and row["status"] == OPEN:
+                if await self._store.apply_fill(key, out):
+                    self.filled += 1
+                    log.info("v4: %s filled at %.2f", key, out.fill_price)
+                    if self._alerter is not None:
+                        self._alerter.trade_triggered(row["symbol"],
+                                                      {**row, "fill_price": out.fill_price,
+                                                       "filled_ts": out.filled_ts})
+
             self._notify(row, out, bars)
 
             if out.status in TERMINAL:
@@ -117,30 +130,32 @@ class V4Recorder:
                     log.info("v4: %s -> %s (%.3fR)", key, out.status,
                              out.net_r if out.net_r is not None else 0.0)
                     if self._alerter is not None and out.status != CANCELLED:
-                        self._alerter.trade_closed(row["symbol"], {**row,
-                                                                   "status": out.status,
-                                                                   "net_r": out.net_r,
-                                                                   "hold_minutes": out.hold_minutes})
-        # a resolved setup can never approach or trigger again — do not leak
+                        self._alerter.trade_closed(row["symbol"], {
+                            **row, "status": out.status, "net_r": out.net_r,
+                            "hold_minutes": out.hold_minutes,
+                            "fill_price": out.fill_price, "exit_price": out.exit_price,
+                            "closed_ts": out.closed_ts})
+        # a resolved setup can never approach again — do not leak
         self._approached &= live_keys
-        self._filled &= live_keys
         self.cycles += 1
 
     def _notify(self, row: dict, out, bars: dict) -> None:
-        """Approach + trigger alerts. Each fires at most once per setup: a
-        60-second loop would otherwise message on every cycle for hours."""
+        """The approach alert: price is closing on a resting entry.
+
+        Fires at most once per setup — a 60-second loop would otherwise message
+        every cycle for hours. The TRIGGER alert is not here: it is gated on the
+        OPEN -> FILLED database transition instead, so it fires exactly once
+        even across a restart.
+        """
         if self._alerter is None or not len(bars["c"]):
             return
         key = row["setup_key"]
         price = float(bars["c"][-1])
         entry = float(row["entry"])
 
-        if out.status == FILLED and key not in self._filled:
-            self._filled.add(key)
+        if out.fill_price is not None:
             self._approached.add(key)          # already past "approaching"
-            self._alerter.trade_triggered(row["symbol"], {**row, "fill_price": out.fill_price})
             return
-
         if out.status != OPEN or key in self._approached or not entry:
             return
         away = abs(price - entry) / entry * 100.0

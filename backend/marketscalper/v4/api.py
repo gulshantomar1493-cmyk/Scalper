@@ -78,6 +78,35 @@ def build_router(service, require_token, *, history_store=None) -> APIRouter:
                                          status=status, limit=limit)
         return {"rows": rows, "count": len(rows)}
 
+    @r.get("/trades")
+    async def trades(limit: int = Query(50, ge=1, le=500)):
+        """The two books a trader reads differently, in one round trip.
+
+        `active` are FILLED — money is at risk, the decision is already made and
+        what is left is management. `expired` are setups whose validity window
+        elapsed without the level breaking: they belong beside the
+        recommendations as a record of what was NOT taken, and must never be
+        mistaken for positions. Keeping them in one response makes it
+        impossible for the two lists to be fetched a poll apart and disagree.
+        """
+        if history_store is None:
+            return {"active": [], "expired": [], "note": "history store not configured"}
+        import time
+        now = int(time.time())
+        rows = await history_store.query(status="FILLED,CANCELLED,OPEN", limit=limit * 3)
+        active = [x for x in rows if x["status"] == "FILLED"]
+        # An OPEN row whose validity window has already elapsed is expired to
+        # the trader the moment the clock passes it. The recorder only writes
+        # CANCELLED once it has 1m bars covering the whole window, so between
+        # those two moments the row would otherwise still read "waiting" —
+        # inviting an order on a setup the engine has already abandoned.
+        expired = [x for x in rows
+                   if x["status"] == "CANCELLED"
+                   or (x["status"] == "OPEN" and (x.get("valid_until_ts") or 0) <= now)]
+        expired.sort(key=lambda x: x.get("valid_until_ts") or 0, reverse=True)
+        return {"active": active, "expired": expired[:limit],
+                "count": len(active) + len(expired[:limit])}
+
     @r.get("/performance")
     async def performance():
         """LIVE stats per strategy — separate from the backtest figures."""

@@ -15,10 +15,29 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from datetime import datetime, timedelta, timezone
 
 from marketscalper import telegram
 
 log = logging.getLogger(__name__)
+
+#: The owner trades from India and reads these on a phone. A bare UTC time on a
+#: message that arrives at 3am is a puzzle, not information.
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+def ist(ts=None) -> str:
+    """A timestamp the reader can act on without doing arithmetic."""
+    if ts is None:
+        dt = datetime.now(timezone.utc)
+    elif isinstance(ts, datetime):
+        dt = ts if ts.tzinfo else ts.replace(tzinfo=timezone.utc)
+    else:
+        try:
+            dt = datetime.fromtimestamp(float(ts), tz=timezone.utc)
+        except (TypeError, ValueError, OSError, OverflowError):
+            return "—"
+    return dt.astimezone(IST).strftime("%d %b %H:%M IST")
 
 
 class Alerter:
@@ -79,32 +98,54 @@ class Alerter:
             f"{float(setup['entry']):,.2f}",
             f"Stop {float(setup['stop']):,.2f} · Target {float(setup['target']):,.2f}"
             f" · {setup.get('rr')}R net",
+            ist(),
             "",
             "<i>Decision-support only — place any order manually.</i>",
         ]))
 
     def trade_triggered(self, symbol: str, row: dict) -> None:
+        """The level broke and the resting order filled — this is now a LIVE
+        position, and it moves out of the setups list into active trades."""
         if not self._enabled("on_trigger"):
             return
         long_ = int(row.get("direction", 1)) > 0
         self._send("trade", "\n".join([
-            "<b>▶ ENTRY TRIGGERED</b>",
+            "<b>▶ ENTRY TRIGGERED — trade ab ACTIVE hai</b>",
             f"<b>{symbol}</b> {'LONG' if long_ else 'SHORT'} — {row.get('strategy_id')}",
             f"Filled {float(row.get('fill_price') or row['entry']):,.2f}",
             f"Stop {float(row['stop']):,.2f} · Target {float(row['target']):,.2f}",
+            ist(row.get("filled_ts")),
         ]))
+
+    #: How the exit is described. The status code alone ('TP') does not tell a
+    #: half-awake reader whether they made money.
+    _EXIT = {
+        "TP": ("🎯", "TARGET HIT"),
+        "SL": ("🛑", "STOP HIT"),
+        "TIME": ("⏱", "TIME EXIT — 3 din ka horizon pura"),
+    }
 
     def trade_closed(self, symbol: str, row: dict) -> None:
         if not self._enabled("on_close"):
             return
         net = row.get("net_r") or 0.0
         status = str(row.get("status", "")).upper()
-        self._send("trade", "\n".join([
-            f"<b>{'✅' if net > 0 else '❌'} TRADE CLOSED — {status}</b>",
-            f"<b>{symbol}</b> {row.get('strategy_id')}",
+        icon, headline = self._EXIT.get(status, ("•", f"CLOSED — {status}"))
+        hold = row.get("hold_minutes")
+        lines = [
+            f"<b>{icon} {headline}</b>",
+            f"<b>{symbol}</b> {'LONG' if int(row.get('direction', 1)) > 0 else 'SHORT'}"
+            f" — {row.get('strategy_id')}",
+        ]
+        if row.get("fill_price") is not None and row.get("exit_price") is not None:
+            lines.append(f"Entry {float(row['fill_price']):,.2f} → "
+                         f"exit {float(row['exit_price']):,.2f}")
+        lines += [
             f"Result <b>{net:+.2f}R</b> net of fees and funding",
-            f"Held {row.get('hold_minutes')} min",
-        ]))
+            f"Held {hold} min" if hold is not None else "",
+            ist(row.get("closed_ts")),
+        ]
+        self._send("trade", "\n".join(x for x in lines if x))
 
     def trade_setup(self, symbol: str, setup: dict) -> None:
         """One alert per V4 setup the recorder accepts. `filters_passed` is a
@@ -122,7 +163,8 @@ class Alerter:
             f"Filters passed: {passed}/3\n"
             f"Entry: {setup.get('entry')}\n"
             f"Stop: {setup.get('stop')}\n"
-            f"Target: {setup.get('target')}  (net R:R {setup.get('rr')})\n\n"
+            f"Target: {setup.get('target')}  (net R:R {setup.get('rr')})\n"
+            f"{ist(setup.get('decision_ts'))}\n\n"
             f"<i>Decision-support only — place any order manually on your exchange.</i>"
         )
         self._send("trade", text)

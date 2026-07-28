@@ -71,6 +71,35 @@ def to_arrays(candles: list[dict], tf: str) -> dict:
     return dict(ts=ts, o=o, h=h, l=l, c=c, v=v, tf_s=_TF_SECONDS[tf])
 
 
+def _one_per_resting_order(rows: list[dict]) -> list[dict]:
+    """Collapse a standing level to the ONE order it actually is.
+
+    `build_setups(only_last=True)` evaluates the last two closed bars, so a
+    level that is still unbroken re-issues the identical setup — same strategy,
+    same direction, same entry price — once per bar. Those are not two trades:
+    a trader places one resting order at one price. Listing them twice doubles
+    the apparent setup count, doubles the risk the exposure strip reports, and
+    fills the recorded history with near-duplicate rows.
+
+    The NEWEST assessment wins: it carries the current ATR-derived stop and the
+    live validity window. `bars_standing` says how long the level has been on
+    offer, which is real information the duplicates were accidentally encoding.
+    """
+    best: dict[tuple, dict] = {}
+    for r in rows:
+        k = (r["strategy_id"], r["symbol"], r["direction"], r["entry"])
+        prev = best.get(k)
+        if prev is None:
+            best[k] = dict(r, bars_standing=1,
+                           first_seen_ts=r["decision_ts"])
+            continue
+        seen = prev["bars_standing"] + 1
+        first = min(prev["first_seen_ts"], r["decision_ts"])
+        keep = r if r["decision_ts"] > prev["decision_ts"] else prev
+        best[k] = dict(keep, bars_standing=seen, first_seen_ts=first)
+    return list(best.values())
+
+
 class V4Service:
     """Builds setups on demand. Cached per (symbol, tf) until a new bar closes."""
 
@@ -164,8 +193,10 @@ class V4Service:
             if strategy_id and st.id != strategy_id:
                 continue
             out.extend(await self.setups_for(st))
+        out = _one_per_resting_order(out)
         out.sort(key=lambda r: (-r["filters_passed"], -r["rr"]))
         return out
+
 
     def catalogue(self) -> list[dict]:
         """Strategy list with its EVIDENCE. Backtest and live stats stay separate."""

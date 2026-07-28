@@ -136,6 +136,28 @@ main { overflow-y: auto; overflow-x: hidden; scroll-behavior: smooth; position: 
 .rail-btn:hover, .rail-btn.on { color: var(--ink); background: var(--surf-2); }
 .rail-sp { flex: 1; min-height: 12px; }
 
+/* An icon-only rail is a row of unlabelled squares until you have learnt it.
+   The native title= tooltip takes about a second to appear and cannot be
+   styled, which is long enough that people stop hovering and start guessing. */
+.rail-btn { position: relative; }
+.rail-tip {
+  position: absolute; left: calc(100% + 10px); top: 50%; transform: translateY(-50%) translateX(-4px);
+  padding: 6px 10px; border-radius: 8px; white-space: nowrap; pointer-events: none;
+  background: var(--surf-2); color: var(--ink);
+  border: 1px solid var(--line); box-shadow: 0 8px 24px rgba(0,0,0,.32);
+  font-size: 12px; font-weight: 600; letter-spacing: -.01em;
+  opacity: 0; visibility: hidden; transition: 140ms var(--ease); z-index: 60;
+}
+.rail-tip::before {                       /* the little pointer back to the icon */
+  content: ""; position: absolute; right: 100%; top: 50%; margin-top: -4px;
+  border: 4px solid transparent; border-right-color: var(--line);
+}
+.rail-btn:hover .rail-tip,
+.rail-btn:focus-visible .rail-tip {
+  opacity: 1; visibility: visible; transform: translateY(-50%) translateX(0);
+}
+@media (prefers-reduced-motion: reduce) { .rail-tip { transition: none; } }
+
 /* -------------------------------------------------------------- sections -- */
 section { position: relative; padding: 108px 64px; border-top: 1px solid var(--line); }
 section.band { background: linear-gradient(180deg, var(--deep), var(--ground) 40%); }
@@ -736,3 +758,36 @@ footer .fine { font-size: 11.5px; color: var(--ink-3); max-width: 64ch; line-hei
                  padding-left: 11px; }
 #fee-panel .pref .inp { width: 92px; text-align: right; }
 #fee-panel .seg button { padding: 6px 12px; font-size: 11.5px; }
+
+/* ------------------------------------- setups vs active trades vs expired --
+   Three states, three visual weights. A recommendation is an invitation, a
+   live trade is a commitment, an expired setup is a receipt. If they look
+   alike the trader has to read text to tell them apart, and at 3am they won't.
+   Money colours (green/red) stay reserved for money: open R and outcome. */
+.qrow .why .stamp { font-family: var(--mono); color: var(--ink-3); }
+.qrow .cell .away { display: block; margin-top: 2px; font-size: 10.5px; color: var(--ink-3); }
+.qrow .cell .v.big { font-size: 15px; font-weight: 700; }
+.qrow .cell .v.dim { color: var(--ink-3); }
+
+/* live position: a standing accent edge, so the section reads as "at risk"
+   without borrowing the up/down palette that means P&L */
+.qrow.trade { background: var(--surf); }
+.qrow.trade .bar { width: 3px; }
+.qrow.trade + .qrow.trade { border-top: 1px solid var(--line-soft); }
+
+.expired-note {
+  margin: -6px 0 14px; font-size: 12px; color: var(--ink-3); max-width: 62ch; line-height: 1.6;
+}
+.expired-list { opacity: .78; }
+/* still clickable — inspecting what the engine offered is legitimate */
+
+.setup-foot .meta.stamp { font-family: var(--mono); }
+
+.trow .ts { display: flex; flex-direction: column; gap: 2px; }
+.trow .ts .ts2 { font-size: 10.5px; color: var(--ink-3); opacity: .85; }
+.badge.live { background: var(--accent-glow); color: var(--accent); }
+.expo > div .sub { margin-top: 4px; font-size: 11px; color: var(--ink-3); }
+.qrow .why .standing {
+  margin-left: 6px; padding: 1px 6px; border-radius: 4px; font-size: 10px;
+  background: var(--surf-2); color: var(--ink-3); font-family: var(--mono);
+}

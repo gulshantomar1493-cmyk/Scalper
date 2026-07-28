@@ -36,8 +36,13 @@ DEFAULTS = {
     # When to shout. proximity_pct is how close price must come to a resting
     # entry before it is worth a message — these orders sit for hours, so the
     # useful alert is "it is approaching", not "it filled".
+    # `on_new_setup` is OFF by default and everything else is on. A setup is
+    # issued the moment a level qualifies, which can be hours before price goes
+    # anywhere near it — several a day, none of them actionable yet. The alerts
+    # that are worth a phone buzz are the ones tied to something happening:
+    # price arriving at the entry, the order filling, and the trade closing.
     "alerts": {
-        "on_new_setup": True,
+        "on_new_setup": False,
         "on_approach": True,
         "on_trigger": True,
         "on_close": True,

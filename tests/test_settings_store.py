@@ -148,3 +148,14 @@ def test_a_saved_alerts_file_reloads_without_error(tmp_path):
     fresh = _store(tmp_path)                    # re-reads the file it just wrote
     assert fresh.alerts()["proximity_pct"] == 0.5
     assert fresh.alerts()["on_trigger"] is False
+
+
+def test_the_noisy_per_setup_alert_is_off_by_default(tmp_path):
+    """A setup is issued when a level qualifies, which can be hours before
+    price goes near it — several a day, none actionable yet. The alerts worth a
+    phone buzz are tied to something actually happening."""
+    from marketscalper.settings_store import SettingsStore
+    a = SettingsStore(tmp_path / "s.json").alerts()
+    assert a["on_new_setup"] is False
+    assert a["on_approach"] is True and a["on_trigger"] is True and a["on_close"] is True
+    assert a["proximity_pct"] == 0.25

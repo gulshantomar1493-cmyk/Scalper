@@ -22,7 +22,9 @@
     sym: "ETHUSDT", pick: null, tf: "4h", riskPct: 0.5,
     setups: [], catalogue: null, perf: null, history: [], paper: null,
     settings: null, quotes: {}, prev: {}, dayOpen: {}, live: false,
-    histFilter: "", chart: null, series: null, lines: [], active: [],
+    histFilter: "", chart: null, series: null, lines: [],
+    active: [],        // FILLED — money at risk
+    closedOut: [],     // expired without filling: a record, never a position
     equity: Number(localStorage.getItem("ms_equity")) || 10000,
     heroCandles: []
   };
@@ -106,12 +108,46 @@
   }
   function sign(n, d) { return (n > 0 ? "+" : "") + fmt(n, d); }
   function dec(sym) { return sym === "BTCUSDT" ? 0 : 2; }
-  function when(ts) {
-    if (!ts) return "—";
+  /* Every time on screen is IST, and says so.
+     The engine thinks in UTC and the server may sit in any timezone; rendering
+     in whatever locale the browser happens to have meant a trade stamped
+     "14:32" could be three different moments on three devices. One zone, named
+     on the string, removes the question. */
+  var TZ = "Asia/Kolkata";
+  function toDate(ts) {
+    if (ts === null || ts === undefined || ts === "") return null;
     var dt = typeof ts === "number" ? new Date(ts * 1000) : new Date(ts);
-    if (isNaN(dt.getTime())) return "—";
-    return dt.toLocaleString(undefined, { month: "short", day: "2-digit",
-                                          hour: "2-digit", minute: "2-digit" });
+    return isNaN(dt.getTime()) ? null : dt;
+  }
+  function when(ts) {                       // "28 Jul, 14:32 IST"
+    var dt = toDate(ts);
+    if (!dt) return "—";
+    return dt.toLocaleString("en-GB", { timeZone: TZ, day: "2-digit", month: "short",
+                                        hour: "2-digit", minute: "2-digit",
+                                        hour12: false }) + " IST";
+  }
+  function clockTime(ts) {                  // "14:32" — inside a dated group
+    var dt = toDate(ts);
+    if (!dt) return "—";
+    return dt.toLocaleString("en-GB", { timeZone: TZ, hour: "2-digit",
+                                        minute: "2-digit", hour12: false });
+  }
+  /* How long ago, for things whose age is the point (a fill, a close). */
+  function ago(ts) {
+    var dt = toDate(ts);
+    if (!dt) return "";
+    var m = Math.floor((Date.now() - dt.getTime()) / 60000);
+    if (m < 1) return "abhi";
+    if (m < 60) return m + "m pehle";
+    var h = Math.floor(m / 60);
+    if (h < 24) return h + "h " + (m % 60) + "m pehle";
+    return Math.floor(h / 24) + "d pehle";
+  }
+  function held(from, to) {
+    var a = toDate(from), b = toDate(to) || new Date();
+    if (!a) return "—";
+    var m = Math.max(0, Math.round((b.getTime() - a.getTime()) / 60000));
+    return m < 60 ? m + "m" : Math.floor(m / 60) + "h " + (m % 60) + "m";
   }
   function labelled(text) { return el("span", "lbl", text); }
 
@@ -370,7 +406,10 @@
   var lastTtl = "";
   function tickClock() {
     var c = $("clock");
-    if (c) c.textContent = new Date().toLocaleTimeString();
+    if (c) {
+      c.textContent = new Date().toLocaleTimeString("en-GB",
+        { timeZone: TZ, hour12: false }) + " IST";
+    }
     /* re-render the card only when the displayed countdown actually changes,
        so a half-typed equity field is never wiped by the 1-second tick */
     var s = current();
@@ -539,6 +578,10 @@
     card.appendChild(el("p", "reason", s.reason));
 
     var foot = el("div", "setup-foot");
+    /* Issued-at, in full. Without it a four-day-old setup and one found this
+       minute look identical, and only one of them is worth reading. */
+    foot.appendChild(el("span", "meta stamp",
+      "mila " + when(s.decision_ts) + " (" + ago(s.decision_ts) + ")"));
     foot.appendChild(el("span", "meta", "invalid: " + fmt(s.stop, d) +
       (lng ? " ke neeche close" : " ke upar close") +
       " · " + when(s.valid_until_ts) + " tak valid"));
@@ -637,37 +680,50 @@
     costBox.appendChild(note);
   }
 
-  /* Taking every live setup is one correlated bet, not N independent ones.
-     A trader sizing each at 0.5% needs to see the total before they do it. */
+  /* Two different risks, and only one of them is hypothetical.
+     ACTIVE trades are money already committed. Setups are what taking them all
+     WOULD cost. Reporting only the second — which is what this strip used to do
+     — hides the exposure the trader actually carries right now. */
   function renderExposure() {
     var box = $("exposure"); if (!box) return;
     clear(box);
-    var rows = state.setups;
-    if (!rows.length) return;
+    var rows = state.setups.filter(function (s) { return !validity(s).expired; });
+    var live = state.active || [];
+    if (!rows.length && !live.length) return;
+
+    var atRisk = live.length * state.riskPct;         // already committed
+    var ifAll = rows.length * state.riskPct;          // if every setup triggers
     var longs = rows.filter(function (x) { return x.direction > 0; }).length;
-    var totalRisk = rows.length * state.riskPct;
     var byS = {};
-    rows.forEach(function (x) { byS[x.symbol] = (byS[x.symbol] || 0) + 1; });
-    var top = Object.keys(byS).sort(function (a, b) { return byS[b] - byS[a]; })[0];
-    var concentrated = byS[top] / rows.length;
+    rows.concat(live).forEach(function (x) { byS[x.symbol] = (byS[x.symbol] || 0) + 1; });
+    var names = Object.keys(byS);
+    var top = names.sort(function (a, b) { return byS[b] - byS[a]; })[0];
+    var concentrated = top ? byS[top] / (rows.length + live.length) : 0;
 
     var wrap = el("div", "expo");
-    [["Live setups", String(rows.length), ""],
-     ["Long / Short", longs + " / " + (rows.length - longs), ""],
-     ["Sab liye to risk", totalRisk.toFixed(1) + "%", totalRisk > 3 ? "warn" : ""],
-     [top.replace("USDT", "") + " mein", Math.round(concentrated * 100) + "%",
-      concentrated > 0.7 ? "warn" : ""]
+    [["Abhi risk pe", live.length ? atRisk.toFixed(1) + "%" : "0%",
+      atRisk > 2 ? "warn" : "", live.length + " active trade"],
+     ["Armed setups", String(rows.length), "",
+      longs + " long / " + (rows.length - longs) + " short"],
+     ["Sab trigger huye to", (atRisk + ifAll).toFixed(1) + "%",
+      (atRisk + ifAll) > 3 ? "warn" : "", "active + har armed setup"],
+     [top ? top.replace("USDT", "") + " mein" : "Concentration",
+      Math.round(concentrated * 100) + "%",
+      concentrated > 0.7 ? "warn" : "", "ek hi symbol par"]
     ].forEach(function (c) {
       var cell = el("div");
       cell.appendChild(labelled(c[0]));
       cell.appendChild(el("div", "v " + c[2], c[1]));
+      cell.appendChild(el("div", "sub", c[3]));
       wrap.appendChild(cell);
     });
     box.appendChild(wrap);
-    box.appendChild(el("div", "expo-note",
-      "Ye setups ek dusre se independent nahi hain — ek hi level, ek hi symbol, " +
-      "ek hi direction. Sab ek saath lene ka matlab ek bada correlated trade hai, " +
-      (rows.length) + " chhote trades nahi."));
+    if (rows.length > 1) {
+      box.appendChild(el("div", "expo-note",
+        "Ye setups ek dusre se independent nahi hain — ek hi level, ek hi symbol, " +
+        "ek hi direction. Sab ek saath lene ka matlab ek bada correlated trade hai, " +
+        rows.length + " chhote trades nahi."));
+    }
   }
 
   /* One row per strategy that has a live setup on this symbol — clicking swaps
@@ -704,102 +760,180 @@
     var rows = state.setups.filter(function (s) {
       return !cur || setupKey(s) !== setupKey(cur) || s.symbol !== cur.symbol;
     });
-    if (!rows.length) {
-      box.appendChild(el("div", "empty", "Baaki koi live setup nahi."));
-      return;
+    /* Armed and expired are different decisions, so they are different lists.
+       A dimmed row inside the live list is still a row in the live list. */
+    var armed = rows.filter(function (s) { return !validity(s).expired; });
+    var gone = rows.filter(function (s) { return validity(s).expired; });
+    if (!armed.length) {
+      box.appendChild(el("div", "empty", "Baaki koi armed setup nahi."));
+    } else {
+      /* Ranked by filters then R:R by the engine; within that, the trader wants
+         to see what is closest to triggering. Sort by distance when we know it. */
+      armed.slice().sort(function (a, b) {
+        var da = distanceToEntry(a), db = distanceToEntry(b);
+        if (!da || !db) return 0;
+        return Math.abs(da.pct) - Math.abs(db.pct);
+      }).forEach(function (s) { box.appendChild(setupRow(s)); });
     }
-    /* Ranked by filters then R:R by the engine; within that, the trader wants
-       to see what is closest to triggering. Sort by distance when we know it. */
-    rows = rows.slice().sort(function (a, b) {
-      var da = distanceToEntry(a), db = distanceToEntry(b);
-      if (!da || !db) return 0;
-      return Math.abs(da.pct) - Math.abs(db.pct);
-    });
-    rows.forEach(function (s) {
-      var lng = s.direction > 0, d = dec(s.symbol);
-      var meta = strategyMeta(s.strategy_id);
-      var row = el("button", "qrow" + (validity(s).expired ? " stale" : ""));
-      var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
-      row.appendChild(bar);
-      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
-      row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
-      var mid = el("div");
-      mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
-      mid.appendChild(el("div", "why", s.reason));
-      row.appendChild(mid);
-      var dist = distanceToEntry(s);
-      [["Entry", s.entry, ""], ["Stop", s.stop, "down"],
-       ["Target", s.target, "up"], ["R:R", s.rr, ""]].forEach(function (c) {
-        var cell = el("div", "cell");
-        cell.appendChild(labelled(c[0]));
-        cell.appendChild(el("span", "v " + c[2],
-          c[0] === "R:R" ? fmt(c[1], 2) : fmt(c[1], d)));
-        row.appendChild(cell);
-      });
-      var away = el("div", "cell");
-      away.appendChild(labelled("Door"));
-      away.appendChild(el("span", "v " + (dist && dist.through ? "up" : ""),
-        dist == null ? "—" : dist.through ? "cross" : dist.pct.toFixed(2) + "%"));
-      row.appendChild(away);
-      row.addEventListener("click", function () {
-        state.sym = s.symbol; state.pick = setupKey(s);
-        renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
-        $("setup").scrollIntoView({ behavior: "smooth" });
-      });
-      box.appendChild(row);
-    });
+    renderExpired(gone);
   }
 
-  /* A filled setup is a LIVE position — it needs managing, not deciding, so it
-     sits above the setups still waiting for their level to break. */
+  /* Expired setups live HERE, under the recommendations — never in active
+     trades. Nothing triggered; there is no position and no money at risk. */
+  function renderExpired(gone) {
+    var wrap = $("expired-wrap"); if (!wrap) return;
+    clear(wrap);
+    /* Two sources, one list. The engine drops a setup from /setups once its
+       window closes, so without the recorded CANCELLED rows the expired list
+       would empty itself and the record of what was NOT taken would vanish. */
+    var seen = Object.create(null), all = [];
+    (gone || []).concat(state.closedOut || []).forEach(function (s) {
+      var k = s.symbol + "|" + s.strategy_id + "|" + s.entry;
+      if (seen[k]) return;
+      seen[k] = 1; all.push(s);
+    });
+    if (!all.length) return;
+    all.sort(function (a, b) { return (b.valid_until_ts || 0) - (a.valid_until_ts || 0); });
+    var head = el("div", "sub-head");
+    head.textContent = "Expire ho chuke · " + all.length +
+      " — validity window nikal gayi, level nahi toota";
+    wrap.appendChild(head);
+    var note = el("div", "expired-note");
+    note.textContent = "Ye positions NAHI hain — inme koi paisa laga hi nahi. " +
+      "Record ke liye rakhe hain taaki pata rahe engine ne kya offer kiya tha.";
+    wrap.appendChild(note);
+    var list = el("div", "list expired-list");
+    all.slice(0, 12).forEach(function (s) { list.appendChild(setupRow(s)); });
+    wrap.appendChild(list);
+  }
+
+  function setupRow(s) {
+    var lng = s.direction > 0, d = dec(s.symbol);
+    var meta = strategyMeta(s.strategy_id);
+    var row = el("button", "qrow" + (validity(s).expired ? " stale" : ""));
+    var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
+    row.appendChild(bar);
+    row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+    row.appendChild(el("span", "sym", s.symbol.replace("USDT", "")));
+    var mid = el("div");
+    mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
+    /* When it was issued, next to why. A setup with no time on it cannot be
+       told apart from one the engine found four days ago. */
+    var why = el("div", "why");
+    why.appendChild(el("span", "stamp", when(s.decision_ts)));
+    if (s.bars_standing > 1) {
+      /* the level has survived more than one bar without breaking — the same
+         resting order, still on offer, not a new trade */
+      why.appendChild(el("span", "standing", s.bars_standing + " bars se khada"));
+    }
+    why.appendChild(document.createTextNode(" · " + s.reason));
+    mid.appendChild(why);
+    row.appendChild(mid);
+    var dist = distanceToEntry(s);
+    [["Entry", s.entry, ""], ["Stop", s.stop, "down"],
+     ["Target", s.target, "up"], ["R:R", s.rr, ""]].forEach(function (c) {
+      var cell = el("div", "cell");
+      cell.appendChild(labelled(c[0]));
+      cell.appendChild(el("span", "v " + c[2],
+        c[0] === "R:R" ? fmt(c[1], 2) : fmt(c[1], d)));
+      row.appendChild(cell);
+    });
+    var away = el("div", "cell");
+    away.appendChild(labelled(validity(s).expired ? "Expire" : "Door"));
+    if (validity(s).expired) {
+      away.appendChild(el("span", "v dim", clockTime(s.valid_until_ts)));
+    } else {
+      away.appendChild(el("span", "v " + (dist && dist.through ? "up" : ""),
+        dist == null ? "—" : dist.through ? "cross" : dist.pct.toFixed(2) + "%"));
+    }
+    row.appendChild(away);
+    row.addEventListener("click", function () {
+      state.sym = s.symbol; state.pick = setupKey(s);
+      renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
+      $("setup").scrollIntoView({ behavior: "smooth" });
+    });
+    return row;
+  }
+
+  /* A filled setup is a LIVE POSITION. It gets its own section because the
+     question has changed: not "should I take this" but "where is it now and
+     what closes it". Different question, different numbers. */
   function renderLiveTrades() {
     var box = $("live-trades"); if (!box) return;
     clear(box);
     var rows = state.active || [];
-    if (!rows.length) return;
-    var head = el("div", "sub-head");
-    head.style.marginTop = "0";
-    head.textContent = "Abhi live trades · " + rows.length + " — entry fill ho chuka hai";
-    box.appendChild(head);
+    var count = $("active-count");
+    if (count) count.textContent = rows.length ? rows.length + " open" : "koi open trade nahi";
+    if (!rows.length) {
+      box.appendChild(el("div", "empty",
+        "Abhi koi trade active nahi. Jab kisi setup ka level toot ke entry fill " +
+        "hogi, wo apne aap yahan aa jaayegi — aur Telegram pe alert bhi jaayega."));
+      return;
+    }
     var list = el("div", "list");
-    list.style.marginBottom = "20px";
-    rows.forEach(function (r) {
-      var lng = r.direction > 0, d = dec(r.symbol);
-      var fill = r.fill_price != null ? r.fill_price : r.entry;
-      var px = state.quotes[r.symbol] ? state.quotes[r.symbol].price : null;
-      var risk = Math.abs(fill - r.stop);
-      var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
-      var row = el("div", "qrow");
-      var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
-      row.appendChild(bar);
-      row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
-      row.appendChild(el("span", "sym", String(r.symbol).replace("USDT", "")));
-      var mid = el("div");
-      mid.appendChild(el("div", "nm", strategyMeta(r.strategy_id).label || r.strategy_id));
-      mid.appendChild(el("div", "why", "fill " + fmt(fill, d) + " · " + when(r.filled_ts || r.decision_ts)));
-      row.appendChild(mid);
-      [["Stop", r.stop, "down"], ["Target", r.target, "up"],
-       ["Now", px, ""]].forEach(function (c) {
-        var cell = el("div", "cell");
-        cell.appendChild(labelled(c[0]));
-        cell.appendChild(el("span", "v " + c[2], c[1] == null ? "—" : fmt(c[1], d)));
-        row.appendChild(cell);
-      });
-      var pnl = el("div", "cell");
-      pnl.appendChild(labelled("Open R"));
-      pnl.appendChild(el("span", "v " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
-        openR == null ? "—" : sign(openR, 2) + "R"));
-      row.appendChild(pnl);
-      list.appendChild(row);
-    });
+    rows.forEach(function (r) { list.appendChild(activeRow(r)); });
     box.appendChild(list);
   }
 
+  function activeRow(r) {
+    var lng = r.direction > 0, d = dec(r.symbol);
+    var fill = r.fill_price != null ? r.fill_price : r.entry;
+    var px = livePrice(r.symbol);
+    var risk = Math.abs(fill - r.stop);
+    var openR = (px != null && risk) ? (px - fill) / risk * (lng ? 1 : -1) : null;
+
+    var row = el("div", "qrow trade");
+    var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
+    row.appendChild(bar);
+    row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
+    row.appendChild(el("span", "sym", String(r.symbol).replace("USDT", "")));
+
+    var mid = el("div");
+    mid.appendChild(el("div", "nm", strategyMeta(r.strategy_id).label || r.strategy_id));
+    var why = el("div", "why");
+    why.appendChild(el("span", "stamp", "fill " + fmt(fill, d) + " · " + when(r.filled_ts)));
+    /* Hold time against the 3-day horizon: past it the engine exits at market
+       whatever the price, so it is a countdown, not trivia. */
+    why.appendChild(document.createTextNode(" · " + held(r.filled_ts) + " hold"));
+    mid.appendChild(why);
+    row.appendChild(mid);
+
+    /* Distance to each exit, because that is what a live position is: two
+       prices racing. Percentages, so BTC and ETH read the same. */
+    [["Stop", r.stop, "down"], ["Target", r.target, "up"]].forEach(function (c) {
+      var cell = el("div", "cell");
+      cell.appendChild(labelled(c[0]));
+      cell.appendChild(el("span", "v " + c[2], fmt(c[1], d)));
+      if (px != null && c[1]) {
+        cell.appendChild(el("span", "away",
+          (Math.abs(c[1] / px - 1) * 100).toFixed(2) + "% door"));
+      }
+      row.appendChild(cell);
+    });
+
+    var nowCell = el("div", "cell");
+    nowCell.appendChild(labelled("Abhi"));
+    nowCell.appendChild(el("span", "v", px == null ? "—" : fmt(px, d)));
+    row.appendChild(nowCell);
+
+    var pnl = el("div", "cell");
+    pnl.appendChild(labelled("Open R"));
+    pnl.appendChild(el("span", "v big " + (openR == null ? "" : openR >= 0 ? "up" : "down"),
+      openR == null ? "—" : sign(openR, 2) + "R"));
+    row.appendChild(pnl);
+    return row;
+  }
+
+  /* Active positions and expired setups arrive together so the two lists can
+     never be a poll apart and contradict each other. */
   function loadActive() {
-    return api("/api/v4/history?status=FILLED&limit=50").then(function (d) {
-      state.active = d.rows || [];
+    return api("/api/v4/trades?limit=50").then(function (d) {
+      state.active = d.active || [];
+      state.closedOut = d.expired || [];
       renderLiveTrades();
-    }).catch(function () { state.active = []; });
+      renderQueue();                 // the expired list lives under the setups
+      renderExposure();              // committed risk comes from the active book
+    }).catch(function () { state.active = []; renderLiveTrades(); });
   }
 
   // --------------------------------------------------------------- pipeline --
@@ -926,6 +1060,22 @@
     });
   }
 
+  /* "CANCELLED" is what the engine stores; "Expired" is what happened — nobody
+     cancelled anything, the window simply ran out. And a row still marked OPEN
+     after its window has closed is expired too: the recorder only writes
+     CANCELLED once it has 1m bars covering the whole window, and until then
+     "Waiting" invites an order on a setup the engine already abandoned. */
+  var BADGE = {
+    TP: ["tp", "Target hit"], SL: ["sl", "Stop hit"], TIME: ["time", "Time exit"],
+    OPEN: ["open", "Waiting"], FILLED: ["live", "ACTIVE"], EXPIRED: ["time", "Expired"]
+  };
+  function effectiveStatus(r) {
+    if (r.status === "CANCELLED") return "EXPIRED";
+    if (r.status === "OPEN" && r.valid_until_ts &&
+        r.valid_until_ts * 1000 <= Date.now()) return "EXPIRED";
+    return r.status;
+  }
+
   function renderHistory() {
     var f = state.histFilter;
     var rows = state.history.filter(function (r) { return !f || r.status === f; });
@@ -962,11 +1112,20 @@
     }
     rows.forEach(function (r) {
       var d = dec(r.symbol), lng = r.direction > 0;
-      var badge = { TP: ["tp", "Target"], SL: ["sl", "Stop"], TIME: ["time", "Time"],
-                    OPEN: ["open", "Open"], FILLED: ["open", "Live"],
-                    CANCELLED: ["time", "Cancelled"] }[r.status] || ["time", r.status];
+      var badge = BADGE[effectiveStatus(r)] || ["time", r.status];
       var row = el("div", "trow");
-      row.appendChild(el("span", "ts", when(r.decision_ts)));
+      /* Issued, and — where it exists — closed. A trade record with only one
+         timestamp cannot answer "how long was I in this". */
+      var ts = el("span", "ts");
+      ts.appendChild(el("span", null, when(r.decision_ts)));
+      if (r.closed_ts) {
+        ts.appendChild(el("span", "ts2", "band " + clockTime(r.closed_ts) +
+          " · " + held(r.filled_ts || r.decision_ts, r.closed_ts)));
+      } else if (r.filled_ts) {
+        ts.appendChild(el("span", "ts2", "fill " + clockTime(r.filled_ts) +
+          " · " + held(r.filled_ts) + " se live"));
+      }
+      row.appendChild(ts);
       row.appendChild(el("span", "sy", String(r.symbol).replace("USDT", "")));
       row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
       row.appendChild(el("span", "st", stratCode(r.strategy_id)));
@@ -1257,12 +1416,16 @@
     prox.appendChild(inp);
     box.appendChild(prox);
 
-    box.appendChild(prefRow("Naya setup mila", "jab koi strategy pehli baar issue kare",
-      a.on_new_setup, function (v) { saveAlerts({ on_new_setup: v }); }));
-    box.appendChild(prefRow("Entry fill ho gaya", "resting order bhar gaya, trade live hai",
+    box.appendChild(prefRow("Trade ACTIVE ho gaya",
+      "resting order bhar gaya — ab paisa risk pe hai",
       a.on_trigger, function (v) { saveAlerts({ on_trigger: v }); }));
-    box.appendChild(prefRow("Trade band ho gaya", "target, stop ya time exit — net R ke saath",
+    box.appendChild(prefRow("Target ya stop lag gaya",
+      "trade band — TARGET HIT / STOP HIT, entry, exit aur net R ke saath",
       a.on_close, function (v) { saveAlerts({ on_close: v }); }));
+    box.appendChild(prefRow("Har naya setup (shor machata hai)",
+      "setup tab banta hai jab level qualify kare — price wahan ghanton baad " +
+      "pahunche ya kabhi na pahunche. Isiliye default OFF hai.",
+      a.on_new_setup, function (v) { saveAlerts({ on_new_setup: v }); }));
     box.appendChild(prefRow("Telegram channel", "app band ho tab bhi ye kaam karta hai",
       n.telegram, function (v) {
         post("/settings/notifications", { telegram: v }, "PUT").then(function (out) {

@@ -105,3 +105,61 @@ async def test_system_toggle_gates_feed_alerts(monkeypatch):
     a.feed_up()
     await asyncio.sleep(0.02)
     assert sent == []
+
+
+# ------------------------------------------------------- what the phone says --
+# These arrive on a phone, often at night. "TP" is a status code; "TARGET HIT"
+# is what happened. And a bare UTC time on an Indian trader's phone is a puzzle.
+
+def test_a_close_alert_names_the_exit_in_words_not_a_status_code():
+    from marketscalper.alerts import Alerter as A
+    assert A._EXIT["TP"][1] == "TARGET HIT"
+    assert A._EXIT["SL"][1] == "STOP HIT"
+    assert "TIME EXIT" in A._EXIT["TIME"][1]
+
+
+async def test_target_and_stop_alerts_carry_prices_result_and_an_ist_time(monkeypatch):
+    sent = await _capture(monkeypatch)
+    Alerter(_configured()).trade_closed("ETHUSDT", {
+        "strategy_id": "eth_1h_fast", "direction": 1, "status": "TP",
+        "net_r": 9.41, "hold_minutes": 96,
+        "fill_price": 3140.5, "exit_price": 3480.0, "closed_ts": 1_753_700_000})
+    await asyncio.sleep(0.02)
+    text = sent[0][2]
+    assert "TARGET HIT" in text
+    assert "3,140.50" in text and "3,480.00" in text     # entry -> exit, both shown
+    assert "+9.41R" in text
+    assert "IST" in text
+
+
+async def test_a_stop_alert_is_never_dressed_up_as_a_win(monkeypatch):
+    sent = await _capture(monkeypatch)
+    Alerter(_configured()).trade_closed("BTCUSDT", {
+        "strategy_id": "btc_4h_core", "direction": -1, "status": "SL",
+        "net_r": -1.09, "hold_minutes": 42})
+    await asyncio.sleep(0.02)
+    text = sent[0][2]
+    assert "STOP HIT" in text and "-1.09R" in text
+    assert "TARGET" not in text
+
+
+async def test_the_trigger_alert_says_the_trade_is_now_active(monkeypatch):
+    """This is the message that tells the owner a recommendation has become a
+    position — the moment it moves sections in the UI."""
+    sent = await _capture(monkeypatch)
+    Alerter(_configured()).trade_triggered("ETHUSDT", {
+        "strategy_id": "eth_4h_wide", "direction": 1, "entry": 3100.0,
+        "fill_price": 3101.5, "stop": 3040.0, "target": 3700.0,
+        "filled_ts": 1_753_700_000})
+    await asyncio.sleep(0.02)
+    text = sent[0][2]
+    assert "ACTIVE" in text and "3,101.50" in text
+    assert "IST" in text
+
+
+def test_ist_renders_the_indian_wall_clock_not_utc():
+    from marketscalper.alerts import ist
+    # 2025-07-28 12:16 UTC -> 17:46 IST (+5:30)
+    assert ist(1_753_705_000) == "28 Jul 17:46 IST"
+    assert ist(None).endswith("IST")
+    assert ist("not a time") == "—"

@@ -101,12 +101,22 @@ class _FakeStore:
     def __init__(self, rows):
         self.rows = rows
         self.applied = []
+        self.fills = []
 
     async def record(self, setups):
         return 0
 
     async def open_setups(self):
         return list(self.rows)          # newest-first, as the real query returns
+
+    async def apply_fill(self, key, out):
+        """Mirrors the real UPDATE ... WHERE status='OPEN': transitions once."""
+        for r in self.rows:
+            if r["setup_key"] == key and r.get("status", "OPEN") == "OPEN":
+                r["status"] = "FILLED"
+                self.fills.append((key, out.fill_price))
+                return True
+        return False
 
     async def apply_outcome(self, key, out):
         self.applied.append((key, out.status))
@@ -140,7 +150,7 @@ class _FakeSvc:
 
 def _row(key, ts):
     return {"setup_key": key, "symbol": "ETHUSDT", "direction": 1, "decision_ts": ts,
-            "entry": 100.0, "stop": 90.0, "target": 200.0}
+            "entry": 100.0, "stop": 90.0, "target": 200.0, "status": "OPEN"}
 
 
 @pytest.mark.asyncio
@@ -276,3 +286,78 @@ async def test_a_cancelled_setup_is_not_announced_as_a_closed_trade():
     chart = _FakeChart(ts - 600, [(100, 101, 99, 100)] * 700)      # never reaches 500
     await V4Recorder(_FakeSvc(), _FakeStore([row]), chart, alerter=alerts).cycle()
     assert alerts.closed == [] and alerts.triggered == []
+
+
+# ------------------------------------------------- the fill is a real state --
+# A triggered trade used to stay 'OPEN' in the database until it finally hit a
+# target or a stop — so for up to three days the owner had no record that money
+# was at risk, and the "active trades" list could never populate.
+
+@pytest.mark.asyncio
+async def test_a_triggered_setup_is_persisted_as_filled():
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 30 * 60
+    row = _row("k1", ts)
+    # trades through 100, then hovers: filled, no target and no stop yet
+    prices = [(95, 96, 94, 95)] * 5 + [(99, 105, 99, 104)] * 20
+    store = _FakeStore([row])
+    rec = V4Recorder(_FakeSvc(), store, _FakeChart(ts - 300, prices))
+    await rec.cycle()
+
+    assert store.fills == [("k1", 100.0)]
+    assert row["status"] == "FILLED"
+    assert store.applied == [], "still running — nothing terminal to write"
+    assert rec.filled == 1
+
+
+@pytest.mark.asyncio
+async def test_a_live_position_keeps_being_advanced_after_it_fills():
+    """FILLED rows must stay in the tracked set. Dropping them the moment they
+    filled would leave the trade unresolvable forever."""
+    from marketscalper.v4.store import V4Store
+    import inspect
+    src = inspect.getsource(V4Store.open_setups)
+    assert "OPEN,FILLED" in src
+
+
+@pytest.mark.asyncio
+async def test_the_trigger_alert_fires_once_even_across_a_restart():
+    """Gated on the database transition, not an in-memory set: a process
+    restart used to re-announce every live trade as newly triggered."""
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 30 * 60
+    row = _row("k1", ts)
+    prices = [(95, 96, 94, 95)] * 5 + [(99, 105, 99, 104)] * 20
+    store = _FakeStore([row])
+    alerts = _Alerts()
+
+    await V4Recorder(_FakeSvc(), store, _FakeChart(ts - 300, prices), alerter=alerts).cycle()
+    assert alerts.triggered == ["k1"]
+
+    # a brand-new recorder = a fresh process. The row is already FILLED.
+    await V4Recorder(_FakeSvc(), store, _FakeChart(ts - 300, prices), alerter=alerts).cycle()
+    assert alerts.triggered == ["k1"], "restart must not re-announce a live trade"
+
+
+@pytest.mark.asyncio
+async def test_a_fill_is_recorded_even_when_it_stops_out_the_same_cycle():
+    """The 60s loop can see a whole trade at once. The fill price and time are
+    still part of the record."""
+    import time
+    from marketscalper.v4.recorder import V4Recorder
+
+    now = int(time.time()) // 60 * 60
+    ts = now - 30 * 60
+    row = _row("k1", ts)
+    prices = [(95, 96, 94, 95)] * 5 + [(99, 101, 85, 88)] * 20   # fills, then stops
+    store = _FakeStore([row])
+    await V4Recorder(_FakeSvc(), store, _FakeChart(ts - 300, prices)).cycle()
+
+    assert store.fills == [("k1", 100.0)]
+    assert store.applied == [("k1", SL)]

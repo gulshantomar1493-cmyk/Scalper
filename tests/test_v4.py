@@ -367,3 +367,157 @@ async def test_service_prefers_stored_5m_when_it_is_complete():
     bars = await V4Service(chart).bars("BTCUSDT", "5m")
     assert len(bars["c"]) == 500
     assert chart.asked == ["5m"]                        # no 1m fallback needed
+
+
+# ------------------------------------------- one resting order, one row -----
+# build_setups(only_last=True) evaluates the last TWO closed bars, so a level
+# that has not broken re-issues the identical setup every bar. That is one
+# resting order at one price, not two trades — and counting it twice doubled
+# both the setup count and the risk the exposure strip reported.
+
+def test_a_standing_level_is_one_order_not_one_per_bar():
+    from marketscalper.v4.service import _one_per_resting_order
+    rows = [
+        {"strategy_id": "eth_1h_fast", "symbol": "ETHUSDT", "direction": -1,
+         "entry": 1866.31, "stop": 1877.90, "decision_ts": 1785222000,
+         "valid_until_ts": 1785236400},
+        {"strategy_id": "eth_1h_fast", "symbol": "ETHUSDT", "direction": -1,
+         "entry": 1866.31, "stop": 1877.95, "decision_ts": 1785225600,
+         "valid_until_ts": 1785240000},
+    ]
+    out = _one_per_resting_order(rows)
+    assert len(out) == 1
+    # the NEWEST assessment wins: current ATR-derived stop, live window
+    assert out[0]["decision_ts"] == 1785225600
+    assert out[0]["stop"] == 1877.95
+    assert out[0]["valid_until_ts"] == 1785240000
+    # and the age of the level is kept, not thrown away
+    assert out[0]["bars_standing"] == 2
+    assert out[0]["first_seen_ts"] == 1785222000
+
+
+def test_genuinely_different_orders_are_never_merged():
+    """Same strategy, different price or direction = a different order."""
+    from marketscalper.v4.service import _one_per_resting_order
+    base = {"strategy_id": "eth_4h_wide", "symbol": "ETHUSDT", "direction": 1,
+            "entry": 1981.24, "decision_ts": 1, "valid_until_ts": 2}
+    rows = [base,
+            {**base, "entry": 1851.22},              # different level
+            {**base, "direction": -1},               # other side of the level
+            {**base, "symbol": "BTCUSDT"},           # different symbol
+            {**base, "strategy_id": "eth_4h_core"}]  # different strategy
+    assert len(_one_per_resting_order(rows)) == 5
+
+
+def test_a_single_setup_still_reports_its_age():
+    from marketscalper.v4.service import _one_per_resting_order
+    out = _one_per_resting_order([{"strategy_id": "a", "symbol": "S", "direction": 1,
+                                   "entry": 1.0, "decision_ts": 99}])
+    assert out[0]["bars_standing"] == 1 and out[0]["first_seen_ts"] == 99
+
+
+# --------------------------------- the trade lifecycle, against real SQL -----
+
+def _setup_row(key="k1", ts=1_785_000_000):
+    return {"strategy_id": "eth_4h_core", "symbol": "ETHUSDT", "direction": 1,
+            "level_source": "donchian", "level_tf": "4h", "filters_passed": 3,
+            "entry": 1900.0, "stop": 1880.0, "target": 2100.0, "risk_pct": 1.05,
+            "rr": 9.4, "reason": "break above", "decision_ts": ts,
+            "valid_until_ts": ts + 14400}
+
+
+class _Out:
+    def __init__(self, **kw):
+        d = dict(status="OPEN", fill_price=None, exit_price=None, gross_r=None,
+                 fee_r=None, funding_r=None, net_r=None, mae_r=None, mfe_r=None,
+                 hold_minutes=None, filled_ts=None, closed_ts=None)
+        d.update(kw)
+        self.__dict__.update(d)
+
+
+async def test_a_setup_moves_open_to_filled_to_closed(db_conn):
+    """The whole point: a triggered order is a LIVE position in the record, not
+    a recommendation that silently stays 'OPEN' for three days."""
+    from conftest import TxPool
+    from marketscalper.v4.store import V4Store
+    st = V4Store(TxPool(db_conn))
+    s = _setup_row()
+    assert len(await st.record([s])) == 1
+    key = V4Store.key(s)
+
+    async def status():
+        return await db_conn.fetchval(
+            "SELECT status FROM v4_recommendations WHERE setup_key=$1", key)
+
+    assert await status() == "OPEN"
+    assert await st.apply_fill(key, _Out(fill_price=1900.0, filled_ts=1_785_000_600))
+    assert await status() == "FILLED"
+    # and it is still tracked, so it can be resolved
+    assert key in [r["setup_key"] for r in await st.open_setups()]
+
+    assert await st.apply_outcome(key, _Out(status="TP", fill_price=1900.0,
+                                            exit_price=2100.0, net_r=9.1,
+                                            hold_minutes=140,
+                                            filled_ts=1_785_000_600,
+                                            closed_ts=1_785_009_000))
+    assert await status() == "TP"
+    assert key not in [r["setup_key"] for r in await st.open_setups()]
+
+
+async def test_the_fill_transition_happens_exactly_once(db_conn):
+    """The recorder re-derives the fill from the tape every 60 seconds. If the
+    transition were not idempotent the trigger alert would fire every cycle."""
+    from conftest import TxPool
+    from marketscalper.v4.store import V4Store
+    st = V4Store(TxPool(db_conn))
+    s = _setup_row("k2")
+    await st.record([s])
+    key = V4Store.key(s)
+    o = _Out(fill_price=1900.0, filled_ts=1_785_000_600)
+    assert await st.apply_fill(key, o) is True
+    assert await st.apply_fill(key, o) is False
+
+
+async def test_a_filled_trade_can_never_be_rewritten_as_expired(db_conn):
+    """CANCELLED is re-derived from the 1m tape every cycle. A gap over the
+    fill bar would otherwise erase a real trade from the record."""
+    from conftest import TxPool
+    from marketscalper.v4.store import V4Store
+    st = V4Store(TxPool(db_conn))
+    s = _setup_row("k3")
+    await st.record([s])
+    key = V4Store.key(s)
+    await st.apply_fill(key, _Out(fill_price=1900.0, filled_ts=1_785_000_600))
+
+    assert await st.apply_outcome(key, _Out(status="CANCELLED",
+                                            closed_ts=1_785_001_000)) is False
+    row = await db_conn.fetchrow(
+        "SELECT status, fill_price FROM v4_recommendations WHERE setup_key=$1", key)
+    assert row["status"] == "FILLED" and row["fill_price"] == 1900.0
+
+
+async def test_an_unfilled_setup_does_expire(db_conn):
+    """The guard must not block the case it exists to distinguish."""
+    from conftest import TxPool
+    from marketscalper.v4.store import V4Store
+    st = V4Store(TxPool(db_conn))
+    s = _setup_row("k4")
+    await st.record([s])
+    key = V4Store.key(s)
+    assert await st.apply_outcome(key, _Out(status="CANCELLED",
+                                            closed_ts=1_785_014_400)) is True
+    assert await db_conn.fetchval(
+        "SELECT status FROM v4_recommendations WHERE setup_key=$1", key) == "CANCELLED"
+
+
+async def test_a_status_filter_accepts_a_set(db_conn):
+    from conftest import TxPool
+    from marketscalper.v4.store import V4Store
+    st = V4Store(TxPool(db_conn))
+    a, b = _setup_row("a", 1_785_100_000), _setup_row("b", 1_785_200_000)
+    await st.record([a, b])
+    await st.apply_fill(V4Store.key(b), _Out(fill_price=1900.0, filled_ts=1))
+    both = {r["setup_key"] for r in await st.query(status="OPEN,FILLED")}
+    assert {V4Store.key(a), V4Store.key(b)} <= both
+    only = {r["setup_key"] for r in await st.query(status="FILLED")}
+    assert V4Store.key(b) in only and V4Store.key(a) not in only

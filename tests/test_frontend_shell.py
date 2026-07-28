@@ -95,12 +95,45 @@ def test_the_alert_settings_are_reachable_from_the_ui():
 
 
 def test_running_trades_are_separated_from_waiting_setups():
-    """A filled setup needs managing; a pending one needs deciding. The queue
-    lists what is still waiting, above it what is already live."""
+    """A filled setup needs managing; a pending one needs deciding. Two
+    questions, so two SECTIONS — not two lists stacked in one."""
     html, src = _read(HTML), _read(APP)
     assert 'id="live-trades"' in html and 'id="queue-rows"' in html
-    assert "status=FILLED" in src            # live = the entry actually filled
-    assert "Abhi live trades" in src
+    assert '<section id="active"' in html          # its own section, own anchor
+    assert 'href="#active"' in html                # and its own rail entry
+    assert "/api/v4/trades" in src
+    assert "Open R" in src                         # unrealised, in R not dollars
+
+
+def test_expired_setups_stay_with_the_recommendations():
+    """An expired setup never filled — there is no position and no money at
+    risk. Putting it anywhere near active trades invites managing a trade that
+    does not exist."""
+    html, src = _read(HTML), _read(APP)
+    assert 'id="expired-wrap"' in html
+    # the expired block is inside the setups section, before active trades
+    assert html.index('id="expired-wrap"') < html.index('<section id="active"')
+    assert "function renderExpired" in src
+    assert "Ye positions NAHI hain" in src
+
+
+def test_every_time_on_screen_is_ist_and_says_so():
+    """The engine thinks in UTC and the server sits in another country. A bare
+    "14:32" is three different moments on three devices."""
+    src = _read(APP)
+    assert 'var TZ = "Asia/Kolkata"' in src
+    assert src.count("timeZone: TZ") >= 3          # when + clockTime + the clock
+    assert '+ " IST"' in src
+    # the browser's own locale must not decide: it varies per device
+    assert "toLocaleString(undefined" not in src
+
+
+def test_a_setup_carries_the_time_it_was_issued():
+    """Without it a four-day-old setup and one found this minute look identical
+    on the card, and only one of them is worth reading."""
+    src = _read(APP)
+    assert "when(s.decision_ts)" in src
+    assert "function ago" in src
 
 
 def test_an_unauthenticated_visitor_gets_a_login_screen():
@@ -214,8 +247,20 @@ def test_aggregate_exposure_is_stated_because_the_setups_correlate():
     """Ten setups on one symbol in one direction is one bet, not ten."""
     src = _read(APP)
     assert "function renderExposure" in src
-    assert "Sab liye to risk" in src
+    assert "Sab trigger huye to" in src
     assert "independent nahi hain" in src
+
+
+def test_committed_risk_is_separated_from_hypothetical_risk():
+    """Active trades are money already at stake; setups are money that MIGHT
+    be. Reporting only the second hides the exposure actually carried."""
+    src = _read(APP)
+    block = src[src.index("function renderExposure"):src.index("function renderStratList")]
+    assert "Abhi risk pe" in block                 # committed, from the active book
+    assert "state.active" in block
+    assert "active trade" in block
+    # and expired setups can never inflate the hypothetical figure
+    assert "validity(s).expired" in block
 
 
 def test_the_order_ticket_can_be_copied():
@@ -303,12 +348,12 @@ def test_the_price_row_never_uses_a_fixed_four_column_grid():
 
 # ------------------------------------------------------------- structure ---
 
-SECTIONS = ["hero", "setup", "chart", "pipeline", "queue", "strategies",
+SECTIONS = ["hero", "setup", "chart", "pipeline", "queue", "active", "strategies",
             "history", "paper", "journal", "settings", "evidence"]
 
 
 def test_every_section_exists_in_order_and_has_a_rail_anchor():
-    """The shell is one scrolling surface: eleven sections, each reachable
+    """The shell is one scrolling surface: twelve sections, each reachable
     from the rail. A rail link with no section scrolls nowhere."""
     html = _read(HTML)
     order = re.findall(r'<section id="([a-z]+)"', html)

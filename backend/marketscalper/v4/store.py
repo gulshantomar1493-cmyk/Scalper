@@ -55,6 +55,37 @@ class V4Store:
             log.warning("v4 store.record failed: %s", exc)
         return new
 
+    async def apply_fill(self, setup_key: str, o) -> bool:
+        """Promote OPEN -> FILLED: the resting order triggered and this is now a
+        LIVE position, not a recommendation.
+
+        Without this a triggered trade stayed 'OPEN' in the database until it
+        finally hit its target or stop — so the trader had no record that they
+        were in a trade at all, sometimes for three days.
+
+        Guarded on status='OPEN' so it transitions exactly once: the recorder
+        re-derives the fill from the tape every 60s, and the returned bool is
+        what gates the "entry triggered" alert. That makes the alert survive a
+        restart without re-firing, which an in-memory set cannot do.
+        """
+        if self._pool is None or o.fill_price is None:
+            return False
+        sql = """UPDATE v4_recommendations
+                    SET status='FILLED', fill_price=$2, filled_ts=$3
+                  WHERE setup_key=$1 AND status='OPEN'"""
+        try:
+            async with self._pool.acquire() as c:
+                r = await c.execute(sql, setup_key, float(o.fill_price),
+                                    _ts(o.filled_ts) if o.filled_ts else None)
+        except Exception as exc:
+            self.errors += 1
+            log.warning("v4 store.apply_fill failed: %s", exc)
+            return False
+        if r and r.endswith("1"):
+            self.updated += 1
+            return True
+        return False
+
     async def apply_outcome(self, setup_key: str, o) -> bool:
         if self._pool is None:
             return False
@@ -63,21 +94,33 @@ class V4Store:
                    funding_r=$7, net_r=$8, mae_r=$9, mfe_r=$10, hold_minutes=$11,
                    filled_ts=$12, closed_ts=$13
                  WHERE setup_key=$1"""
+        if o.status == "CANCELLED":
+            # CANCELLED means "the window elapsed and the level never broke".
+            # It is re-derived from the 1m tape every cycle, so a gap in that
+            # tape over the fill bar would make an already-filled trade look
+            # like one that never triggered — silently rewriting a real trade
+            # out of the record. A row that has a fill can never go back.
+            sql += " AND fill_price IS NULL"
         try:
             async with self._pool.acquire() as c:
-                await c.execute(sql, setup_key, o.status, o.fill_price, o.exit_price,
-                                o.gross_r, o.fee_r, o.funding_r, o.net_r, o.mae_r,
-                                o.mfe_r, o.hold_minutes,
-                                _ts(o.filled_ts) if o.filled_ts else None,
-                                _ts(o.closed_ts) if o.closed_ts else None)
-            self.updated += 1
-            return True
+                r = await c.execute(sql, setup_key, o.status, o.fill_price, o.exit_price,
+                                    o.gross_r, o.fee_r, o.funding_r, o.net_r, o.mae_r,
+                                    o.mfe_r, o.hold_minutes,
+                                    _ts(o.filled_ts) if o.filled_ts else None,
+                                    _ts(o.closed_ts) if o.closed_ts else None)
         except Exception as exc:
             self.errors += 1
             log.warning("v4 store.apply_outcome failed: %s", exc)
             return False
+        if r and r.endswith("1"):
+            self.updated += 1
+            return True
+        return False
 
     async def query(self, *, symbol=None, strategy=None, status=None, limit=200) -> list[dict]:
+        """`status` accepts one value or a comma-separated set — a live position
+        is 'FILLED' and a waiting order is 'OPEN', and several callers need both
+        without paying for two round trips."""
         if self._pool is None:
             return []
         where, args = [], []
@@ -86,7 +129,8 @@ class V4Store:
         if strategy:
             args.append(strategy); where.append(f"strategy_id=${len(args)}")
         if status:
-            args.append(status); where.append(f"status=${len(args)}")
+            wanted = [s.strip().upper() for s in str(status).split(",") if s.strip()]
+            args.append(wanted); where.append(f"status = ANY(${len(args)})")
         args.append(int(limit))
         sql = ("SELECT * FROM v4_recommendations"
                + (" WHERE " + " AND ".join(where) if where else "")
@@ -108,4 +152,10 @@ class V4Store:
         return out
 
     async def open_setups(self) -> list[dict]:
-        return await self.query(status="OPEN", limit=500)
+        """Everything still being tracked against the tape.
+
+        FILLED belongs here: those are live positions still hunting a target or
+        a stop. Querying OPEN alone would drop a trade out of the advance loop
+        the moment it filled, and it could then never be resolved.
+        """
+        return await self.query(status="OPEN,FILLED", limit=500)
