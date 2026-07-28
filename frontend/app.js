@@ -1681,7 +1681,11 @@
       r.appendChild(el("span", "dot on"));
       r.appendChild(el("span", "nm", "@" + (b.bot_username || "bot")));
       r.appendChild(el("div", "sp"));
-      r.appendChild(el("span", "meta", b.verified ? "connected · chat detected" : "verify pending"));
+      /* With three bots connected, "connected" on all three tells you nothing.
+         The chat id is what distinguishes them. */
+      r.appendChild(el("span", "meta", b.verified
+        ? "connected · chat " + (b.chat_id || "?")
+        : "verify pending"));
       var t = el("button", "btn", "Test");
       t.addEventListener("click", function () {
         t.disabled = true; t.textContent = "…";
@@ -1716,13 +1720,22 @@
   }
 
   $("tg-verify").addEventListener("click", function () {
-    var btn = $("tg-verify"), err = $("tg-err"), t = $("tg-token");
+    var btn = $("tg-verify"), err = $("tg-err"), t = $("tg-token"), c = $("tg-chat");
     if (!t.value.trim()) return;
     btn.disabled = true; btn.textContent = "Verifying…"; err.hidden = true;
-    post("/settings/telegram/verify", { token: t.value.trim() })
+    var body = { token: t.value.trim() };
+    if (c && c.value.trim()) body.chat_id = c.value.trim();
+    post("/settings/telegram/verify", body)
       .then(function (d) {
-        if (!d.ok) throw new Error(d.error || "Telegram ne ye token reject kar diya.");
+        if (!d.ok) {
+          /* Auto-detection has genuine blind spots — a webhook, Telegram's
+             24-hour update retention, a group. Offer the manual chat id
+             rather than looping the owner through "send a message" forever. */
+          if ($("tg-manual")) $("tg-manual").open = true;
+          throw new Error(d.error || "Telegram ne ye token reject kar diya.");
+        }
         t.value = "";
+        if (c) c.value = "";
         return loadSettings();
       })
       .catch(function (e) { err.textContent = String(e.message || e); err.hidden = false; })

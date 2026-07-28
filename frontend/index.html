@@ -322,6 +322,19 @@
             <button class="btn primary" id="tg-verify">Verify &amp; connect</button>
           </div>
           <div class="gate-err" id="tg-err" role="alert" hidden></div>
+          <!-- Auto-detection has real blind spots: a webhook swallows every
+               update, Telegram forgets messages older than 24 hours, and a
+               group chat may never produce one. A chat id is an address, not a
+               secret, so naming it directly is a legitimate way in. -->
+          <details class="manual-chat" id="tg-manual">
+            <summary>Chat detect nahi ho raha? Chat id khud daal do</summary>
+            <p class="explain">Telegram mein <b>@userinfobot</b> ko message bhejo — wo
+              aapki chat id bata dega. Group ke liye id minus se shuru hoti hai
+              (jaise <span class="mono">-1001234567890</span>), aur bot us group
+              mein hona chahiye.</p>
+            <input class="inp mono" id="tg-chat" placeholder="123456789" autocomplete="off"
+                   inputmode="numeric">
+          </details>
           <div id="tg-bots"></div>
         </div>
       </div>

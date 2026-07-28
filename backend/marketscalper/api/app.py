@@ -265,9 +265,13 @@ def create_app(
         _require_settings()
         token = (payload.get("token") or "").strip()
         label = (payload.get("label") or "").strip()
+        # Optional escape hatch: auto-detection cannot work through a webhook,
+        # past Telegram's 24-hour update retention, or for a chat the owner
+        # wants to name explicitly. A chat id is an address, not a secret.
+        chat_id = (payload.get("chat_id") or "").strip()
         if not token:
             raise HTTPException(status_code=400, detail="token required")
-        result = await telegram.verify_and_detect(token)
+        result = await telegram.verify_and_detect(token, chat_id)
         if not result.get("ok"):
             return {"ok": False, "error": result.get("error", "verification failed"),
                     "bot_username": result.get("bot_username", "")}

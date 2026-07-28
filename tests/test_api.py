@@ -136,8 +136,11 @@ async def test_settings_and_telegram_endpoints(monkeypatch, tmp_path):
     # settings routes never touch the pool; Telegram is monkeypatched (no net).
     from marketscalper.settings_store import SettingsStore
 
-    async def fake_verify(token):
-        return {"ok": True, "bot_username": "bot", "chat_id": "42"}
+    seen = []
+
+    async def fake_verify(token, chat_id=""):
+        seen.append((token, chat_id))
+        return {"ok": True, "bot_username": "bot", "chat_id": chat_id or "42"}
 
     async def fake_send(token, chat_id, text):
         return True
@@ -179,9 +182,9 @@ async def test_multiple_telegram_bots_endpoints(monkeypatch, tmp_path):
     # Verify two bots -> both listed; test fires to ALL; remove one by id.
     from marketscalper.settings_store import SettingsStore
 
-    async def fake_verify(token):
+    async def fake_verify(token, chat_id=""):
         return {"ok": True, "bot_username": "bot_" + token[0],
-                "chat_id": "chat_" + token[0]}
+                "chat_id": chat_id or ("chat_" + token[0])}
 
     sent = []
 
@@ -694,3 +697,39 @@ async def test_cors_allows_every_verb_the_frontend_uses():
 
 
 
+
+
+async def test_a_manually_supplied_chat_id_reaches_telegram_verification(monkeypatch, tmp_path):
+    """Auto-detection cannot see through a webhook, past Telegram's 24-hour
+    update retention, or into a group nobody has messaged. The manual chat id
+    is the way out — and it has to actually reach the verifier."""
+    from marketscalper.settings_store import SettingsStore
+
+    seen = []
+
+    async def fake_verify(token, chat_id=""):
+        seen.append((token, chat_id))
+        return {"ok": True, "bot_username": "grp_bot", "chat_id": chat_id or "auto"}
+
+    async def fake_send(token, chat_id, text):
+        return True
+
+    monkeypatch.setattr("marketscalper.telegram.verify_and_detect", fake_verify)
+    monkeypatch.setattr("marketscalper.telegram.send_message", fake_send)
+    settings = SettingsStore(path=tmp_path / "s.json")
+    bus = EventBus()
+    app = create_app(bus, StateStore(bus), None, TOKEN, settings=settings)
+    server, task, addr = await _serve(app)
+    try:
+        async with aiohttp.ClientSession() as s:
+            async with s.post(f"http://{addr}/settings/telegram/verify", headers=AUTH,
+                              json={"token": "T:tok",
+                                    "chat_id": " -1001234567890 "}) as r:
+                body = await r.json()
+        assert body["ok"] is True
+        assert body["chat_id"] == "-1001234567890"      # trimmed, not re-detected
+        assert seen == [("T:tok", "-1001234567890")]
+        # and it is stored as a real target, so alerts actually go there
+        assert settings.telegram_targets() == [("T:tok", "-1001234567890")]
+    finally:
+        await _stop(server, task)
