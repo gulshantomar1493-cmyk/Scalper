@@ -286,6 +286,32 @@ def create_app(
                 "bot_username": result["bot_username"],
                 "telegram_bots": settings.telegram_bots_public()}
 
+    @app.post("/settings/telegram/webhook/delete", dependencies=[Depends(require_token)])
+    async def telegram_delete_webhook(payload: dict = Body(...)) -> dict:
+        """Clear a bot's webhook, then verify it.
+
+        Only reachable from a button the owner clicks after being told what it
+        costs — the webhook belongs to whatever other service is using this bot,
+        and that service stops receiving updates.
+        """
+        _require_settings()
+        token = (payload.get("token") or "").strip()
+        if not token:
+            raise HTTPException(status_code=400, detail="token required")
+        out = await telegram.delete_webhook(token)
+        if not out.get("ok"):
+            return {"ok": False, "error": out.get("error", "could not delete webhook")}
+        result = await telegram.verify_and_detect(token)
+        if not result.get("ok"):
+            return {"ok": False, "deleted": True,
+                    "error": result.get("error", "webhook hat gaya, par chat abhi "
+                                                 "bhi nahi mili — bot ko ek message bhejo")}
+        settings.add_telegram_bot(token=token, chat_id=result["chat_id"],
+                                  bot_username=result["bot_username"], verified=True)
+        return {"ok": True, "deleted": True, "chat_id": result["chat_id"],
+                "bot_username": result["bot_username"],
+                "telegram_bots": settings.telegram_bots_public()}
+
     @app.post("/settings/telegram/test", dependencies=[Depends(require_token)])
     async def telegram_test() -> dict:
         _require_settings()

@@ -79,6 +79,18 @@ async def verify_and_detect(token: str, chat_id: str = "") -> dict:
         log.warning("telegram verify failed: %s", exc)
         return {"ok": False, "error": "could not reach Telegram"}
 
+    # The webhook explains BOTH failure shapes — a 409 rejection and an empty
+    # result — so it is checked before either is reported. Telegram's own words
+    # ("use deleteWebhook to delete the webhook first") are correct but do not
+    # mention the cost: the webhook belongs to whatever else is using this bot.
+    if hook.get("url"):
+        return {"ok": False, "bot_username": bot_username, "webhook": hook["url"],
+                "error": f"Is bot pe webhook laga hai ({hook['url']}) — Telegram "
+                         "ke saare updates wahan ja rahe hain, isliye chat detect "
+                         "nahi ho sakta. Sabse safe: chat id neeche khud daal do. "
+                         "Webhook hatane se wo doosri service band ho jaayegi jo "
+                         "is bot ko use kar rahi hai."}
+
     if not upd.get("ok"):
         why = upd.get("description") or "getUpdates failed"
         log.warning("telegram getUpdates rejected for @%s: %s", bot_username, why)
@@ -89,18 +101,36 @@ async def verify_and_detect(token: str, chat_id: str = "") -> dict:
         found = chat_id_from_update(u)
         if found:
             return {"ok": True, "bot_username": bot_username, "chat_id": found}
-
-    if hook.get("url"):
-        return {"ok": False, "bot_username": bot_username,
-                "error": f"Is bot pe webhook laga hai ({hook['url']}) — saare "
-                         "updates wahan ja rahe hain, isliye chat detect nahi "
-                         "ho sakta. Webhook hatao, ya chat id neeche daal do."}
     return {"ok": False, "bot_username": bot_username,
             "error": "Token sahi hai, par is bot ko koi message nahi mila. "
                      "Telegram mein @" + (bot_username or "bot") + " kholo, "
                      "START dabao ya koi bhi message bhejo, phir Verify karo. "
                      "(Telegram 24 ghante se purane message nahi dikhata — "
                      "purana message bheja tha to naya bhejo.)"}
+
+
+async def delete_webhook(token: str) -> dict:
+    """Drop the bot's webhook so getUpdates works again.
+
+    Destructive to whatever else owns this bot: after this, updates stop being
+    delivered to that service. The caller is responsible for saying so before
+    asking — this function just does what it is told.
+    """
+    token = (token or "").strip()
+    if not token:
+        return {"ok": False, "error": "empty token"}
+    try:
+        async with aiohttp.ClientSession(timeout=_TIMEOUT) as s:
+            async with s.post(_API.format(token=token, method="deleteWebhook"),
+                              json={"drop_pending_updates": False}) as r:
+                data = await r.json()
+    except Exception as exc:
+        log.warning("telegram deleteWebhook failed: %s", exc)
+        return {"ok": False, "error": "could not reach Telegram"}
+    if not data.get("ok"):
+        return {"ok": False, "error": data.get("description") or "deleteWebhook failed"}
+    log.info("telegram: webhook deleted for a bot at the owner's request")
+    return {"ok": True}
 
 
 async def send_message(token: str, chat_id: str, text: str) -> bool:

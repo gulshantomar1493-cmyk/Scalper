@@ -895,3 +895,5 @@ footer .fine { font-size: 11.5px; color: var(--ink-3); max-width: 64ch; line-hei
 .leg-item { display: inline-flex; align-items: center; gap: 5px; }
 .leg-dot { width: 7px; height: 7px; border-radius: 2px; flex: none; }
 .leg-txt { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
+.tg-fix { display: flex; align-items: center; gap: 12px; margin-top: 12px; flex-wrap: wrap; }
+.tg-fix .hint { font-size: 11.5px; color: var(--ink-3); }

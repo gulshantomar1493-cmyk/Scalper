@@ -182,3 +182,56 @@ async def test_a_network_failure_never_raises(api, monkeypatch):
 async def test_an_empty_token_is_rejected_without_a_request(api):
     api(getMe=_ME)
     assert (await verify_and_detect("   "))["ok"] is False
+
+
+# ------------------------------------------- the webhook, named and fixable --
+
+async def test_a_webhook_explains_a_409_not_just_telegrams_english(api):
+    """Telegram's own words are correct but incomplete: "use deleteWebhook" does
+    not mention that the webhook belongs to some other service."""
+    api(getMe=_ME,
+        getUpdates={"ok": False, "error_code": 409,
+                    "description": "Conflict: can't use getUpdates method while "
+                                   "webhook is active; use deleteWebhook to delete "
+                                   "the webhook first"},
+        getWebhookInfo={"ok": True, "result": {"url": "https://other.app/hook"}})
+    out = await verify_and_detect("t")
+    assert out["ok"] is False
+    assert out["webhook"] == "https://other.app/hook"      # the UI keys its fix off this
+    assert "other.app/hook" in out["error"]
+    assert "chat id neeche khud daal do" in out["error"]   # the safe way out, first
+    assert "band ho jaayegi" in out["error"]               # and what deleting costs
+
+
+async def test_the_webhook_wins_the_explanation_over_an_empty_result(api):
+    api(getMe=_ME, getUpdates={"ok": True, "result": []},
+        getWebhookInfo={"ok": True, "result": {"url": "https://x.test/h"}})
+    out = await verify_and_detect("t")
+    assert out.get("webhook") == "https://x.test/h"
+
+
+async def test_no_webhook_means_no_fix_button(api):
+    """The offer must not appear when deleting a webhook would fix nothing."""
+    api(getMe=_ME, getUpdates={"ok": True, "result": []},
+        getWebhookInfo={"ok": True, "result": {}})
+    out = await verify_and_detect("t")
+    assert "webhook" not in out
+
+
+async def test_delete_webhook_reports_success_and_failure_honestly(api):
+    from marketscalper.telegram import delete_webhook
+    api(deleteWebhook={"ok": True, "result": True})
+    assert (await delete_webhook("t"))["ok"] is True
+
+    api(deleteWebhook={"ok": False, "description": "Unauthorized"})
+    out = await delete_webhook("t")
+    assert out["ok"] is False and out["error"] == "Unauthorized"
+
+
+async def test_delete_webhook_never_raises_on_a_network_failure(monkeypatch):
+    from marketscalper.telegram import delete_webhook
+    def boom(*a, **kw):
+        raise OSError("dns")
+    monkeypatch.setattr(telegram.aiohttp, "ClientSession", boom)
+    out = await delete_webhook("t")
+    assert out["ok"] is False and "reach Telegram" in out["error"]

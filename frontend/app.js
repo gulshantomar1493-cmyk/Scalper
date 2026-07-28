@@ -1736,15 +1736,47 @@
              24-hour update retention, a group. Offer the manual chat id
              rather than looping the owner through "send a message" forever. */
           if ($("tg-manual")) $("tg-manual").open = true;
-          throw new Error(d.error || "Telegram ne ye token reject kar diya.");
+          showTgError(d.error || "Telegram ne ye token reject kar diya.", d.webhook);
+          return;
         }
         t.value = "";
         if (c) c.value = "";
         return loadSettings();
       })
-      .catch(function (e) { err.textContent = String(e.message || e); err.hidden = false; })
+      .catch(function (e) { showTgError(String(e.message || e)); })
       .then(function () { btn.disabled = false; btn.textContent = "Verify & connect"; });
   });
+
+  /* A webhook is the one failure the tool can fix itself — but doing so stops
+     updates reaching whatever other service owns this bot, so the offer is
+     made explicitly and the cost is stated before the click, not after. */
+  function showTgError(msg, webhook) {
+    var err = $("tg-err"); clear(err);
+    err.appendChild(document.createTextNode(msg));
+    err.hidden = false;
+    if (!webhook) return;
+    var row = el("div", "tg-fix");
+    var b = el("button", "btn", "Webhook hata do aur dobara try karo");
+    b.addEventListener("click", function () {
+      if (!window.confirm(
+        "Ye bot ka webhook (" + webhook + ") hata dega. " +
+        "Jo bhi doosri service is bot ko use kar rahi hai, uske updates aana " +
+        "band ho jaayenge. Aage badhein?")) return;
+      b.disabled = true; b.textContent = "Hata rahe hain…";
+      post("/settings/telegram/webhook/delete", { token: $("tg-token").value.trim() })
+        .then(function (d) {
+          if (!d.ok) { showTgError(d.error || "Webhook nahi hata."); return; }
+          $("tg-token").value = "";
+          return loadSettings();
+        })
+        .catch(function (e) { showTgError(String(e.message || e)); })
+        .then(function () { b.disabled = false; b.textContent = "Webhook hata do aur dobara try karo"; });
+    });
+    row.appendChild(b);
+    row.appendChild(el("span", "hint",
+      "Ya isse haath mat lagao — upar chat id daal kar bhi connect ho jaayega."));
+    err.appendChild(row);
+  }
 
   // --------------------------------------------------------------- evidence --
   function renderEvidence() {
