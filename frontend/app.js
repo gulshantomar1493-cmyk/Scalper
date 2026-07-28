@@ -146,15 +146,54 @@
 
   function geometry() { return (state.catalogue && state.catalogue.geometry) || {}; }
 
-  /* Round-trip taker fee plus funding for the max hold. The whole research
-     programme turned on fee/R, so it belongs on screen, not in a footnote. */
+  /* The exchange's real schedule, not the research's assumption. GST is a
+     straight uplift on the fee and the research never modelled it. */
+  var FEE_DEFAULTS = { taker: 0.05, maker: 0.02, gst: 18, exit: "maker", scalper: true };
+  var FEE_LIMIT = 0.12;          // research: above this, costs eat the edge
+  function fees() {
+    var f;
+    try { f = JSON.parse(localStorage.getItem("ms_fees") || "null"); } catch (e) { f = null; }
+    var out = {};
+    Object.keys(FEE_DEFAULTS).forEach(function (k) {
+      out[k] = (f && f[k] !== undefined && f[k] !== null) ? f[k] : FEE_DEFAULTS[k];
+    });
+    return out;
+  }
+  function saveFees(patch) {
+    var f = fees();
+    Object.keys(patch).forEach(function (k) { f[k] = patch[k]; });
+    try { localStorage.setItem("ms_fees", JSON.stringify(f)); } catch (e) {}
+    renderSizing(current()); renderFeePanel();
+  }
+
+  /* Entry is ALWAYS taker: a resting stop order becomes a market order the
+     moment the level breaks. The exit can be maker if the target is left as a
+     resting limit — which is the difference between clearing the research's
+     fee/R ceiling and breaching it. */
   function costOf(s, qty) {
-    var g = geometry();
-    var taker = g.taker_fee == null ? 0.0005 : g.taker_fee;
-    var fund = g.funding_per_day == null ? 0.0003 : g.funding_per_day;
-    var days = g.max_hold_days == null ? 3 : g.max_hold_days;
+    var f = fees(), g = geometry();
+    var gst = 1 + (f.gst || 0) / 100;
     var notional = qty * s.entry;
-    return { fee: notional * taker * 2, funding: notional * fund * days };
+    var exitRate = (f.exit === "maker" ? f.maker : f.taker) / 100;
+    var entryFee = notional * (f.taker / 100) * gst;
+    var exitFee = notional * exitRate * gst;
+    var fund = (g.funding_per_day == null ? 0.0003 : g.funding_per_day);
+    var days = g.max_hold_days == null ? 3 : g.max_hold_days;
+    return {
+      entryFee: entryFee, exitFee: exitFee,
+      fee: entryFee + exitFee,
+      funding: notional * fund * days,
+      /* the scalper perk waives the CLOSING fee under 30 minutes */
+      quick: f.scalper ? entryFee : entryFee + exitFee
+    };
+  }
+
+  /* fee/R — the ratio the whole strategy set was selected on. outcome.py
+     defines it as FEES ONLY (funding is charged separately as fund_r), so
+     this must exclude funding or it cannot be read against the 0.12 limit. */
+  function feeRatio(s, qty, riskCash) {
+    if (!riskCash) return null;
+    return costOf(s, qty).fee / riskCash;
   }
 
   function sizeFor(s) {
@@ -556,20 +595,46 @@
     /* Fee as a share of risk is THE number this whole strategy set turns on:
        the same geometry at 2xATR gives fee/R 0.27 and a negative edge, at
        5xATR it gives 0.09 and a positive one. Show it, do not bury it. */
+    var f = fees();
     var c2 = costOf(s, z.qty);
     var total = c2.fee + c2.funding;
-    var share = z.riskCash ? total / z.riskCash * 100 : null;
+    var ratio = feeRatio(s, z.qty, z.riskCash);
+    var over = ratio != null && ratio > FEE_LIMIT;
+
     var row = el("div", "cost");
     row.appendChild(el("span", "k", "Round-trip cost"));
     row.appendChild(el("span", "v", "$" + fmt(total, 2)));
     row.appendChild(el("span", "sep2", "·"));
     row.appendChild(el("span", "k", "risk ka"));
-    var pct = el("span", "v " + (share > 20 ? "warn" : ""),
-                 share == null ? "—" : share.toFixed(1) + "%");
-    pct.title = "fee $" + fmt(c2.fee, 2) + " + funding $" + fmt(c2.funding, 2) +
-                " (max " + (geometry().max_hold_days || 3) + " din hold)";
-    row.appendChild(pct);
+    row.appendChild(el("span", "v", z.riskCash ? (total / z.riskCash * 100).toFixed(1) + "%" : "—"));
+    row.appendChild(el("div", "sp"));
+    var fr = el("span", "feer " + (over ? "bad" : "good"),
+                "fee/R " + (ratio == null ? "—" : ratio.toFixed(3)));
+    fr.title = "fee/R = fees only (entry taker $" + fmt(c2.entryFee, 2) +
+               " + exit " + f.exit + " $" + fmt(c2.exitFee, 2) + ", GST " + f.gst +
+               "% included). Funding $" + fmt(c2.funding, 2) + " max-hold is counted " +
+               "in the cost above but not in fee/R — outcome.py charges it separately.";
+    row.appendChild(fr);
     costBox.appendChild(row);
+
+    /* The research selected this geometry on fee/R staying under 0.12. If the
+       trader's real schedule breaches it, say so and name the lever. */
+    var note = el("div", "cost-note");
+    if (over) {
+      note.className = "cost-note bad";
+      var savedRatio = (z.notional * ((f.taker + f.maker) / 100) * (1 + f.gst / 100))
+                       / z.riskCash;
+      note.textContent = "fee/R " + ratio.toFixed(3) + " research ki limit " + FEE_LIMIT +
+        " se upar hai — is stop distance pe cost edge kha jaati hai." +
+        (f.exit === "taker" && savedRatio <= FEE_LIMIT
+          ? " Target ko resting LIMIT order se exit karo (maker " + f.maker + "%): fee/R " +
+            savedRatio.toFixed(3) + " ho jaata hai."
+          : " Wider stop ya zyada volatility wala setup chahiye.");
+    } else {
+      note.textContent = "fee/R limit " + FEE_LIMIT + " ke andar hai (design target 0.09). " +
+        "Entry taker hai — stop order break pe market ban jaata hai; exit " + f.exit + " maana gaya hai.";
+    }
+    costBox.appendChild(note);
   }
 
   /* Taking every live setup is one correlated bet, not N independent ones.
@@ -1082,6 +1147,85 @@
     return r;
   }
 
+  /* The 30-minute closing-fee waiver only pays if trades actually close that
+     fast. These strategies target 10R with a 3-day horizon, so the honest
+     answer comes from the recorded holds, not from the offer's wording. */
+  function quickCloseShare() {
+    var closed = state.history.filter(function (r) { return r.hold_minutes != null; });
+    if (!closed.length) return null;
+    var q = closed.filter(function (r) { return r.hold_minutes <= 30; }).length;
+    return { n: closed.length, q: q, pct: q / closed.length * 100,
+             med: closed.map(function (r) { return r.hold_minutes; })
+                        .sort(function (a, b) { return a - b; })[Math.floor(closed.length / 2)] };
+  }
+
+  function feeField(label, hint, key, step) {
+    var f = fees();
+    var r = el("label", "pref");
+    var g = el("span", "grow");
+    g.appendChild(el("span", "t", label));
+    g.appendChild(el("span", "s", hint));
+    r.appendChild(g);
+    var i = el("input", "inp mono");
+    i.type = "number"; i.step = step; i.min = "0"; i.max = "100";
+    i.value = f[key];
+    i.addEventListener("change", function () {
+      var v = Number(i.value);
+      if (!(v >= 0)) { i.value = f[key]; return; }
+      var patch = {}; patch[key] = v; saveFees(patch);
+    });
+    r.appendChild(i);
+    return r;
+  }
+
+  function renderFeePanel() {
+    var box = $("fee-panel"); if (!box) return;
+    /* Re-rendering under a focused field detaches the node the browser is
+       about to fire blur on, which throws. Leave the panel alone while the
+       trader is typing in it. */
+    if (box.contains(document.activeElement)) return;
+    clear(box);
+    var f = fees();
+    box.appendChild(el("p", "explain",
+      "Ye numbers sirf sizing panel ke cost estimate ke liye hain. Recorded net R " +
+      "backend ke research fee (0.05% dono side, GST ke bina) pe banta hai — " +
+      "isliye log ka net R aapke asli cost se thoda behtar dikhega."));
+    box.appendChild(feeField("Taker fee", "market order / stop trigger — entry hamesha taker hai", "taker", "0.005"));
+    box.appendChild(feeField("Maker fee", "resting limit order jo book pe baithta hai", "maker", "0.005"));
+    box.appendChild(feeField("GST", "trading fee pe extra — research ne isko model nahi kiya tha", "gst", "1"));
+
+    var exitRow = el("label", "pref");
+    var eg = el("span", "grow");
+    eg.appendChild(el("span", "t", "Target exit kaise"));
+    eg.appendChild(el("span", "s", "limit chhodo to maker, market maaro to taker"));
+    exitRow.appendChild(eg);
+    var seg = el("div", "seg");
+    [["maker", "Limit"], ["taker", "Market"]].forEach(function (o) {
+      var b2 = el("button", f.exit === o[0] ? "on" : null, o[1]);
+      b2.addEventListener("click", function (ev) { ev.preventDefault(); saveFees({ exit: o[0] }); });
+      seg.appendChild(b2);
+    });
+    exitRow.appendChild(seg);
+    box.appendChild(exitRow);
+
+    var qc = quickCloseShare();
+    var note = el("div", "cost-note");
+    note.style.marginTop = "16px";
+    if (!qc) {
+      note.textContent = "30-minute closing-fee waiver: abhi koi closed trade nahi, " +
+        "isliye ye offer kitni baar lagega ye record se nahi bataya ja sakta.";
+    } else {
+      note.className = "cost-note" + (qc.pct < 20 ? " bad" : "");
+      note.textContent = "30-minute closing-fee waiver: aapke " + qc.n + " closed trades mein se " +
+        qc.q + " (" + qc.pct.toFixed(0) + "%) 30 min ke andar band hue, median hold " +
+        qc.med + " min. " + (qc.pct < 20
+          ? "Ye strategies 10R target aur 3-din horizon pe chalti hain, isliye ye offer " +
+            "inpe practically kabhi nahi lagta — cost estimate isko count nahi karta."
+          : "Utne trades pe closing fee zero hai.");
+    }
+    box.appendChild(note);
+  }
+
   function saveAlerts(patch) {
     return post("/settings/alerts", patch, "PUT").then(function (d) {
       state.settings.alerts = d.alerts; return d.alerts;
@@ -1370,7 +1514,7 @@
   function loadHistory() {
     return api("/api/v4/history?limit=300").then(function (d) {
       state.history = d.rows || [];
-      renderHistory(); renderPaper(); renderEvidence();
+      renderHistory(); renderPaper(); renderEvidence(); renderFeePanel();
     }).catch(function () {});
   }
   function loadPerformance() {
@@ -1397,7 +1541,7 @@
   }
   function loadSettings() {
     return api("/settings").then(function (d) {
-      state.settings = d; renderSettings();
+      state.settings = d; renderSettings(); renderFeePanel();
     }).catch(function () {});
   }
 
@@ -1420,6 +1564,7 @@
        unreachable the user sees "kuch nahi mila" rather than a blank slab —
        the failure is then explained by the banner, not by absence. */
     renderSetup(); renderQueue(); renderExposure(); renderLiveTrades(); renderHistory();
+    renderFeePanel();
     renderPaper(); renderEvidence(); renderJournal([]);
     loadCatalogue().then(loadSetups).then(function () { loadChart(); });
     loadQuotes();

@@ -198,7 +198,7 @@ def test_round_trip_cost_is_shown_as_a_share_of_risk():
     edge, 0.09 keeps it. It belongs on screen, not in a footnote."""
     src = _read(APP)
     assert "function costOf" in src
-    assert "taker_fee" in src and "funding_per_day" in src
+    assert "funding_per_day" in src          # funding still comes from the catalogue
     assert "Round-trip cost" in src
 
 
@@ -224,6 +224,50 @@ def test_the_order_ticket_can_be_copied():
     src = _read(APP)
     assert "navigator.clipboard.writeText" in src
     assert "resting STOP order" in src
+
+
+def test_the_fee_model_matches_the_exchange_not_the_research_assumption():
+    """The research modelled 0.05% both sides and no GST. GST is a straight
+    18% uplift on the fee, so the trader's real cost is higher than the
+    number the backtest was selected on."""
+    src, html = _read(APP), _read(HTML)
+    assert "FEE_DEFAULTS" in src and "gst" in src
+    assert 'id="fee-panel"' in html
+    assert 'localStorage.setItem("ms_fees"' in src
+    # entry is a stop order -> always taker; only the exit can be maker
+    assert 'f.exit === "maker" ? f.maker : f.taker' in src
+
+
+def test_fee_ratio_is_defined_the_same_way_the_backend_defines_it():
+    """outcome.py computes fee_r from FEES ONLY and charges funding
+    separately as fund_r. A fee+funding ratio cannot be read against the
+    0.12 fee/R limit the geometry was chosen on."""
+    src = _read(APP)
+    body = src[src.index("function feeRatio"):src.index("function feeRatio") + 400]
+    assert "costOf(s, qty).fee / riskCash" in body
+    assert "funding" not in body.split("return")[1]
+    assert "FEE_LIMIT = 0.12" in src
+
+
+def test_only_one_cost_function_exists():
+    """A second costOf silently shadowed the real fee model and the panel
+    kept showing the research assumption whatever the trader configured."""
+    src = _read(APP)
+    assert src.count("function costOf") == 1
+
+
+def test_the_thirty_minute_waiver_is_judged_from_recorded_holds():
+    """These strategies target 10R over a 3-day horizon. Whether a 30-minute
+    closing-fee waiver ever applies is a question for the log, not the
+    offer's wording."""
+    src = _read(APP)
+    assert "function quickCloseShare" in src
+    assert "hold_minutes <= 30" in src
+
+
+def test_a_focused_fee_field_is_not_re_rendered_underneath_the_user():
+    src = _read(APP)
+    assert "box.contains(document.activeElement)" in src
 
 
 def test_a_stale_surface_labels_itself_instead_of_looking_live():
