@@ -875,6 +875,20 @@
     box.appendChild(list);
   }
 
+  /* Time left before the engine's forced market exit. Null when the horizon is
+     unknown (the catalogue has not loaded) rather than guessing at it. */
+  function horizonLeft(r) {
+    var days = geometry().max_hold_days;
+    var from = toDate(r.filled_ts);
+    if (!days || !from) return null;
+    var ms = from.getTime() + days * 86400000 - Date.now();
+    if (ms <= 0) return { text: "horizon poora", soon: true };
+    var h = Math.floor(ms / 3600000);
+    return { text: (h >= 24 ? Math.floor(h / 24) + "d " + (h % 24) + "h" : h + "h") +
+                   " horizon baaki",
+             soon: h < 12 };
+  }
+
   function activeRow(r) {
     var lng = r.direction > 0, d = dec(r.symbol);
     var fill = r.fill_price != null ? r.fill_price : r.entry;
@@ -892,9 +906,12 @@
     mid.appendChild(el("div", "nm", strategyMeta(r.strategy_id).label || r.strategy_id));
     var why = el("div", "why");
     why.appendChild(el("span", "stamp", "fill " + fmt(fill, d) + " · " + when(r.filled_ts)));
-    /* Hold time against the 3-day horizon: past it the engine exits at market
-       whatever the price, so it is a countdown, not trivia. */
     why.appendChild(document.createTextNode(" · " + held(r.filled_ts) + " hold"));
+    /* The horizon is a real exit, not trivia: at max_hold_days the trade is
+       closed at market whatever the price is — a full-fee exit the trader can
+       pre-empt if they know it is coming. */
+    var left = horizonLeft(r);
+    if (left) why.appendChild(el("span", "horizon" + (left.soon ? " soon" : ""), left.text));
     mid.appendChild(why);
     row.appendChild(mid);
 

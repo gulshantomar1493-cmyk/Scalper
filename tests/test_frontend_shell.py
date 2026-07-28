@@ -434,3 +434,15 @@ def test_the_service_worker_caches_nothing():
     deliberately a no-op (see docs/DEPLOYMENT.md)."""
     sw = _read(FRONTEND / "sw.js")
     assert "caches.open" not in sw and "cache.put" not in sw
+
+
+def test_an_active_trade_shows_when_the_engine_will_force_it_out():
+    """max_hold_days is a real exit — the trade is closed at market whatever
+    the price. A trader who can see it coming can pre-empt a full-fee exit."""
+    src = _read(APP)
+    assert "function horizonLeft" in src
+    assert "max_hold_days" in src
+    assert "horizon baaki" in src
+    # unknown horizon must read as unknown, not as a guess
+    block = src[src.index("function horizonLeft"):src.index("function activeRow")]
+    assert "return null" in block
