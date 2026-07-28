@@ -5,7 +5,9 @@
    1. Numbers are mono + tabular-nums. Always. Traders scan columns, and a digit
       that shifts position between ticks is a digit you have to re-read.
    2. Green and red mean MONEY and nothing else. The accent carries interaction,
-      never a verdict.
+      never a verdict. Amber (--warn) is the one caution colour: it flags a
+      condition worth a second look — fees eating a third of the risk, four
+      setups stacked on one symbol — never a profit or a loss.
    3. Backtest evidence and live paper results never share a visual container.
    4. Hierarchy comes from size, weight and quiet — not from boxes.
    5. A stale surface must never look live.
@@ -20,6 +22,8 @@
   --up: #00c07f; --up-bg: rgba(0,192,127,.12);
   --down: #ff5b5b; --down-bg: rgba(255,91,91,.12);
   --grid: #12161d; --scheme: dark; --vig: rgba(4,5,7,.9);
+  --warn: #e0a33a;                       /* caution only — never money */
+  --t-micro: 10px;                       /* the one uppercase label size */
 
   --sans: Inter, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --mono: "JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace;
@@ -40,6 +44,8 @@
   --up: #059669; --up-bg: rgba(5,150,105,.11);
   --down: #dc2626; --down-bg: rgba(220,38,38,.10);
   --grid: #e7ebf1; --scheme: light; --vig: rgba(233,237,243,.9);
+  --warn: #a5670a;
+  --t-micro: 10px;
 
   --chart-bg: #ffffff; --chart-text: #48546a;
   --chart-grid: #e7ebf1; --chart-border: #dce2ea;
@@ -464,7 +470,7 @@ input[type=range] { width: 100%; accent-color: var(--accent); cursor: pointer; }
 }
 .qrow {
   display: grid; align-items: center; gap: 16px;
-  grid-template-columns: 76px 56px minmax(120px, 1.4fr) repeat(4, minmax(70px, 96px));
+  grid-template-columns: 76px 56px minmax(110px, 1.3fr) repeat(5, minmax(64px, 92px));
   padding: 16px 22px; position: relative; cursor: pointer;
   transition: background 160ms var(--ease); border: 0; width: 100%;
   font: inherit; color: inherit; text-align: left; background: transparent;
@@ -652,6 +658,72 @@ footer .fine { font-size: 11.5px; color: var(--ink-3); max-width: 64ch; line-hei
   section, #hero { padding-left: 32px; padding-right: 32px; }
   .hero-pills { right: 32px; }
   .trow { grid-template-columns: 108px 62px 56px 42px repeat(3, minmax(64px, 1fr)) 78px 68px; gap: 10px; }
-  .qrow { grid-template-columns: 70px 50px minmax(90px, 1fr) repeat(4, minmax(60px, 84px)); gap: 10px; }
+  .qrow { grid-template-columns: 70px 50px minmax(84px, 1fr) repeat(5, minmax(56px, 78px)); gap: 8px; }
   .arow { grid-template-columns: minmax(120px, 1.4fr) repeat(5, minmax(52px, 1fr)) 92px; gap: 10px; }
 }
+
+/* ------------------------------------------------- trader-facing additions -- */
+/* how far price still has to travel, and how long the order stays armed */
+.dist-strip {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 12px 26px 14px 29px; border-top: 1px solid var(--line-soft);
+  font-family: var(--mono); font-size: 12px;
+}
+.dist-strip .k { display: inline; font-size: var(--t-micro); }
+.dist-strip .v { font-variant-numeric: tabular-nums; color: var(--ink); }
+.dist-strip .v.through { color: var(--accent); }
+.dist-strip .arrow { color: var(--ink-3); }
+.dist-strip .ttl { font-size: 11px; color: var(--ink-3); letter-spacing: .04em; }
+.dist-strip .ttl.bad { color: var(--down); }
+.dist-strip.expired .v { color: var(--ink-3); }
+
+/* an expired setup is history — it must not read as actionable */
+.setup-card.stale { opacity: .58; }
+.setup-card.stale .rank { display: none; }
+.qrow.stale { opacity: .5; }
+
+/* where price sits on the stop → target span */
+.ladder { position: relative; }
+.ladder i.now {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; border-radius: 1px;
+  background: var(--ink); box-shadow: 0 0 0 2px var(--surf); z-index: 2;
+}
+/* price has not reached the band yet — clamped to the edge, drawn hollow */
+.ladder i.now.outside { background: var(--ink-3); width: 3px;
+                        border-radius: 0; opacity: .85; }
+
+/* round-trip cost as a share of risk — the number the research turned on */
+.cost {
+  display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap;
+  margin-top: 16px; padding-top: 14px; border-top: 1px solid var(--line-soft);
+  font-family: var(--mono); font-size: 12px;
+}
+.cost .k { display: inline; font-size: var(--t-micro); }
+.cost .v { font-variant-numeric: tabular-nums; color: var(--ink-2); }
+.cost .v.warn { color: var(--warn); }
+.cost .sep2 { color: var(--ink-3); }
+
+.equity-row label { font-size: var(--t-micro); letter-spacing: .16em;
+                    text-transform: uppercase; color: var(--ink-3); font-weight: 600; }
+.eq-input { display: inline-flex; align-items: center; gap: 4px; color: var(--ink-3); }
+.eq-input .inp { width: 110px; text-align: right; padding: 6px 9px; font-size: 12.5px; }
+
+/* aggregate exposure — N setups on one level are one bet, not N bets */
+.expo {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr));
+  gap: 14px; padding: 18px 22px; border: 1px solid var(--line);
+  border-radius: 16px; background: var(--surf); margin-bottom: 12px;
+}
+.expo .v { font-family: var(--mono); font-variant-numeric: tabular-nums;
+           font-size: 18px; font-weight: 600; margin-top: 6px; letter-spacing: -.02em; }
+.expo .v.warn { color: var(--warn); }
+.expo-note { font-size: 12.5px; color: var(--ink-3); line-height: 1.6;
+             max-width: 82ch; margin-bottom: 24px; }
+.rank.expired { color: var(--ink-3); background: var(--surf-2); border-color: var(--line); }
+.stale-note {
+  margin: 0 26px 0 29px; padding: 13px 15px; border-radius: 12px;
+  background: var(--surf-2); border: 1px solid var(--line);
+  border-left: 2px solid var(--warn);
+  font-size: 12.5px; color: var(--ink-2); line-height: 1.6;
+}
+.stale-note b { color: var(--ink); }

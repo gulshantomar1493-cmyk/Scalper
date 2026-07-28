@@ -22,7 +22,8 @@
     sym: "ETHUSDT", pick: null, tf: "4h", riskPct: 0.5,
     setups: [], catalogue: null, perf: null, history: [], paper: null,
     settings: null, quotes: {}, prev: {}, dayOpen: {}, live: false,
-    histFilter: "", chart: null, series: null, lines: [], equity: 10000, active: [],
+    histFilter: "", chart: null, series: null, lines: [], active: [],
+    equity: Number(localStorage.getItem("ms_equity")) || 10000,
     heroCandles: []
   };
 
@@ -113,6 +114,55 @@
                                           hour: "2-digit", minute: "2-digit" });
   }
   function labelled(text) { return el("span", "lbl", text); }
+
+  /* ---- the numbers a trader actually acts on ---------------------------- */
+
+  function livePrice(sym) {
+    var q = state.quotes[sym];
+    return q && q.price != null ? q.price : null;
+  }
+
+  /* How far price still has to travel to trigger the resting order. For a
+     LONG the entry sits ABOVE price, for a SHORT below — so a positive
+     distance always means "not there yet". */
+  function distanceToEntry(s) {
+    var px = livePrice(s.symbol);
+    if (px == null || !s.entry) return null;
+    var away = (s.direction > 0 ? s.entry - px : px - s.entry);
+    return { abs: away, pct: away / px * 100, through: away <= 0 };
+  }
+
+  /* A resting order is only actionable inside its window. Past it the setup
+     is history, and showing it as live is how a trader ends up placing an
+     order the engine already abandoned. */
+  function validity(s) {
+    if (!s.valid_until_ts) return { expired: false, text: "" };
+    var left = s.valid_until_ts * 1000 - Date.now();
+    if (left <= 0) return { expired: true, text: "expire ho chuka" };
+    var m = Math.floor(left / 60000), h = Math.floor(m / 60);
+    return { expired: false,
+             text: (h ? h + "h " + (m % 60) + "m" : m + "m") + " bacha hai" };
+  }
+
+  function geometry() { return (state.catalogue && state.catalogue.geometry) || {}; }
+
+  /* Round-trip taker fee plus funding for the max hold. The whole research
+     programme turned on fee/R, so it belongs on screen, not in a footnote. */
+  function costOf(s, qty) {
+    var g = geometry();
+    var taker = g.taker_fee == null ? 0.0005 : g.taker_fee;
+    var fund = g.funding_per_day == null ? 0.0003 : g.funding_per_day;
+    var days = g.max_hold_days == null ? 3 : g.max_hold_days;
+    var notional = qty * s.entry;
+    return { fee: notional * taker * 2, funding: notional * fund * days };
+  }
+
+  function sizeFor(s) {
+    var riskCash = state.equity * (state.riskPct / 100);
+    var perUnit = Math.abs(s.entry - s.stop) || 1;
+    var qty = riskCash / perUnit;
+    return { riskCash: riskCash, perUnit: perUnit, qty: qty, notional: qty * s.entry };
+  }
 
   /* Odometer: each digit is a 0-9 column moved by transform. The columns stay
      mounted between ticks or the slide is lost. */
@@ -278,9 +328,16 @@
     });
   }
 
+  var lastTtl = "";
   function tickClock() {
     var c = $("clock");
     if (c) c.textContent = new Date().toLocaleTimeString();
+    /* re-render the card only when the displayed countdown actually changes,
+       so a half-typed equity field is never wiped by the 1-second tick */
+    var s = current();
+    if (!s) return;
+    var v = validity(s);
+    if (v.text !== lastTtl) { lastTtl = v.text; renderSetup(); }
   }
 
   // ----------------------------------------------------------------- setups --
@@ -292,7 +349,11 @@
     var rows = symSetups(state.sym);
     if (!rows.length) return null;
     var pick = rows.filter(function (s) { return setupKey(s) === state.pick; })[0];
-    return pick || rows[0];
+    if (pick) return pick;                       // an explicit choice always wins
+    /* otherwise lead with a setup that is still armed — an expired one is
+       history, and heading the page with it invites acting on it */
+    var live = rows.filter(function (s) { return !validity(s).expired; });
+    return live[0] || rows[0];
   }
   function stratCode(id) {
     var list = (state.catalogue && state.catalogue.strategies) || [];
@@ -336,6 +397,23 @@
     var r = el("i", "risk"); r.style.width = (risk / total * 100).toFixed(2) + "%";
     var w = el("i", "reward"); w.style.width = (reward / total * 100).toFixed(2) + "%";
     bar.appendChild(r); bar.appendChild(w);
+    /* where price sits on the stop→target span, so the geometry is not just
+       proportions but a position you can read at a glance */
+    var px = livePrice(s.symbol);
+    if (px != null) {
+      var lo = Math.min(s.stop, s.target), hi = Math.max(s.stop, s.target);
+      /* Before a setup arms, price sits OUTSIDE the stop→target band — which
+         is the useful fact, not a reason to hide the marker. Clamp it to the
+         edge it is beyond and mark it as outside. */
+      var frac = (px - lo) / (hi - lo);
+      var outside = frac < 0 || frac > 1;
+      var mk = el("i", "now" + (outside ? " outside" : ""));
+      mk.style.left = (Math.max(0, Math.min(1, frac)) * 100).toFixed(2) + "%";
+      mk.title = outside
+        ? "abhi price " + fmt(px, d) + " — is band ke bahar"
+        : "abhi price " + fmt(px, d);
+      bar.appendChild(mk);
+    }
     wrap.appendChild(bar);
     var lg = el("div", "ladder-legend");
     lg.appendChild(el("span", "r", "risk " + fmt(risk, d)));
@@ -346,6 +424,7 @@
 
   function renderSetup() {
     var card = $("setup-card"); clear(card);
+    card.className = "setup-card";
     var s = current();
     if (!s) {
       card.appendChild(el("div", "empty",
@@ -355,6 +434,7 @@
       return;
     }
     var lng = s.direction > 0, d = dec(s.symbol);
+    if (validity(s).expired) card.className = "setup-card stale";
 
     var rail = el("span", "dir-rail");
     rail.style.background = lng ? "var(--up)" : "var(--down)";
@@ -367,7 +447,8 @@
     head.appendChild(el("span", "sym-big", s.symbol.replace("USDT", "")));
     head.appendChild(el("span", "chip", s.strategy_id));
     head.appendChild(el("div", "sp"));
-    if (state.setups.indexOf(s) === 0) head.appendChild(el("span", "rank", "Rank 1"));
+    if (validity(s).expired) head.appendChild(el("span", "rank expired", "Expired"));
+    else if (state.setups.indexOf(s) === 0) head.appendChild(el("span", "rank", "Rank 1"));
     var pips = el("div", "pips");
     pips.title = s.filters_passed + " of 3 trend filters agreeing";
     for (var i = 0; i < 3; i++) pips.appendChild(el("i", i < s.filters_passed ? "on" : null));
@@ -375,6 +456,35 @@
     card.appendChild(head);
 
     card.appendChild(ladderNode(s));
+
+    /* THE operational number: how far price still has to travel, and how long
+       the order stays armed. Without it the card cannot tell you whether this
+       triggers in ten minutes or never. */
+    var rowsForSym = symSetups(s.symbol);
+    var anyLive = rowsForSym.some(function (x) { return !validity(x).expired; });
+    if (!anyLive) {
+      var warn = el("div", "stale-note");
+      warn.appendChild(el("b", null, "Koi armed setup nahi."));
+      warn.appendChild(document.createTextNode(
+        " Neeche jo dikh raha hai uski validity window nikal chuki hai — ye " +
+        "record ke liye hai, lene ke liye nahi. Agla setup tab banega jab " +
+        "engine ko naya level break milega."));
+      card.appendChild(warn);
+    }
+    var dist = distanceToEntry(s), val = validity(s);
+    var strip = el("div", "dist-strip" + (val.expired ? " expired" : ""));
+    var px = livePrice(s.symbol);
+    strip.appendChild(el("span", "k", "Abhi"));
+    strip.appendChild(el("span", "v", px == null ? "—" : fmt(px, d)));
+    strip.appendChild(el("span", "arrow", s.direction > 0 ? "↑" : "↓"));
+    strip.appendChild(el("span", "k", "entry se"));
+    strip.appendChild(el("span", "v " + (dist && dist.through ? "through" : ""),
+      dist == null ? "—"
+        : dist.through ? "level cross ho chuka"
+        : fmt(dist.abs, d) + " (" + dist.pct.toFixed(2) + "%)"));
+    strip.appendChild(el("div", "sp"));
+    strip.appendChild(el("span", "ttl" + (val.expired ? " bad" : ""), val.text));
+    card.appendChild(strip);
 
     var cells = el("div", "price-cells");
     [["Entry", s.entry, "var(--ink)"], ["Stop", s.stop, "var(--down)"],
@@ -394,6 +504,25 @@
       (lng ? " ke neeche close" : " ke upar close") +
       " · " + when(s.valid_until_ts) + " tak valid"));
     foot.appendChild(el("div", "sp"));
+    foot.appendChild(el("div", "sp"));
+    var copy = el("button", "btn", "Order copy karo");
+    copy.addEventListener("click", function () {
+      var z = sizeFor(s);
+      var text = [
+        s.symbol + " " + (lng ? "LONG" : "SHORT") + "  (" + s.strategy_id + ")",
+        "entry  " + fmt(s.entry, d) + "   (resting STOP order)",
+        "stop   " + fmt(s.stop, d),
+        "target " + fmt(s.target, d),
+        "qty    " + fmt(z.qty, s.symbol === "BTCUSDT" ? 4 : 3) +
+          "   (risk $" + fmt(z.riskCash, 2) + " = " + state.riskPct.toFixed(1) + "%)",
+        "net R:R " + fmt(s.rr, 2)
+      ].join("\n");
+      navigator.clipboard.writeText(text).then(function () {
+        copy.textContent = "Copy ho gaya ✓";
+        setTimeout(function () { copy.textContent = "Order copy karo"; }, 1800);
+      }).catch(function () { copy.textContent = "Copy nahi hua"; });
+    });
+    foot.appendChild(copy);
     var go = el("a", "btn primary", "Chart pe dekho");
     go.href = "#chart";
     foot.appendChild(go);
@@ -405,16 +534,17 @@
 
   function renderSizing(s) {
     var box = $("sizing"); clear(box);
-    $("equity-val").textContent = "$" + fmt(state.equity, 2);
+    var eqInput = $("equity-input");
+    if (eqInput && document.activeElement !== eqInput) eqInput.value = Math.round(state.equity);
     $("risk-label").textContent = state.riskPct.toFixed(1) + "%";
+    var costBox = $("cost-row"); clear(costBox);
     if (!s) return;
-    var riskCash = state.equity * (state.riskPct / 100);
-    var perUnit = Math.abs(s.entry - s.stop) || 1;
-    var qty = riskCash / perUnit;
-    [["Risk", "$" + fmt(riskCash, 2), "var(--down)"],
-     ["Quantity", fmt(qty, s.symbol === "BTCUSDT" ? 4 : 3), "var(--ink)"],
-     ["Notional", "$" + fmt(qty * s.entry, 2), "var(--ink)"],
-     ["Stop distance", fmt(perUnit, dec(s.symbol)), "var(--ink-2)"]
+
+    var z = sizeFor(s);
+    [["Risk", "$" + fmt(z.riskCash, 2), "var(--down)"],
+     ["Quantity", fmt(z.qty, s.symbol === "BTCUSDT" ? 4 : 3), "var(--ink)"],
+     ["Notional", "$" + fmt(z.notional, 2), "var(--ink)"],
+     ["Stop distance", fmt(z.perUnit, dec(s.symbol)), "var(--ink-2)"]
     ].forEach(function (row) {
       var c = el("div");
       c.appendChild(labelled(row[0]));
@@ -422,6 +552,57 @@
       c.appendChild(v);
       box.appendChild(c);
     });
+
+    /* Fee as a share of risk is THE number this whole strategy set turns on:
+       the same geometry at 2xATR gives fee/R 0.27 and a negative edge, at
+       5xATR it gives 0.09 and a positive one. Show it, do not bury it. */
+    var c2 = costOf(s, z.qty);
+    var total = c2.fee + c2.funding;
+    var share = z.riskCash ? total / z.riskCash * 100 : null;
+    var row = el("div", "cost");
+    row.appendChild(el("span", "k", "Round-trip cost"));
+    row.appendChild(el("span", "v", "$" + fmt(total, 2)));
+    row.appendChild(el("span", "sep2", "·"));
+    row.appendChild(el("span", "k", "risk ka"));
+    var pct = el("span", "v " + (share > 20 ? "warn" : ""),
+                 share == null ? "—" : share.toFixed(1) + "%");
+    pct.title = "fee $" + fmt(c2.fee, 2) + " + funding $" + fmt(c2.funding, 2) +
+                " (max " + (geometry().max_hold_days || 3) + " din hold)";
+    row.appendChild(pct);
+    costBox.appendChild(row);
+  }
+
+  /* Taking every live setup is one correlated bet, not N independent ones.
+     A trader sizing each at 0.5% needs to see the total before they do it. */
+  function renderExposure() {
+    var box = $("exposure"); if (!box) return;
+    clear(box);
+    var rows = state.setups;
+    if (!rows.length) return;
+    var longs = rows.filter(function (x) { return x.direction > 0; }).length;
+    var totalRisk = rows.length * state.riskPct;
+    var byS = {};
+    rows.forEach(function (x) { byS[x.symbol] = (byS[x.symbol] || 0) + 1; });
+    var top = Object.keys(byS).sort(function (a, b) { return byS[b] - byS[a]; })[0];
+    var concentrated = byS[top] / rows.length;
+
+    var wrap = el("div", "expo");
+    [["Live setups", String(rows.length), ""],
+     ["Long / Short", longs + " / " + (rows.length - longs), ""],
+     ["Sab liye to risk", totalRisk.toFixed(1) + "%", totalRisk > 3 ? "warn" : ""],
+     [top.replace("USDT", "") + " mein", Math.round(concentrated * 100) + "%",
+      concentrated > 0.7 ? "warn" : ""]
+    ].forEach(function (c) {
+      var cell = el("div");
+      cell.appendChild(labelled(c[0]));
+      cell.appendChild(el("div", "v " + c[2], c[1]));
+      wrap.appendChild(cell);
+    });
+    box.appendChild(wrap);
+    box.appendChild(el("div", "expo-note",
+      "Ye setups ek dusre se independent nahi hain — ek hi level, ek hi symbol, " +
+      "ek hi direction. Sab ek saath lene ka matlab ek bada correlated trade hai, " +
+      (rows.length) + " chhote trades nahi."));
   }
 
   /* One row per strategy that has a live setup on this symbol — clicking swaps
@@ -462,10 +643,17 @@
       box.appendChild(el("div", "empty", "Baaki koi live setup nahi."));
       return;
     }
+    /* Ranked by filters then R:R by the engine; within that, the trader wants
+       to see what is closest to triggering. Sort by distance when we know it. */
+    rows = rows.slice().sort(function (a, b) {
+      var da = distanceToEntry(a), db = distanceToEntry(b);
+      if (!da || !db) return 0;
+      return Math.abs(da.pct) - Math.abs(db.pct);
+    });
     rows.forEach(function (s) {
       var lng = s.direction > 0, d = dec(s.symbol);
       var meta = strategyMeta(s.strategy_id);
-      var row = el("button", "qrow");
+      var row = el("button", "qrow" + (validity(s).expired ? " stale" : ""));
       var bar = el("span", "bar"); bar.style.background = lng ? "var(--up)" : "var(--down)";
       row.appendChild(bar);
       row.appendChild(el("span", "dir " + (lng ? "long" : "short"), lng ? "LONG" : "SHORT"));
@@ -474,6 +662,7 @@
       mid.appendChild(el("div", "nm", meta.label || s.strategy_id));
       mid.appendChild(el("div", "why", s.reason));
       row.appendChild(mid);
+      var dist = distanceToEntry(s);
       [["Entry", s.entry, ""], ["Stop", s.stop, "down"],
        ["Target", s.target, "up"], ["R:R", s.rr, ""]].forEach(function (c) {
         var cell = el("div", "cell");
@@ -482,6 +671,11 @@
           c[0] === "R:R" ? fmt(c[1], 2) : fmt(c[1], d)));
         row.appendChild(cell);
       });
+      var away = el("div", "cell");
+      away.appendChild(labelled("Door"));
+      away.appendChild(el("span", "v " + (dist && dist.through ? "up" : ""),
+        dist == null ? "—" : dist.through ? "cross" : dist.pct.toFixed(2) + "%"));
+      row.appendChild(away);
       row.addEventListener("click", function () {
         state.sym = s.symbol; state.pick = setupKey(s);
         renderSymbolTabs(); renderSetup(); renderQueue(); loadChart();
@@ -1145,7 +1339,7 @@
   function loadSetups() {
     return api("/api/v4/setups").then(function (d) {
       state.setups = d.setups || [];
-      renderSetup(); renderQueue(); drawLevels();
+      renderSetup(); renderQueue(); renderExposure(); drawLevels();
     }).catch(function () {});
   }
   function loadQuotes() {
@@ -1188,9 +1382,13 @@
   function loadPaper() {
     return api("/api/paper").then(function (d) {
       state.paper = d;
+      /* the paper book seeds the sizing panel only until the trader types
+         their own account size — after that their number wins */
       var eq = (d.portfolio && d.portfolio.equity) != null ? d.portfolio.equity
              : (d.account && d.account.balance);
-      if (eq != null) { state.equity = eq; renderSizing(current()); }
+      if (eq != null && !localStorage.getItem("ms_equity")) {
+        state.equity = eq; renderSizing(current());
+      }
       renderPaper();
     }).catch(function () {});
   }
@@ -1205,6 +1403,13 @@
 
   $("risk").addEventListener("input", function () {
     state.riskPct = Number(this.value);
+    renderSizing(current()); renderExposure();
+  });
+  $("equity-input").addEventListener("input", function () {
+    var v = Number(this.value);
+    if (!(v > 0)) return;
+    state.equity = v;
+    try { localStorage.setItem("ms_equity", String(v)); } catch (e) {}
     renderSizing(current());
   });
 
@@ -1214,7 +1419,7 @@
     /* Paint every empty state before the first request. If the backend is
        unreachable the user sees "kuch nahi mila" rather than a blank slab —
        the failure is then explained by the banner, not by absence. */
-    renderSetup(); renderQueue(); renderLiveTrades(); renderHistory();
+    renderSetup(); renderQueue(); renderExposure(); renderLiveTrades(); renderHistory();
     renderPaper(); renderEvidence(); renderJournal([]);
     loadCatalogue().then(loadSetups).then(function () { loadChart(); });
     loadQuotes();

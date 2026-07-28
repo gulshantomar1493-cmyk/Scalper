@@ -155,7 +155,12 @@
             <label class="lbl" for="risk">Har trade ka risk · <span id="risk-label">0.5%</span></label>
             <input type="range" id="risk" min="0.1" max="3" step="0.1" value="0.5">
             <div class="sizing" id="sizing"></div>
-            <div class="equity-row"><span>paper equity</span><span id="equity-val">—</span></div>
+            <div id="cost-row"></div>
+            <div class="equity-row">
+              <label for="equity-input">account size</label>
+              <span class="eq-input">$<input class="inp mono" id="equity-input"
+                    type="number" min="100" step="100" inputmode="numeric"></span>
+            </div>
           </div>
         </div>
         <div class="panel reveal">
@@ -211,6 +216,7 @@
       <div class="sp"></div>
       <span class="note-mono">pehle filters pass, phir net R:R</span>
     </div>
+    <div id="exposure"></div>
     <div id="live-trades"></div>
     <div class="list" id="queue-rows"></div>
   </section>

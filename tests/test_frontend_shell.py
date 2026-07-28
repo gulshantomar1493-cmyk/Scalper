@@ -170,6 +170,62 @@ def test_animated_hairlines_are_clipped_to_their_card():
     assert "overflow: hidden" in block
 
 
+# --------------------------------------------------- what a trader needs ---
+
+def test_the_card_shows_how_far_price_is_from_the_entry():
+    """These are resting STOP orders. Without distance-to-entry the card
+    cannot tell you whether it triggers in ten minutes or never."""
+    src = _read(APP)
+    assert "function distanceToEntry" in src
+    assert "dist-strip" in src
+    # a LONG entry sits above price, a SHORT below — sign must be direction-aware
+    assert "s.direction > 0 ? s.entry - px : px - s.entry" in src
+
+
+def test_an_expired_setup_is_never_presented_as_actionable():
+    """Its validity window has closed; leading the page with it invites
+    placing an order the engine already abandoned."""
+    src, css = _read(APP), _read(CSS)
+    assert "function validity" in src
+    assert "var live = rows.filter" in src            # prefer an armed setup
+    assert '"rank expired", "Expired"' in src
+    assert "Koi armed setup nahi" in src              # when none are armed
+    assert ".setup-card.stale" in css
+
+
+def test_round_trip_cost_is_shown_as_a_share_of_risk():
+    """fee/R is the number this entire strategy set turns on — 0.27 kills the
+    edge, 0.09 keeps it. It belongs on screen, not in a footnote."""
+    src = _read(APP)
+    assert "function costOf" in src
+    assert "taker_fee" in src and "funding_per_day" in src
+    assert "Round-trip cost" in src
+
+
+def test_position_size_can_be_driven_by_the_traders_own_account():
+    src, html = _read(APP), _read(HTML)
+    assert 'id="equity-input"' in html
+    assert 'localStorage.setItem("ms_equity"' in src
+    # the paper book must not overwrite a number the trader typed
+    assert '!localStorage.getItem("ms_equity")' in src
+
+
+def test_aggregate_exposure_is_stated_because_the_setups_correlate():
+    """Ten setups on one symbol in one direction is one bet, not ten."""
+    src = _read(APP)
+    assert "function renderExposure" in src
+    assert "Sab liye to risk" in src
+    assert "independent nahi hain" in src
+
+
+def test_the_order_ticket_can_be_copied():
+    """The trader retypes entry/stop/target into an exchange by hand; a
+    transcription error costs real money."""
+    src = _read(APP)
+    assert "navigator.clipboard.writeText" in src
+    assert "resting STOP order" in src
+
+
 def test_a_stale_surface_labels_itself_instead_of_looking_live():
     """The banner alone is not enough — the feed pill and the ticker source
     line must both say SIMULATED, because that is what the eye lands on."""
